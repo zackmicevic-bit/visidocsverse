@@ -99,6 +99,21 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   ren.spinTarget+spinOmega / ren.compressScale, and included in cloud backups
   / master files.
 
+## Hover peek
+- Bottom pill Hover peek button (first in the row, before Fit): a persisted
+  (default on). When on and the canvas is in the released general view,
+  hovering a body lights up its row (gold) in the general-view document list —
+  unfolding the full list and scrolling to the row if needed. The gold stays
+  lit the whole time the body is hovered or selected (and the selected orb's
+  own row stays lit too — dot-crowned suns included). The reader never
+  leaves the general view; click the body to focus it for real. The highlight
+  lingers ~1.4s after the cursor leaves the body, and gliding onto the lit row
+  holds it — so you can travel from the orb to the reader pane and click the
+  row to open that exact document. On = ◉, off = ○, same pill-button
+  styling as the rest of the row.
+  Persisted in `visidocsverse.ui` as hoverPrev, included in cloud backups /
+  master files (`settings.hoverPrev`).
+
 ## Background shade
 - Left panel Shade row (under Labels): slider 0–100% for canvas background
   brightness — far left = flat white, far right = black deep-space (as today);
@@ -145,10 +160,10 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   seating fresh canvases open with) and restores orbital dynamics — a bare
   release would drop the zeroed-velocity orb down the gravity well into one
   pile. Persisted in
-  `visidocsverse.ui`. While on, a ◈ VERSE MAP glass pane docks bottom-right: a live
+  `visidocsverse.ui`. Small formations (a 2-theme lens, a 2-doc canvas) fan across the full orb — no inner-shell parking, opening on the lateral axis — so Distribute visibly spreads them instead of huddling a speck at center. While on, a ◈ VERSE MAP glass pane docks bottom-right: a live
   top-down map of every body (gold sun, blue rest, white ring on the
   active body, auto-fit framing, body count in the header) so the full verse
-  stays visible while the main view is close. The markers mirror the main
+  stays visible while the main view is close. Its header – collapses the map to a slim bar (+ restores, geometry and state persist in backups); header-drags move it, corner ⤴ resizes it. The markers mirror the main
   canvas body shape — dots normally, upside-down ▼ triangles while Orb to ▼
   is on — and the main canvas rotation: markers are plotted in the camera's
   own frame, so drag-rotating the view revolves the map with it (right on the
@@ -213,12 +228,58 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   paused or in slow motion.
 - Clicking a theme shows its concepts + grounded member bodies; clicking a
   member drills down — the view exits and the doc opens as sun in the Main
-  view. Search in the view lights up the themes grounding the hits; with
+  view. Selecting never moves bodies in any view — canvas clicks, search
+  picks, and reader rows drive the reader only (gold marks what you're
+  viewing); the physical sun is crowned solely through a body's "Make sun"
+  menu, which does move it home. Search in the view lights up the themes grounding the hits; with
   nothing selected, Thematic distills the whole visidocsverse at once (shared
   canvases only, copies counted once — members can jump canvases). Toggling
   off restores the Main view exactly as it was (formation included).
   The view persists across canvas switches, in `visidocsverse.ui`, and in cloud
   backups / master files.
+- Associated documents (Thematic view only): right-click a theme orb for "Show
+  all associated documents" (with or without name labels) — every grounded
+  member document appears as a small paper icon ringed around its seed orb.
+  The top grounding documents (the 3 members with the most theme-term evidence
+  in their text) draw in the orb's own color (gold when it is the sun, blue
+  otherwise); all other members draw in a lighter shade of it. The gold follows
+  the reader's selection — clicking a different theme re-gilds its icons in
+  place without moving any orb. Icons shrink
+  and spill into wider rings as membership grows (labels widen the ring), so
+  every related document shows without impinging on neighboring orbs. The ring
+  is zoom-aware: its radius tracks the live orb size every frame with uniform
+  edge clearance (pulse-proof, so zooming in never parks icons inside the
+  disc), and icons + labels scale modestly with zoom to stay readable. Labels
+  ride outward along their spoke and de-collide angularly into an even
+  sun-dial: each ring's rays spread UNIFORMLY around the circle (small
+  themes fan out instead of bunching), each file one ray with its paper
+  icon on the inner ring hugging the orb and its filename reading OUTWARD
+  along the same spoke (rotated radial text, flipped past vertical so
+  glyphs never invert), starting just outside its icon, so no name ever
+  sits on any icon. When two rays would print over each other, the later
+  one slides a step around the ring until clear — probes stay near their
+  even slot so rays never herd across the circle — and every collision
+  test is exact (text centerlines as capsules, icons and orbs as circles).
+  There are no connecting lines.
+  Left-click an icon to keep the theme as sun and light up that document's row
+  in the reader's bodies inventory (grounded bodies plus the ungrounded files
+  riding that orb, in their own section below) — and the row stays lit gold
+  for as long as the selection stands (no fade); right-click an icon for "Remove
+  from this canvas" (canvas-only, same confirm as the body menu). Right-click
+  the seed orb again for "Remove associated documents from view"; right-click
+  empty canvas to show every theme's documents at once (with/without labels)
+  or "Clear all associated documents from view". The bottom pill's Labels
+  button (next to Hover peek) flips the name labels on every associated
+  document currently in view — orb labels are untouched and stay on the
+  left-panel Labels row; with nothing in view the button explains how to
+  show documents first. Files grounded in no theme are still shown, palest
+  of all, each riding the single orb whose terms hit its text hardest (or
+  the largest orb when nothing hits) — every file in the project displays.
+  Mixed label states normalize (if any shown name is
+  on, one tap turns them all off). Return sits in its own
+  tight row atop the pill buttons. Overlay state is session-only and keyed by
+  scope (whole-visidocsverse vs one canvas), so tab switches can never show
+  another verse's icons.
 - "All thematic tags" in the general-state reader (beside View all bodies)
   opens every tag in the verse as its original pill on a near-transparent
   glass card — true frosted milk-white glass (milky gradient, 26px
@@ -239,25 +300,41 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
 - Universe view modes: the discrete row under the top tabs — Main | Thematic | Tag.
   Main shows every document body as itself; Thematic redraws the canvas around
   the ideas the documents share; Tag redraws it around the labels on the
-  documents. The live view is highlighted gold. See the glossary's Main (Universe) view, thematic
+  documents. The live view is highlighted gold. Directly under it, tight
+  against the pill, a stats row reads bodies · tethers · system energy · rim
+  (each ? keeps its editable explanation); – collapses it to a + toggle and
+  back. Both persist like the other pill settings. See the glossary's Main (Universe) view, thematic
   view, tags view, and Universe view modes entries.
-- Glossary of Terms: a centered full-width strip at the foot of the bottom
-  pill (same frosted glass) opens a draggable, resizable minimap-style glass
-  pane docked bottom-right — 25+ A–Z in-app definitions (verse, sun, body,
+- Glossary of Terms: a thin vertical book tab riding the VisiDocsverse pane's
+  right border (gold while open) toggles a tall draggable, resizable
+  glass pane docked beside the left panel (always reopens at its dock) — 25+ A–Z in-app definitions (verse, sun, body,
   mass, backlinks, shared ground, center of gravity, system energy, rim,
   orbital mechanics, general/active view, thematic tag, delete tag, merge
-  tags, Main view, thematic view, tags view, view modes) plus a
+  tags, rename tag, Main view, thematic view, tags view, view modes) plus a
   side-by-side comparison of the tags view vs the thematic view.
   Geometry, visibility, and the glass dot persist like the verse map.
+  Scrolling the glossary down summons an ↑ Top tab at its bottom-right
+  (clear of the resize grip) for an instant jump back; it vanishes at the top.
 - General state: off-click into empty space releases the sun (◌ GENERAL STATE
   — CENTER GRAVITY) — no active body, the canvas center holds gravity, and the
   reader shows a live overview (counts + largest bodies as drill-down rows).
   Beside the LARGEST BODIES caption, a "View all bodies" option lists every
   remaining body underneath (amber ● dots, matching the option's own amber
   text, vs the white ◉ of the largest; toggles back to "Show fewer"; offered
-  only past 6 bodies; every row's sub-caption carries words · mass ·
+  only past 6 bodies; rows whose document has notes carry a miniature of the canvas sticky square at the row's end — same yellow fill, ruled lines and red
+  margin tick — clicking it opens that document's Notes pane directly (the universe stays released); while that pane stands, its row's note mark carries a red frame, which
+  switches off again when the pane closes; every row's sub-caption carries words · mass ·
   backlinks; the pane has a wide easy-grab scrollbar for the long
   list). A new canvas always opens on its 6 largest. Clicking any body claims a new sun.
+  Every inventory row in the reader is split in two tightly-packed boxes with
+  single wiring: the left dot box ONLY puts that body on the canvas as the sun
+  (lens members take the canvas to the Main view first; the clicked doc is
+  never opened in the pane; the sun's dot keeps a red border), while the title
+  box ONLY parks the document in the pane (gold, sun, camera and even the lens
+  stay exactly as they are; kicker reads READING — CANVAS UNCHANGED). Pane
+  pins never push Return history; any canvas move (canvas click, dot crown,
+  release, Return, lens/tab switch) drops the pin and the pane follows again.
+  Gold row marks follow the live selection and persist while it stands; an open Notes pane keeps its document's row gold too, unfolding View-all and centering the row when it hides far down the list.
   Clicking a tag pill spotlights only its bodies (the rest fade) via the search
   box — the same empty-space click that releases the sun also clears that
   highlight, restoring the full non-faded view.
@@ -292,22 +369,46 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   main canvas. Each canvas also keeps its own persistent universe, so switching
   tabs never re-scatters formations. Each canvas remembers its own sun — or its sunless general state.
 
-## Sticky notes (140 chars per body)
-- One sticky note per body, stored on the vault doc (persisted in localStorage,
-  cloud backups and master files). Click its yellow square — drawn tight to the
-  left of the label, sized to the label's font height, with ruled-line texture —
-  to open a floating editor (140-char counter, Save / Delete / Cancel) without
-  moving the sun. Bodies with notes show a solid square; the sun shows a dashed
-  hollow placeholder so a first note can be created in-canvas. Right-clicking a
-  body offers the same editor via a "Sticky note…" menu item.
+## Notes (one shared notepad per body)
+- Every body owns one notepad: a list of entries (2000 chars each) stored on
+  the vault doc (persisted in localStorage, cloud backups and master files).
+  Three surfaces read and write the SAME list, so they always agree: the
+  yellow sticky square beside the body label (solid when entries exist; the
+  sun shows a dashed hollow placeholder so a first note can be created
+  in-canvas), the yellow `notes` button after the tag pills in the Active-body
+  reader (opens a pop-out showing the latest entry, with `copy` / `delete` /
+  `edit` plus a `notes pane` jump), and the Notes book tab on the reader's
+  left margin. Copies in other tabs share the lineage's list — a note made
+  anywhere appears everywhere, and every square fills solid yellow.
+- The Notes book tab is fixed (never draggable). Clicking it opens a glass
+  pane parked left of the reader, 30% narrower than the glossary dock, with a
+  smooth fade/slide both ways. The pane lists every entry (newest last, with
+  timestamp and a per-entry × delete), an entry counter, a composer, and
+  Save / Delete all / Cancel plus an Auto-save checkbox (persisted): on, every
+  pause in typing lands in one pending entry (created once, then updated —
+  clearing the composer drops it); off, nothing is kept until Save pushes it.
+  Save finalizes the composer into an entry, Cancel discards the composer and
+  this session's auto entry, ✕ just closes (draft kept). Esc closes the pane;
+  collapsing the reader closes it too.
+- Highlight any text in the body and right-click it for "Send selection to
+  notes", or press "＋ Add selection from document" in the pane with text highlighted — the
+  highlight is appended as a new entry, stays marked in the body while that
+  entry lives (deleting it removes the mark), and clicking the entry's box
+  jumps the reader to its passage. A ↑ Top tab appears at the entries list's
+  bottom-right once scrolled and jumps back to the top. Opening a Notes pane
+  for a body while the reader shows a different body parks that body in the
+  Active-body pane too (pane-only pin — sun, camera and lens never move);
+  overview/lens readers keep their view.
+- The floating square editor edits the latest entry (Save rewrites it, Delete
+  drops it) and has a "Notes pane →" jump that opens the pane on that body even with no active body (released view); empty-save clears the latest
+  entry. A pane opened this way stays on its notepad across reader re-renders until closed. The reader pop-out mirrors it, and `copy` copies all entries joined.
 - VisiDocsVerse pane: "View notes: All / Active body" checkboxes (both ticked by
   default, persisted in `visidocsverse.ui`). All shows solid yellow squares only on
   bodies that actually have notes — never placeholders. Active body always
   marks the selected body: solid when it has a note, hollow frame when not.
-- Active-body reader: yellow `notes` button after the tag pills opens a pop-out
-  with the note plus `copy` / `delete` captions (top-right), `edit` and `✕`.
-  Empty pop-outs offer an inline add form. Every mutation re-renders both
-  mirrors (square + pop-out); copy uses the clipboard with a fallback.
+- Active-body reader: yellow `notes` button after the tag pills opens the
+  Notes pane on this body (same shared notepad as the sticky square and the
+  Notes book tab). Every mutation re-renders all mirrors.
 - Glass finish: the VisiDocsVerse, Active body and DEV panes share a crisp glass
   overlay — diagonal sheen gradients + 18px blur/saturate, painted as the pane
   background so all text, toggles, thumbnails and filenames render in front.
@@ -325,7 +426,7 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   it, and choose Tag — the selection becomes a `manual/<slug>` tag on that
   body (whole-word snapped, `a–z 0–9 _` only), badged with a gold M on its
   pills in the reader and the tags pop-out. The menu's suggested name is only
-  a starting point: “Name it yourself…” opens an inline field (prefilled with
+  a starting point: “Name the tag yourself…” opens an inline field (prefilled with
   the suggestion) where any name can be typed — it is slugified the same way
   and lands as a manual tag with the same spot anchor and gold M. Manual tags match, tether, weigh,
   and search exactly like written #tags, but they live outside the body text:
@@ -354,16 +455,23 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   auto tag carried by more than `max(4, 40%)` of the corpus ("evidence" on
   16/18 files) tethers nothing and weighs nothing, while small shared auto
   tags ("screenshot" on 4) tether normally. Explicit tags always count.
-- Delete + merge (tags pop-out only — the "All thematic tags" glass card):
+- Delete + merge + rename (tags pop-out only — the "All thematic tags" glass card):
   hover a pill and click its × to delete the tag from every body on the
   canvas (confirmed once; explicit uses are stripped from body texts and the
   auto form is suppressed so title words can't resurrect it — writing #tag
   in any body brings it back); drag one pill onto another to merge the
   dragged tag into the receiving tag (the drop target keeps its name, the
-  moved tag disappears). Both dialogs offer “Don't ask again for tag deletes
-  and merges” (persisted on this machine; the Confirms row in the tags pane
-  tips shows the state and toggles it back on). Thin static tips at the foot
-  of the card explain both; the glossary defines "delete tag" and "merge tags".
+  moved tag disappears); right-click any pill (there, in the reader, or on
+  its canvas body) to rename the tag everywhere on the canvas — explicit
+  uses are rewritten, manual anchors move with it, auto-only bodies are
+  grounded under the new name, the old name is suppressed and the new name
+  unsuppressed (renaming onto an existing name folds in like a merge). All
+  three dialogs offer “Don't ask again for tag deletes, merges and renames”
+  (persisted on this machine; the Confirms row in the tags pane tips shows
+  the state and toggles it back on). Thin static tips at the foot of the
+  card explain all three; the glossary defines "delete tag", "merge tags"
+  and "rename tag". The tag page (tag body focused in the reader) carries its
+  own ✎ Rename tag button — no right-click needed.
   Clicking a pill (no drag) opens the tag's origin body — the first body
   carrying it, preferring explicitly-written tags over auto derivations —
   as the canvas sun AND in the Active body reader, so verse and reader agree. Manual
@@ -414,8 +522,26 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
 - Top of the pane is a SHARED GROUND hover menu (topic-tethered bodies +
   shared terms, up to 12); hover the label to open, tap it on touch, Esc or a
   selection closes it. Explicit [[links]] stay inline below as before.
+- Search (top-left bar, `/` focuses) matches titles, then tags, then full
+  body text (up to 12 rows; matching bodies light up in the universe).
+  Ctrl/Cmd+A outside a text field selects the open document only, never the
+  whole app. Opening a body from a search carries the term into the reader:
+  every occurrence highlights, the first scrolls into view, and the find bar
+  (‹ › count ×) steps through them. The reader's "Find in body" button opens
+  the same bar standalone (prefills from Search when non-empty). Clicking the
+  bar's ‹ or › summons a redundant copy parked left of the reader, centered on
+  its height — same term, same count, either × clears both. A search-result
+  click whose jump lands past the top of the body summons it too. Once opened,
+  both bars persist even when their text is deleted to empty — only × or Esc
+  closes them, so retyping never loses them. Typing highlights live, Enter steps, Esc
+  clears. Scrolling the reader down summons an ↑ Top tab at the pane's
+  bottom-right for an instant jump back; it vanishes at the top. Highlights are spans only — stored text, tags, and manual-tag spots
+  are untouched. Find works on whatever the reader shows — a document, a
+  theme, a tag, or an overview — and survives switching bodies (the new body
+  re-highlights the same term); the action row keeps Find visible in every
+  state while remove/delete/preview stay document-only.
 
-## View source (right-hold preview)
+## Source preview (right-hold preview)
 - Press and HOLD right mouse on a body to preview the first 120 words of its
   source in a glass pop-out (same frost recipe as the tags pane); release to
   dismiss. A plain quick right-click keeps the existing context menu.
@@ -433,12 +559,12 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
 - Overlays never stack: opening the preview dismisses the image zoom + any
   menu, and clicking a reader image while the preview/menu is up dismisses
   them instead of zooming (click the image again for the zoom once clear).
-- While shown, the body flashes in the reader's general-view body list (which
+- While shown, the body stays lit in the reader's body list (which
   auto-expands past the 6 largest if needed) — when the reader pane is open.
 
 ## "?" explicators (editable in the editor, locked on desktop)
 - All four helpers are editable: SHARED GROUND (? in the reader pane),
-  mass (? in the doc meta line), system energy + rim (? in the left panel).
+  mass (? in the doc meta line), system energy + rim (? in the top pill's stats row).
   Hover/tap a ? to read it, click its ✎ edit button to rewrite it.
 - Wording persists in `localStorage` (`visidocsverse.help`) and rides along in
   cloud backups / master files (`settings.help`).

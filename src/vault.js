@@ -188,7 +188,32 @@ function normalizeDoc(raw, fallbackName) {
   const doc = { id, name, text, words, links, tags };
   const origin = (typeof r.origin === 'string' && r.origin.trim()) ? r.origin.trim().slice(0, 64) : undefined;
   if (origin) doc.origin = origin;
-  if (typeof r.note === 'string' && r.note.trim()) doc.note = r.note.slice(0, 140);
+ if (typeof r.note === 'string' && r.note.trim()) doc.note = r.note.slice(0, 140);
+  // notepad entries: one shared list per document lineage (sticky squares,
+  // reader pop-out and the Notes book pane all read and write this list).
+  // Legacy single-string `note` rows migrate into one entry on load.
+  const log = [];
+  if (Array.isArray(r.noteLog)) {
+    for (const e of r.noteLog.slice(0, 200)) {
+      if (!e || typeof e.text !== 'string' || !e.text.trim()) continue;
+      const ne = { id: (typeof e.id === 'string' && e.id.trim()) ? e.id.trim().slice(0, 32) : uid('n_'), text: e.text.slice(0, 2000), at: isFinite(e.at) ? Math.round(e.at) : Date.now() };
+      // pinned passage: where a sent highlight was created (same rich-anchor
+      // shape as manual-tag spots — validated identically)
+      const sp = e.spot;
+      if (sp && typeof sp === 'object' && !Array.isArray(sp) && typeof sp.snip === 'string' && sp.snip.replace(/\s+/g, ' ').trim().length >= 2) {
+        const anchor = { snip: sp.snip.replace(/\s+/g, ' ').trim().slice(0, 300) };
+        if (isFinite(sp.at)) anchor.at = Math.max(0, Math.round(sp.at));
+        if (Array.isArray(sp.path) && sp.path.length <= 12 && sp.path.every(n => Number.isInteger(n) && n >= 0 && n < 10000)) anchor.path = sp.path.slice();
+        if (Number.isInteger(sp.off) && sp.off >= 0) anchor.off = sp.off;
+        ne.spot = anchor;
+      }
+      log.push(ne);
+    }
+  }
+  if (typeof r.note === 'string' && r.note.trim()) log.unshift({ id: uid('n_'), text: r.note.slice(0, 2000), at: Date.now() });
+  if (log.length) doc.noteLog = log;
+  if (typeof r.noteDraft === 'string' && r.noteDraft.trim()) doc.noteDraft = r.noteDraft.slice(0, 2000);
+  if (typeof r.notePending === 'string' && r.notePending.trim() && log.some(e => e.id === r.notePending.trim().slice(0, 32))) doc.notePending = r.notePending.trim().slice(0, 32);
   // embedded-image manifest (bytes live in the imgstore IndexedDB sidecar —
   // never inline bytes here, localStorage quota would evict the workspace)
   if (Array.isArray(r.images)) {
@@ -322,7 +347,7 @@ export const vault = {
       // suppressedTags: auto-tag names deleted/merged away on this canvas (kept
       // through backups/restores so the removed names don't regenerate).
       const _supp = Array.isArray(t.suppressedTags) ? [...new Set(t.suppressedTags.map(normTagDisp).filter(s => TAG_RE.test(s)))].slice(0, 200) : [];
-      return { id, name: String(t.name || ('Canvas ' + (ti + 1))).slice(0, 40), docs, _activeRaw: (t.activeId === null) ? null : (typeof t.activeId === 'string' ? t.activeId : undefined), main: t.main === true, assoc: Array.isArray(t.assoc) ? t.assoc.map(String) : null, color: (typeof t.color === 'string' && /^#[0-9a-f]{6}$/i.test(t.color)) ? t.color : null, suppressedTags: _supp, _iso: t.disassociated === true };
+      return { id, name: String(t.name || ('Canvas ' + (ti + 1))).slice(0, 40), docs, _activeRaw: (t.activeId === null) ? null : (typeof t.activeId === 'string' ? t.activeId : undefined), main: t.main === true, assoc: Array.isArray(t.assoc) ? t.assoc.map(String) : null, color: (typeof t.color === 'string' && /^#[0-9a-f]{6}$/i.test(t.color)) ? t.color : null, suppressedTags: _supp, _iso: t.disassociated === true, lastMsg: (typeof t.lastMsg === 'string' ? t.lastMsg : '').slice(0, 500) };
     });
     // second pass: de-dupe doc ids ACROSS tabs (keep the first, mint the rest)
     {
@@ -522,6 +547,7 @@ export const vault = {
       if (names.has(d.name.toLowerCase())) { skipped++; continue; } // already there
       const c = { id: uid(), name: d.name, text: d.text, words: d.words, links: [...d.links], tags: [...d.tags], origin: d.origin || d.id };
       if (d.manualTags && Object.keys(d.manualTags).length) c.manualTags = { ...d.manualTags }; // spot anchors travel with the copy
+      if (Array.isArray(d.noteLog) && d.noteLog.length) c.noteLog = d.noteLog.map(e => ({ ...e })); // copies open with the same notepad; later edits sync by lineage
       if (d.origKey) c.origKey = d.origKey; // copies share the original bytes, like shared picture keys
       this.applySuppress(c, t); // a copied body never resurrects a name this canvas deleted/merged away
       t.docs.push(c);

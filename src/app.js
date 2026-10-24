@@ -13,16 +13,21 @@ let uni = null; // active canvas universe (each canvas keeps its own persistent 
 const unis = new Map(); // tabId -> Universe: formations survive tab switches, twins stay locked
 let ren = null;
 let activeId = null;
+let paneId = null; // reader-only pin: a title click parks a doc in the pane without touching the canvas
+let shownId = null; // doc id the reader actually shows (paneId ?? activeId), refreshed every renderDoc
+let hoverPrev = true; // setting: hovering a body in the released canvas highlights its row in the general list
+let statsCollapsed = false; // the top pill's stats row starts open; – collapses it to just the + toggle
+let tipsCollapsed = false; // the bottom pill's tips start open; the toggle hides them, buttons stay
 let matchSet = null;
 let viewNotesAll = true; // sticky-note squares on every body that HAS a note (solid yellow)
 let viewNotesSun = true; // sticky-note square on the selected body (solid if noted, hollow frame if not)
+let notesOpen = false; // Notes book pane beside the reader (per-doc notepad)
+let notesAuto = true; // auto-save the composed note as you type (else Save pushes it)
 let selSet = new Set(); // marquee box selection: body ids in the active tab (owned here, read by ren.selSet)
 function pruneSel() { for (const sid of [...selSet]) if (!vault.byId(sid)) selSet.delete(sid); }
 // view-source hold state: right-press candidate -> timer -> glass preview pane
-let srcHold = null, srcSuppress = false, srcHi = null, srcStickyId = null, probePress = '';
-// input probe: echoes the last canvas press/release into #probeLine (left panel)
-// so button issues can be diagnosed without devtools. Temporary diagnostic.
-function setProbe(s) { try { const el = document.getElementById('probeLine'); if (el) el.textContent = 'input probe: ' + s; } catch {} }
+let srcHold = null, srcSuppress = false, srcHi = null, srcStickyId = null, hoverHiTimer = 0;
+let assocSelId = null; // last associated-document pick: its row stays gold while the selection stands
 // the box-select action box (marquee rect + its in-box DELETE caption) lives in
 // boot()'s closure, but top-level removals / canvas jumps must also dismiss it —
 // the ids make that possible from any scope.
@@ -111,6 +116,16 @@ function setLog(msg) {
     const el = document.querySelector('#intakeLog');
     if (el) el.textContent = msg || '';
     if (msg) localStorage.setItem('visidocsverse.lastMsg', msg);
+    try { const t = vault.tab(); if (t && msg) t.lastMsg = String(msg).slice(0, 500); } catch {} // the log line belongs to the tab that produced it — never shared
+  } catch {}
+}
+// per-tab log line: switching canvases must never show another verse's message
+function syncIntakeLog() {
+  try {
+    const el = document.querySelector('#intakeLog');
+    if (!el) return;
+    const t = vault.tab();
+    el.textContent = (t && t.lastMsg) || '';
   } catch {}
 }
 // constellation picker: checkbox list with the shared-vocabulary receipts per body,
@@ -259,11 +274,12 @@ let simpleOrb = false; // plain-body mode: flat white discs + thin black outline
 let simpleOrb2 = false; // plain-body 2: original blue orbs with photo overlays stripped (mutually exclusive with simpleOrb)
 let triOrb = false; // triangle mode: upside-down triangles instead of orbs (same fill, same size; combines with any color mode)
 let miniX = null, miniY = null, miniW = 0, miniH = 0; // verse minimap geometry (null x/y = docked bottom-right; 0 w/h = default size)
+let miniFolded = false; // verse map collapsed to its header bar (persists like its geometry)
 let glossX = null, glossY = null, glossW = 0, glossH = 0, glossOpen = false; // glossary pane geometry + visibility (same pattern as the minimap)
 let tvpX = null, tvpY = null; // tags pop-out card position (null = centered; header-drags to move, persists)
 let tvpDragTag = null; // tags-merge drag source: stripped tag name being dragged onto another pill (null = no drag)
 let tvpMergeAt = 0; // last merge-drop timestamp: the click that lands right after a drop is the drop itself, not a focus request
-let skipTagConfirms = false; // tags pop-out: skip the delete/merge confirmation dialogs (checkbox in the dialog, reversible toggle in the pane tips)
+let skipTagConfirms = false; // tags pop-out: skip the delete/merge/rename confirmation dialogs (checkbox in the dialog, reversible toggle in the pane tips)
 let rotMul = 1;
 let ovAlpha = 0.6, ovLast = 0.6;
 let lbScale = 1, lbLast = 1; // file-name label size (0 = hidden) // body texture overlay opacity (0 = off)
@@ -315,11 +331,14 @@ try {
   if (typeof ui.miniX === 'number' && typeof ui.miniY === 'number') { miniX = ui.miniX; miniY = ui.miniY; }
   if (typeof ui.miniW === 'number' && ui.miniW >= 140 && ui.miniW <= 640) miniW = ui.miniW;
   if (typeof ui.miniH === 'number' && ui.miniH >= 100 && ui.miniH <= 480) miniH = ui.miniH;
+  if (ui.miniFolded === true) miniFolded = true;
   if (typeof ui.tvpX === 'number' && typeof ui.tvpY === 'number') { tvpX = ui.tvpX; tvpY = ui.tvpY; }
   if (typeof ui.glossX === 'number' && typeof ui.glossY === 'number') { glossX = ui.glossX; glossY = ui.glossY; }
   if (typeof ui.glossW === 'number' && ui.glossW >= 240 && ui.glossW <= 620) glossW = ui.glossW;
   if (typeof ui.glossH === 'number' && ui.glossH >= 160 && ui.glossH <= 720) glossH = ui.glossH;
   if (ui.glossOpen === true) glossOpen = true;
+  if (!ui.glossDockV1) { glossX = null; glossY = null; glossW = 0; glossH = 0; } // v1 dock: tall pane beside the left panel (was bottom-right)
+  if (glossOpen) { glossX = null; glossY = null; } // a pane open across reload still restarts at the dock
   if (simpleOrb && simpleOrb2) simpleOrb2 = false; // never both (older pref wins)
   const stored = ui.speedMul ?? ui.rotMul;
     if (typeof ui.ovAlpha === 'number' && ui.ovAlpha >= 0 && ui.ovAlpha <= 1) ovAlpha = ui.ovAlpha;
@@ -350,6 +369,9 @@ try {
     if (ui.glazeGloss === false) glazeGloss = false;
     if (ui.leftCollapsed === true) leftCollapsed = true;
     if (ui.docCollapsed === true) docCollapsed = true;
+  if (ui.hoverPrev === false) hoverPrev = false; else if (ui.hoverPrev === true) hoverPrev = true;
+  if (ui.statsCollapsed === true) statsCollapsed = true;
+  if (ui.tipsCollapsed === true) tipsCollapsed = true;
     if (typeof ui.docWidth === 'number' && ui.docWidth >= 260 && ui.docWidth <= 900) docWidth = ui.docWidth;
     if (ui.lensThematic === true) lensThematic = true;
     if (ui.lensTags === true) lensTags = true;
@@ -357,10 +379,12 @@ try {
     if (ui.viewNotesAll === false) viewNotesAll = false;
     if (ui.viewNotesSun === false) viewNotesSun = false;
     if (ui.viewNotes === false) { viewNotesAll = false; viewNotesSun = false; } // legacy single toggle
+    if (ui.notesAuto === false) notesAuto = false; else if (ui.notesAuto === true) notesAuto = true;
+    if (ui.notesOpen === true) notesOpen = true;
   if (stored >= 0 && stored <= 3) rotMul = stored;
 } catch { /* fresh prefs */ }
 function saveUi() {
-  try { localStorage.setItem('visidocsverse.ui', JSON.stringify({ rotOn, rotMul, speedMul: rotMul, autoDist, simpleOrb, simpleOrb2, triOrb, miniX, miniY, miniW, miniH, tvpX, tvpY, glossX, glossY, glossW, glossH, glossOpen, ovAlpha, ovLast, lbScale, lbLast, sizeScale, sizeLast, spinOn, spinSpeed, compressScale, compressLast, bgShade, glow: glowScale, glowLast, tether: tetherScale, tetherLast, tetherColor, backdrop, backdropAlpha, backdropLast, paneAlpha, paneLast, glazeLeft, glazeDoc, glazeCloud, glazeMini, glazeGloss, leftCollapsed, docCollapsed, docWidth, lensThematic, lensTags, skipTagConfirms, viewNotesAll, viewNotesSun })); } catch { /* private mode */ }
+  try { localStorage.setItem('visidocsverse.ui', JSON.stringify({ rotOn, rotMul, speedMul: rotMul, autoDist, simpleOrb, simpleOrb2, triOrb, miniX, miniY, miniW, miniH, miniFolded, tvpX, tvpY, glossX, glossY, glossW, glossH, glossOpen, glossDockV1: true, ovAlpha, ovLast, lbScale, lbLast, sizeScale, sizeLast, spinOn, spinSpeed, compressScale, compressLast, bgShade, glow: glowScale, glowLast, tether: tetherScale, tetherLast, tetherColor, backdrop, backdropAlpha, backdropLast, paneAlpha, paneLast, glazeLeft, glazeDoc, glazeCloud, glazeMini, glazeGloss, leftCollapsed, docCollapsed, docWidth, hoverPrev, statsCollapsed, tipsCollapsed, lensThematic, lensTags, skipTagConfirms, viewNotesAll, viewNotesSun, notesOpen, notesAuto })); } catch { /* private mode */ }
 }
 // bottom hint pill: flip to a light pill on a white canvas, dark pill on black
 function syncHintContrast() {
@@ -377,16 +401,10 @@ function syncPaneContrast() {
   } catch {}
 }
 // reader pane width: discrete left-edge handle stretches it (persisted).
-// The cap also keeps the expanded pane clear of the centered top pill, so the
-// pane's header never slides underneath it.
+// The pane may stretch clean across the centered top pill (the reader paints
+// above it) and slides underneath the bottom pill (which stays on top).
 function clampDocW(w) {
-  let tabW = 400;
-  try { const t = document.getElementById('tabBar'); if (t && t.getBoundingClientRect) tabW = t.getBoundingClientRect().width || 400; } catch {}
-  // tabs not rendered yet (boot): assume a wide pill so the first paint can't
-  // land underneath it; renderTabs() re-clamps once the real width is known.
-  if (tabW < 200) tabW = 600;
-  const avoid = Math.floor(window.innerWidth / 2 - tabW / 2 - 24);
-  const max = Math.max(280, Math.min(900, window.innerWidth * 0.9 - 32, avoid));
+  const max = Math.max(280, Math.min(900, window.innerWidth * 0.9 - 32));
   return Math.max(260, Math.min(max, Math.round(w)));
 }
 function applyDocWidth() {
@@ -421,6 +439,174 @@ function themeById(id) {
   if (thematicWhole) return wholeThemes.find(t => t.id === id) || null;
   const list = thematicThemes.get(vault.activeTabId) || [];
   return list.find(t => t.id === id) || null;
+}
+// ---------- associated-document overlay (thematic view) ----------
+// Right-click a theme orb (or empty canvas) to pin its grounded member docs
+// around it as little paper icons; left-click an icon to light up its row in
+// the reader's bodies inventory (grounded + ungrounded). Session-only: entries are keyed by
+// scope (whole-visidocsverse vs one tab) + theme id, so tab switches and
+// re-distillations can never show another verse's overlay.
+let assocReq = new Map(); // scope|themeId -> {labels}
+let assocAll = new Map(); // scope -> {labels} (entire canvas at once)
+let assocExcl = new Set(); // scope|themeId hidden again inside an all-mode overlay
+const assocScopeKey = () => (thematicWhole ? 'whole' : 'tab:' + vault.activeTabId);
+// top grounding bodies: the 3 members with the most theme-term evidence in
+// their text (ties broken by title) — they draw in the seed orb's own color,
+// every other member in a lighter shade of it.
+const ASSOC_TOP_N = 3;
+const assocScoreCache = new Map(); // themeId -> {stamp, scored:[{d,s}]}
+function assocScores(th) {
+  const stamp = (th.terms || []).join('|') + '#' + (th.members || []).join(',');
+  const hit = assocScoreCache.get(th.id);
+  if (hit && hit.stamp === stamp) return hit;
+  const terms = (th.terms || []).map(t => String(t).toLowerCase()).filter(Boolean);
+  const scored = [];
+  for (const id of (th.members || [])) {
+    const d = vault.byIdAnywhere(id);
+    if (!d) continue;
+    const tx = String(d.text || '').toLowerCase();
+    let s = 0;
+    for (const t of terms) { let i = 0, n = 0; while ((i = tx.indexOf(t, i)) >= 0) { n++; i += t.length; if (n >= 50) break; } s += Math.min(n, 50); }
+    scored.push({ d, s });
+  }
+  scored.sort((a, b) => b.s - a.s || (vault.titleOf(a.d) < vault.titleOf(b.d) ? -1 : 1));
+  const out = { stamp, scored };
+  assocScoreCache.set(th.id, out);
+  if (assocScoreCache.size > 60) assocScoreCache.delete(assocScoreCache.keys().next().value);
+  return out;
+}
+function assocOverlayFor(th) {
+  // null = hidden; else {labels}
+  const scope = assocScopeKey();
+  const all = assocAll.get(scope);
+  if (all && !assocExcl.has(scope + '|' + th.id)) return { labels: !!all.labels };
+  const r = assocReq.get(scope + '|' + th.id);
+  return r ? { labels: !!r.labels } : null;
+}
+// ungrounded docs: files no theme grounds. The overlay shows ALL files, so
+// each of these rides on exactly one orb — the theme whose terms hit its text
+// hardest (ties: first theme), or the largest theme when nothing hits. They
+// draw palest and can never be top-tier. Cached per scope like assocScores.
+const assocUngrCache = new Map(); // scope -> {stamp, map: Map(themeId -> [doc])}
+function assocUngrMap() {
+  const scope = assocScopeKey();
+  const themes = thematicWhole ? wholeThemes : (thematicThemes.get(vault.activeTabId) || []);
+  const docs = thematicWhole ? wholeVisidocsverseDocs() : (((vault.tab() || {}).docs) || []);
+  const stamp = themes.map(th => th.id + ':' + (th.members || []).join(',') + ':' + (th.terms || []).join('|')).join(';') + '#' + docs.map(d => d.id).join(',');
+  const hit = assocUngrCache.get(scope);
+  if (hit && hit.stamp === stamp) return hit.map;
+  const map = new Map();
+  if (themes.length) {
+    const memberOf = new Set();
+    for (const th of themes) for (const m of (th.members || [])) memberOf.add(m);
+    const ungr = docs.filter(d => d && !memberOf.has(d.id));
+    if (ungr.length) {
+      const termList = themes.map(th => (th.terms || []).map(t => String(t).toLowerCase()).filter(Boolean));
+      let big = 0;
+      themes.forEach((th, i) => { if (((th.members || []).length) > ((themes[big].members || []).length)) big = i; });
+      for (const d of ungr) {
+        const tx = String(d.text || '').toLowerCase();
+        let best = 0, bestScore = 0;
+        termList.forEach((terms, i) => {
+          let s = 0;
+          for (const t of terms) { let k = 0, p; while ((p = tx.indexOf(t, k)) >= 0) { s++; k = p + t.length; if (s >= 200) break; } if (s >= 200) break; }
+          if (s > bestScore) { bestScore = s; best = i; }
+        });
+        const tid = themes[bestScore > 0 ? best : big].id;
+        if (!map.has(tid)) map.set(tid, []);
+        map.get(tid).push(d);
+      }
+    }
+  }
+  assocUngrCache.set(scope, { stamp, map });
+  if (assocUngrCache.size > 20) assocUngrCache.delete(assocUngrCache.keys().next().value);
+  return map;
+}
+// screen-space draw list for the renderer, built per frame from live nodes
+function assocDrawData() {
+  if (!lensThematic || !uni) return null;
+  const themes = thematicWhole ? wholeThemes : (thematicThemes.get(vault.activeTabId) || []);
+  if (!themes.length) return null;
+  const out = [];
+  const ungrMap = assocUngrMap();
+  for (const th of themes) {
+    const ov = assocOverlayFor(th);
+    if (!ov) continue;
+    const node = uni.byId.get(th.id);
+    if (!node || !node._p) continue;
+    const { scored } = assocScores(th);
+    const extras = ungrMap.get(th.id) || [];
+    if (!scored.length && !extras.length) continue;
+    const topIds = new Set(scored.slice(0, ASSOC_TOP_N).map(x => x.d.id));
+    const seed = ((activeId && uni.byId.has(activeId)) ? (th.id === activeId) : !!node.isActive);
+    for (const { d } of scored) out.push({ theme: th.id, doc: d.id, title: vault.titleOf(d), top: topIds.has(d.id), seedActive: seed, showLabel: ov.labels });
+    for (const d of extras) out.push({ theme: th.id, doc: d.id, title: vault.titleOf(d), top: false, ungr: true, seedActive: seed, showLabel: ov.labels });
+  }
+  return out.length ? out : null;
+}
+function showAssoc(themeId, labels) {
+  const th = themeById(themeId);
+  if (!th) { toast('That theme is gone — the verse re-distilled underneath'); return; }
+  if (!lensThematic) { toast('Enter the Thematic view first'); return; }
+  const scope = assocScopeKey();
+  assocReq.set(scope + '|' + themeId, { labels: !!labels });
+  assocExcl.delete(scope + '|' + themeId);
+  const n = (th.members || []).length;
+  const ux = (assocUngrMap().get(themeId) || []).length;
+  const parts = [`${n} associated`];
+  if (ux) parts.push(`${ux} ungrounded`);
+  try { syncLbPill(); } catch {}
+  toast(`Showing ${parts.join(' + ')} document${n + ux === 1 ? '' : 's'} ${labels ? 'with' : 'without'} labels — left-click one to light up its row`);
+}
+function hideAssoc(themeId) {
+  const scope = assocScopeKey();
+  assocReq.delete(scope + '|' + themeId);
+  if (assocAll.get(scope)) assocExcl.add(scope + '|' + themeId);
+  try { syncLbPill(); } catch {}
+  toast('Associated documents hidden for that orb');
+}
+function showAssocAll(labels) {
+  if (!lensThematic) { toast('Enter the Thematic view first'); return; }
+  const scope = assocScopeKey();
+  assocAll.set(scope, { labels: !!labels });
+  const themes = thematicWhole ? wholeThemes : (thematicThemes.get(vault.activeTabId) || []);
+  const um = assocUngrMap();
+  let n = 0, ux = 0;
+  for (const th of themes) { if (!assocExcl.has(scope + '|' + th.id)) { n += (th.members || []).length; ux += (um.get(th.id) || []).length; } }
+  const parts = [`${n} associated`];
+  if (ux) parts.push(`${ux} ungrounded`);
+  try { syncLbPill(); } catch {}
+  toast(`Showing ${parts.join(' + ')} documents across ${themes.length} theme${themes.length === 1 ? '' : 's'} ${labels ? 'with' : 'without'} labels`);
+}
+function clearAssoc() {
+  const scope = assocScopeKey();
+  for (const k of [...assocReq.keys()]) if (k.startsWith(scope + '|')) assocReq.delete(k);
+  assocAll.delete(scope);
+  for (const k of [...assocExcl]) if (k.startsWith(scope + '|')) assocExcl.delete(k);
+  try { syncLbPill(); } catch {}
+  toast('All associated documents cleared from view');
+}
+// left-click an associated paper icon: keep the theme as sun and light up the
+// doc's row in the reader's bodies inventory (grounded + ungrounded). The gold
+// persists while the selection stands — no fade timer — and clears when the
+// selection moves on (another pick, release, lens/tab/Return switch).
+function focusAssocDoc(themeId, docId) {
+  const th = themeById(themeId);
+  if (!th) return;
+  if (activeId !== themeId) {
+    // reader-only: the theme stays exactly where it is (no physical refocus,
+    // so orbs never trade places when lighting up rows)
+    claimSun(themeId);
+    renderDoc();
+  }
+  assocSelId = docId;
+  try {
+    paintGoldRows(docId);
+    const row = document.querySelector(`#docLinks .bl-row[data-open="${CSS.escape(docId)}"]`);
+    if (!row && th && !((th.members || []).includes(docId))) {
+      toast('That file is grounded in no theme — shown palest so every file displays');
+    }
+  } catch {}
 }
 // clump co-related terms into themes, sized by thematic weight (deterministic:
 // ranked by evidence, ties broken alphabetically — no randomness).
@@ -786,6 +972,8 @@ function tagById(id) {
 function setTagsVerse(on) {
   if (!vault.tab()) { toast('No open canvas — click + or reopen a canvas before opening the tags view.'); return; }
   pushView(); // Return can come back to the pre-view state
+  paneId = null; // the lens swaps rebuild the reader — the pane follows again
+  assocSelId = null; srcHi = null; // the new view lights its own rows
   clearFit(); // the lens swaps the universe: a fitted view is stale
   if (on) {
     const recs = tagsFor(vault.tab().docs || []);
@@ -793,13 +981,16 @@ function setTagsVerse(on) {
     lensThematic = false; thematicWhole = false;
     lensTags = true;
     syncLensBtn(); applyLens(); saveUi();
+    try { syncTagVerseBtn(); } catch {} // pane button reads the live lens state too
     closeTagPop();
     toast(`Tags view — ${recs.length} tag${recs.length === 1 ? '' : 's'} across ${(vault.tab().docs || []).length} bodies`);
+    try { syncLbPill(); } catch {}
   } else {
     if (!lensTags) return;
     lensTags = false;
     applyLens(); saveUi();
     try { syncTagVerseBtn(); } catch {} // the pop-out stays open on exit: refresh its button
+    try { syncLbPill(); } catch {}
     toast('Regular view restored');
   }
 }
@@ -809,6 +1000,8 @@ function setTagsVerse(on) {
 // view always drops the whole view.
 function toggleThematicLens() {
   pushView(); // Return can come back to the pre-lens view
+  paneId = null; // the lens swaps rebuild the reader — the pane follows again
+  assocSelId = null; srcHi = null; // the new view lights its own rows
   clearFit(); // the lens swaps the universe: a fitted view is stale
   if (!vault.tab()) {
     toast('No open canvas — click + or reopen a canvas before using the Thematic lens.');
@@ -827,6 +1020,7 @@ function toggleThematicLens() {
     const n = (thematicThemes.get(vault.activeTabId) || []).length;
     toast(n ? `Thematic lens — ${n} theme${n === 1 ? '' : 's'} distilled from shared concepts` : 'Thematic lens — no shared concepts in this canvas yet');
   }
+  try { syncLbPill(); } catch {}
 }
 // universe view modes (strip under the top tabs): Main = the regular canvas
 // universe, Thematic = the Thematic entry in the row, Tag = the entry that
@@ -837,6 +1031,8 @@ function goViewMode(mode) {
   else {
     if (!lensThematic && !lensTags) { toast('Main view — the regular canvas universe'); return; }
     pushView(); // Return can come back to the lens being left
+    paneId = null; // leaving the lens rebuilds the reader — the pane follows again
+    assocSelId = null; srcHi = null; // the restored view lights its own rows
     lensThematic = false; thematicWhole = false; lensTags = false;
     clearFit();
     applyLens(); saveUi();
@@ -844,6 +1040,7 @@ function goViewMode(mode) {
     toast('Main view — the regular canvas universe');
   }
   try { syncViewModes(); } catch {}
+  try { syncLbPill(); } catch {}
 }
 // view-modes strip state: highlight whichever view is live
 function syncViewModes() {
@@ -893,6 +1090,8 @@ function goReturn() {
     if (target.tabId !== vault.activeTabId && vault.tabs.some(t => t.id === target.tabId)) switchCanvas(target.tabId);
     lensThematic = !!target.lensThematic; thematicWhole = !!target.thematicWhole; lensTags = !!target.lensTags;
     activeId = target.activeId || null;
+    paneId = null; // a returned view re-follows the canvas
+    assocSelId = null; srcHi = null; // the restored view lights its own rows
     clearFit();
     applyLens(); saveUi();
     try { syncTagVerseBtn(); } catch {}
@@ -948,7 +1147,7 @@ function applyMiniGeom() {
   const box = $('#miniMap');
   if (!box) return;
   const w = miniW > 0 ? miniW : 232, h = miniH > 0 ? miniH : 172;
-  box.style.width = w + 'px'; box.style.height = h + 'px';
+  box.style.width = w + 'px'; box.style.height = miniFolded ? 'auto' : h + 'px';
   if (miniX == null || miniY == null) { box.style.right = '16px'; box.style.bottom = '16px'; box.style.left = 'auto'; box.style.top = 'auto'; }
   else {
     miniX = Math.max(0, Math.min(window.innerWidth - 80, miniX));
@@ -961,35 +1160,379 @@ function syncMiniMap() {
   const box = $('#miniMap');
   if (!box) return;
   box.hidden = !autoDist;
-  if (autoDist) { applyMiniGeom(); drawMiniMap(); }
+  if (autoDist) { applyMiniGeom(); syncMiniFold(); drawMiniMap(); }
 }
-// ---------- glossary of terms: minimap-style floating glass pane, bottom-right ----------
+// verse-map collapse: a slim header bar instead of the live map (+ restores)
+function syncMiniFold() {
+  const box = $('#miniMap'), b = $('#miniMapFold');
+  if (!box) return;
+  box.classList.toggle('folded', miniFolded === true);
+  if (b) {
+    b.textContent = miniFolded ? '+' : '–';
+    b.title = miniFolded ? 'Restore the verse map' : 'Collapse the verse map to its header bar';
+  }
+}
+// usable vertical band for the glossary pane: below the top tab pill, above the bottom hint pill
+function glossBand() {
+  let top = 8, bottom = window.innerHeight - 8;
+  try {
+    const tb = document.getElementById('tabBar');
+    if (tb) { const r = tb.getBoundingClientRect(); if (r.width > 0 && r.height > 0) top = Math.max(top, r.bottom + 8); }
+    const hb = document.getElementById('hintBar');
+    if (hb && getComputedStyle(hb).display !== 'none') { const r = hb.getBoundingClientRect(); if (r.width > 0 && r.height > 0 && r.top < window.innerHeight) bottom = Math.min(bottom, r.top - 8); }
+    // Return rides as a tab above the pill's right edge — keep the band clear of it too
+    try {
+      const rb = document.getElementById('returnBtn');
+      if (rb && hb && getComputedStyle(hb).display !== 'none' && getComputedStyle(rb).display !== 'none') { const r2 = rb.getBoundingClientRect(); if (r2.width > 0 && r2.height > 0 && r2.top < window.innerHeight) bottom = Math.min(bottom, r2.top - 8); }
+    } catch {}
+  } catch {}
+  if (bottom < top + 160) bottom = top + 160; // degenerate viewport: keep it usable, not inverted
+  return { top, bottom };
+}
+// ---------- glossary of terms: tall glass pane docked beside the left panel ----------
 function applyGlossGeom() {
   const box = $('#glossPane');
   if (!box) return;
-  const w = Math.min(glossW > 0 ? glossW : 360, window.innerWidth - 16), h = Math.min(glossH > 0 ? glossH : 430, window.innerHeight - 16);
-  box.style.width = w + 'px'; box.style.height = h + 'px';
-  if (glossX == null || glossY == null) { box.style.right = '16px'; box.style.bottom = '16px'; box.style.left = 'auto'; box.style.top = 'auto'; }
+  const band = glossBand();
+  const bandH = band.bottom - band.top;
+  const docked = (glossX == null || glossY == null);
+  let L = 288; // fallback: left panel (264 + 16 margin) + 8 gap
+  try { const lp = document.getElementById('leftPanel'); if (lp) L = lp.getBoundingClientRect().right + 8; } catch {}
+  L = Math.max(8, Math.min(L, window.innerWidth - 260));
+  let w = Math.min(glossW > 0 ? glossW : (docked ? 560 : 360), window.innerWidth - (docked ? L + 8 : 16)), h = Math.min(glossH > 0 ? glossH : (docked ? bandH : 430), bandH);
+  if (docked) { box.style.left = L + 'px'; box.style.top = band.top + 'px'; box.style.right = 'auto'; box.style.bottom = 'auto'; }
   else {
     glossX = Math.max(0, Math.min(window.innerWidth - 80, glossX));
-    glossY = Math.max(0, Math.min(window.innerHeight - 60, glossY));
+    glossY = Math.max(band.top, Math.min(band.bottom - 120, glossY));
+    h = Math.min(h, band.bottom - glossY);
     box.style.left = glossX + 'px'; box.style.top = glossY + 'px';
     box.style.right = 'auto'; box.style.bottom = 'auto';
   }
+  box.style.width = w + 'px'; box.style.height = h + 'px';
+  try { placeGlossTop(); } catch {} // the Top tab rides the pane's geometry
 }
 function syncGloss() {
   const box = $('#glossPane');
   if (!box) return;
   box.hidden = !glossOpen;
   if (glossOpen) applyGlossGeom();
+  try { syncGlossTop(); } catch {}
 }
 function setGloss(open) {
   glossOpen = open === true;
+  if (glossOpen) { glossX = null; glossY = null; } // every open starts at the dock beside the book tab — never the last dragged spot
   syncGloss(); saveUi();
+  try { document.getElementById('glossTab').classList.toggle('open', glossOpen); } catch {}
+}
+// ---------- Notes book tab + pane: one shared notepad per active body ----------
+// A thin vertical book tab rides the reader's left edge (fixed — never
+// draggable). Clicking it opens a glass pane parked left of the reader, 30%
+// narrower than the glossary dock. The pane lists every entry for the doc
+// with per-entry delete, plus Save (manual push), auto-save, Delete-all and
+// Cancel. The sticky square, the reader notes button and any tab's copy all
+// read and write the same entry list, so every surface agrees.
+let notesDocId = null; // doc the open pane is showing
+let notesSessionAuto = null; // auto entry created since this open (Cancel removes it)
+let notesDraftTimer = 0, notesCloseToken = 0;
+function notesBand() { return glossBand(); } // same pill-to-pill vertical band
+function placeNotesTab() {
+  const t = $('#notesTab'), p = $('#docPanel');
+  if (!t || !p) return;
+  if (t.hidden) return;
+  const r = p.getBoundingClientRect();
+  t.style.left = Math.max(8, Math.round(r.left - 25)) + 'px';
+  t.style.top = Math.max(8, Math.round(r.top + 132)) + 'px'; // same relative recipe as the Glossary book tab (fixed offset below the pane top, riding its border) — high above the mid-height stretch arrow + side find bar
+}
+function syncNotesTab() {
+  const t = $('#notesTab'), p = $('#docPanel');
+  if (!t || !p) return;
+  // the tab belongs to documents: general/theme/tag views (no active body)
+  // never show it — there is nothing to take notes on
+  const hasDoc = !!vault.byId(activeId);
+  const open = hasDoc && !p.hidden && p.offsetParent !== null && !p.classList.contains('collapsed') && window.innerWidth > 760;
+  t.hidden = !open;
+  if (!open) {
+    // released/general view has no reader doc — but a pane explicitly opened
+    // for a real doc (the floating square's "Notes pane →") stays on its own
+    // doc instead of being slammed shut; only a doc-less pane auto-closes.
+    if (notesOpen && !vault.byId(notesDocId)) closeNotesPane(true);
+    return;
+  }
+  t.classList.toggle('open', notesOpen);
+  t.title = notesOpen ? 'Close the Notes pane' : 'Open the Notes pane — one shared notepad for this body (fixed beside the reader)';
+  placeNotesTab();
+}
+function applyNotesGeom() {
+  const box = $('#notesPane');
+  if (!box || !notesOpen) return;
+  const band = notesBand();
+  const bandH = band.bottom - band.top;
+  const p = $('#docPanel');
+  let w = Math.round((glossW > 0 ? glossW : 560) * 0.7); // 30% narrower than the glossary pane
+  w = Math.max(280, Math.min(520, w, window.innerWidth - 32));
+  let L = 8;
+  try { if (p) { const r = p.getBoundingClientRect(); L = Math.max(8, Math.min(Math.round(r.left - w - 8), window.innerWidth - w - 8)); } } catch {}
+  box.style.left = L + 'px'; box.style.top = band.top + 'px';
+  box.style.width = w + 'px'; box.style.height = Math.max(200, bandH) + 'px';
+  try { syncNotesTop(); } catch {} // the Top tab rides the pane's geometry
+}
+function setNotes(open, id) {
+  open = open === true;
+  if (open) {
+    const doc = vault.byId(typeof id === 'string' ? id : (vault.byId(shownId) ? shownId : activeId));
+    if (!doc) { toast('Open a document body first — notes live on bodies'); return; }
+    if (notesDocId !== doc.id) { notesSessionAuto = null; }
+    notesDocId = doc.id;
+    notesOpen = true;
+    // the pane and the reader stay on the same document: when the reader is
+    // already showing a different body, opening this notepad parks that body
+    // in the Active-body pane too (pane-only pin — sun, camera and lens never
+    // move). Overview/lens readers keep their view; only a doc-for-doc
+    // switch re-parks.
+    if (vault.byId(shownId) && shownId !== doc.id) {
+      paneId = doc.id;
+      try { renderDoc(); } catch {}
+      if (window.innerWidth <= 760) { try { $('#docPanel').classList.add('open'); } catch {} }
+    }
+    const box = $('#notesPane');
+    if (box) {
+      notesCloseToken++;
+      box.hidden = false;
+      applyNotesGeom();
+      renderNotesPane();
+      // smooth trip in: unhide first (still faded/shifted), then .show
+      // transitions opacity + transform into place over ~240ms
+      requestAnimationFrame(() => requestAnimationFrame(() => { try { box.classList.add('show'); } catch {} }));
+      // its inventory row stays gold and in view while the pane stands:
+      // unfold View-all when the row hides past the 6 largest, then center
+      // it so it sits next to the pane (general inventory only — other
+      // readers have no doc rows to light).
+      if (!shownId && !lensThematic && !lensTags && !thematicWhole) {
+        const nsel = `#docLinks .bl-row[data-open="${CSS.escape(doc.id)}"]`;
+        if (!document.querySelector(nsel)) {
+          const t = vault.tab();
+          if (t && (t.docs || []).length > 6 && !showAllBodies) { showAllBodies = true; renderGeneral(); }
+        }
+        paintGoldRows(doc.id);
+      } else paintGoldRows();
+    }
+  } else closeNotesPane();
+  try { syncNotesTab(); } catch {}
+  try { saveUi(); } catch {}
+}
+function closeNotesPane(silent) {
+  const box = $('#notesPane');
+  notesOpen = false;
+  try { $('#notesTopBtn').hidden = true; } catch {} // the Top tab never outlives its pane
+  try { saveUi(); } catch {}
+  try { syncNotesTab(); } catch {}
+  try { paintGoldRows(); } catch {} // its row unlights now the pane is gone
+  if (!box || box.hidden) return;
+  if (silent) { notesCloseToken++; box.hidden = true; box.classList.remove('show'); return; }
+  box.classList.remove('show'); // smooth trip out, then hide once faded
+  const token = ++notesCloseToken;
+  setTimeout(() => { if (notesCloseToken === token) box.hidden = true; }, 240);
+}
+function syncNotesPaneDoc() { // the tab + pane follow whatever the reader shows
+  if (vault.byId(shownId)) {
+    if (notesDocId !== shownId) { notesDocId = shownId; notesSessionAuto = null; }
+  }
+  // theme / tag / general views show no doc: keep the pane's own doc — a pane
+  // explicitly opened from a sticky square stays on its notepad instead of
+  // blanking the moment the reader re-renders.
+  try { syncNotesTab(); } catch {}
+  if (notesOpen) { try { applyNotesGeom(); } catch {} try { renderNotesPane(); } catch {} }
+}
+function notesEntryDate(at) { try { return new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } }
+function renderNotesPane() {
+  const box = $('#notesPane');
+  if (!box || !notesOpen) return;
+  const d = vault.byId(notesDocId);
+  const title = $('#notesTitle');
+  if (title) title.textContent = d ? ('◉ NOTES — ' + vault.titleOf(d)) : '◉ NOTES';
+  const auto = $('#notesAutoCk');
+  if (auto && document.activeElement !== auto) auto.checked = notesAuto !== false;
+  const hd = $('#notesHeadCount');
+  const log = d ? noteLogOf(d) : [];
+  if (hd) hd.textContent = d ? (log.length ? `${log.length} ${log.length === 1 ? 'entry' : 'entries'}` : 'empty') : '';
+  const list = $('#notesList');
+  if (list) {
+    list.innerHTML = d ? (log.length ? log.map((e, i) =>
+      `<div class="ne${e.spot ? ' pinned' : ''}"${e.spot ? ` data-nejump="${esc(e.id)}" title="Jump to its passage in the body"` : ''}><div class="ne-head"><span class="ne-num">#${i + 1} · ${esc(notesEntryDate(e.at))}</span><button class="ne-x" data-ndel="${esc(e.id)}" title="Delete this note entry">×</button></div><div class="ne-text">${esc(e.text)}</div></div>`
+    ).join('') : '<div class="ne-empty">No notes on this document yet — write one below, highlight text in the body and send it here, or use the sticky square.</div>')
+    : '<div class="ne-empty">Open a document body to take notes.</div>';
+  }
+  const area = $('#notesArea');
+  if (area) {
+    area.disabled = !d;
+    if (document.activeElement !== area) {
+      const pend = d && d.notePending ? log.find(e => e.id === d.notePending) : null;
+      area.value = d ? (String(d.noteDraft || '') || (pend ? pend.text : '')) : '';
+      const cnt = $('#notesCount');
+      if (cnt) cnt.textContent = `${area.value.length}/${NOTE_MAX}`;
+    }
+  }
+  const sel = $('#notesSelBtn'), sv = $('#notesSave'), da = $('#notesDelAll');
+  if (sel) sel.disabled = !d;
+  if (sv) sv.disabled = !d;
+  if (da) da.disabled = !(d && log.length);
+  try { syncNotesTop(); } catch {} // list rebuilds reset scroll — no stale tab
+}
+function onNotesInput() {
+  const area = $('#notesArea'); if (!area) return;
+  const cnt = $('#notesCount'); if (cnt) cnt.textContent = `${area.value.length}/${NOTE_MAX}`;
+  try { clearTimeout(notesDraftTimer); } catch {}
+  notesDraftTimer = setTimeout(() => {
+    const dd = vault.byId(notesDocId); if (!dd) return;
+    const txt = area.value;
+    if (String(dd.noteDraft || '') !== txt) { dd.noteDraft = txt.slice(0, NOTE_MAX); try { vault.persist(); } catch {} }
+    if (notesAuto !== false && notesOpen && notesDocId && vault.byId(notesDocId) === dd) autoSaveNoteEntry();
+  }, 700);
+}
+function autoSaveNoteEntry() { // auto-save: pauses in typing land in ONE pending entry (created once, then updated)
+  const area = $('#notesArea');
+  const d = vault.byId(notesDocId);
+  if (!area || !d) return;
+  const txt = String(area.value || '');
+  if (!txt.trim()) { // composer cleared: drop the in-progress auto entry
+    if (d.notePending) {
+      const pend = noteLogOf(d).find(e => e.id === d.notePending);
+      if (pend) { try { deleteNoteEntry(d.id, pend.id); } catch {} }
+      delete d.notePending;
+      try { vault.persist(); } catch {}
+    }
+    notesSessionAuto = null;
+    try { renderNotesPane(); } catch {}
+    return;
+  }
+  const pend = d.notePending ? noteLogOf(d).find(e => e.id === d.notePending) : null;
+  if (pend) {
+    if (pend.text !== txt.slice(0, NOTE_MAX)) setNoteEntry(d.id, pend.id, txt);
+  } else {
+    const e = addNoteEntry(d.id, txt); // persists + syncs kin + refreshes views
+    if (e) { d.notePending = e.id; notesSessionAuto = e.id; try { vault.persist(); } catch {} }
+  }
+}
+function saveNotesPane() { // manual push: the composed text becomes an entry now
+  const area = $('#notesArea');
+  const d = vault.byId(notesDocId);
+  if (!d || !area) return;
+  const txt = String(area.value || '');
+  if (d.notePending) {
+    const pend = noteLogOf(d).find(e => e.id === d.notePending);
+    if (pend && txt.trim()) setNoteEntry(d.id, pend.id, txt);
+    else if (pend && !txt.trim()) deleteNoteEntry(d.id, pend.id);
+    delete d.notePending;
+  } else if (txt.trim()) addNoteEntry(d.id, txt);
+  else { toast('Nothing to save — write a note first'); return; }
+  notesSessionAuto = null;
+  try { delete d.noteDraft; } catch {}
+  area.value = '';
+  try { vault.persist(); } catch {}
+  try { renderNotesPane(); } catch {}
+  toast('Note saved');
+}
+function cancelNotesPane() { // discard the composed text (and this session's auto entry) and close
+  const d = vault.byId(notesDocId);
+  if (d && notesSessionAuto) {
+    try { deleteNoteEntry(d.id, notesSessionAuto); } catch {}
+  }
+  if (d) { try { delete d.noteDraft; } catch {} try { vault.persist(); } catch {} }
+  notesSessionAuto = null;
+  const area = $('#notesArea'); if (area) area.value = '';
+  closeNotesPane();
+}
+function readReaderSelection() { // live reader selection + its creation anchor (same rich shape as manual-tag spots)
+  try {
+    const sel = window.getSelection();
+    const root = $('#docBody');
+    if (!sel || sel.isCollapsed || !root || !sel.anchorNode || !root.contains(sel.anchorNode)) return { text: '', spot: null };
+    const text = String(sel.toString() || '');
+    let spot = text.trim().replace(/\s+/g, ' ').slice(0, 200);
+    try {
+      const an = sel.anchorNode;
+      if (an && root.contains(an)) {
+        const path = [];
+        let n = an, ok = true;
+        while (n && n !== root) { const p = n.parentNode; if (!p) { ok = false; break; } path.unshift([...p.childNodes].indexOf(n)); n = p; }
+        if (ok && n === root) {
+          const norm0 = (s) => String(s || '').replace(/\s+/g, '');
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+          let at = 0, tn;
+          while ((tn = walker.nextNode())) {
+            if (tn === an) { at += norm0(tn.textContent.slice(0, sel.anchorOffset)).length; break; }
+            at += norm0(tn.textContent).length;
+          }
+          spot = { snip: spot, at, path, off: sel.anchorOffset };
+        }
+      }
+    } catch {}
+    return { text, spot: (spot && typeof spot === 'object') ? spot : null };
+  } catch { return { text: '', spot: null }; }
+}
+function sendSelectionToNotes(full, spot) { // highlight text in the body -> append it as a note entry, pinned to its passage
+  const d = vault.byId(shownId);
+  if (!d) { toast('Open a document body first — notes live on bodies'); return false; }
+  let txt = String(full || ''), sp = (spot && typeof spot === 'object') ? spot : null;
+  if (!txt.trim()) {
+    const live = readReaderSelection();
+    txt = live.text; sp = live.spot;
+  }
+  txt = txt.trim();
+  if (!txt) { toast('Highlight some text in the body first'); return false; }
+  const e = addNoteEntry(d.id, txt.slice(0, NOTE_MAX), sp);
+  if (!e) return false;
+  toast(sp ? 'Sent to notes — its highlight stays in the body' : 'Sent to notes');
+  return true;
+}
+// persistent note highlights: every sent passage stays marked in the open
+// reader while its entry lives (re-applied each render, like manual spots);
+// deleting the entry rebuilds the reader without it, so the mark goes too
+function markNoteSpots(d) {
+  const root = $('#docBody');
+  if (!root || !d || !Array.isArray(d.noteLog)) return;
+  for (const e of d.noteLog) {
+    if (!e || !e.spot) continue;
+    let r = null;
+    try { r = findSpotRange(root, e.spot, String(e.text || '').length); } catch { continue; }
+    if (!r || r.collapsed) continue;
+    wrapRangeText(root, r, 'note-mark', { 'data-noteid': e.id, title: 'Note highlight — click its box in the Notes pane to jump here' });
+  }
+}
+// click a note box in the pane: jump the reader to the passage it was sent from
+function jumpToNoteSpot(entryId) {
+  const d = vault.byId(notesDocId || activeId);
+  if (!d) return false;
+  const e = noteLogOf(d).find(x => x.id === entryId);
+  if (!e) return false;
+  if (!e.spot) { toast('That entry has no body position — only sent highlights jump'); return false; }
+  const root = $('#docBody');
+  if (!root) return false;
+  let r = null;
+  try { r = findSpotRange(root, e.spot, String(e.text || '').length); } catch { return false; }
+  if (!r || r.collapsed) { toast('Its passage is gone from the body'); return false; }
+  try {
+    const token = 'nf' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+    const marks = wrapRangeText(root, r, 'note-flash', { 'data-nflash': token });
+    if (!marks.length) throw 0;
+    try { marks[0].scrollIntoView({ block: 'center' }); } catch {}
+    setTimeout(() => {
+      try {
+        root.querySelectorAll(`[data-nflash="${token}"]`).forEach(mark => {
+          const p = mark.parentNode; if (!p) return;
+          while (mark.firstChild) p.insertBefore(mark.firstChild, mark);
+          p.removeChild(mark);
+        });
+      } catch {}
+    }, 2600);
+    return true;
+  } catch {
+    try { r.startContainer.parentElement.scrollIntoView({ block: 'center' }); return true; } catch { return false; }
+  }
 }
 function drawMiniMap() {
   const box = $('#miniMap'), cv = $('#miniMapCv');
-  if (!box || !cv || box.hidden || !uni) return;
+  if (!box || !cv || box.hidden || miniFolded || !uni) return;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const r = cv.getBoundingClientRect();
   const W = Math.max(40, Math.round(r.width * dpr)), H = Math.max(40, Math.round(r.height * dpr));
@@ -1089,12 +1632,17 @@ function layoutOrb(u) {
   const R = Math.min(W, H) * 0.42 / Math.max(0.05, s);
   const aspect = Math.min(2.2, Math.max(1, W / Math.max(1, H)));
   const RX = R * aspect, RY = R, RZ = R * 0.72;
-  const sunId = (activeId && u.byId.has(activeId)) ? activeId : u.sunId;
-  const fib = (i, n, rad) => {
-    const golden = Math.PI * (3 - Math.sqrt(5));
+  // pin the physical sun, never the reader selection: selecting a theme/tag
+  // lens node is reader-only (no refocus), so it must not retarget the orb
+  // and send the bodies gliding past each other. Main-view focus sets both
+  // together, so the classic behavior there is unchanged. Sunless views pin
+  // nothing at all — bodies rest on their shells while you inspect them.
+  const sunId = (u.sunId && u.byId.has(u.sunId)) ? u.sunId : null;
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  const fib = (i, n, rad, ph = 0) => {
     const y = n <= 1 ? 0 : 1 - (2 * (i + 0.5)) / n;
     const rr = Math.sqrt(Math.max(0, 1 - y * y));
-    const th = golden * (i + 0.5);
+    const th = golden * (i + 0.5) + ph;
     return [Math.cos(th) * rr * rad, y * rad, Math.sin(th) * rr * rad];
   };
   const k = 0.16; // ease per frame
@@ -1104,10 +1652,16 @@ function layoutOrb(u) {
   const sun = u.nodes.find(n => n.id === sunId);
   if (sun) target.set(sun, [0, 0, 0]);
   const others = u.nodes.filter(n => n.id !== sunId).sort((a, b) => (b.mass || 0) - (a.mass || 0));
-  const cut = Math.max(1, Math.ceil(others.length * 0.18));
+  // tiny formations (a 2-theme lens, a 2-doc canvas): no inner-shell parking
+  // and the fan opens on +X (lateral) — a lone satellite in the classic
+  // depth-heavy 0.55R slot reads as a ~65px speck on a big canvas, so
+  // Distribute looks dead next to Fit. Six or more others keep the classic
+  // layered orb untouched.
+  const tinyForm = others.length <= 5;
+  const cut = tinyForm ? 0 : Math.max(1, Math.ceil(others.length * 0.18));
   const inner = others.slice(0, cut), outer = others.slice(cut);
   inner.forEach((n, i) => { const [x, y, z] = fib(i, inner.length, 0.55); target.set(n, [x * RX, y * RY, z * RZ]); });
-  outer.forEach((n, i) => { const [x, y, z] = fib(i, outer.length, 1); target.set(n, [x * RX, y * RY, z * RZ]); });
+  outer.forEach((n, i) => { const [x, y, z] = fib(i, outer.length, 1, tinyForm ? -golden * 0.5 : 0); target.set(n, [x * RX, y * RY, z * RZ]); });
   for (const n of u.nodes) {
     n.vx = n.vy = n.vz = 0;
     if (n._held) continue; // mid-drag: the pointer owns this body
@@ -1138,7 +1692,6 @@ function applyLens() {
   // other universe's ids and would leave the restored view half-dark)
   try { $('#searchPop').innerHTML = ''; $('#searchInput').value = ''; } catch {}
   matchSet = null;
-  if (uni && activeId && uni.sunId !== activeId && uni.byId.has(activeId)) uni.focus(activeId);
   if (uni && activeId && !uni.byId.has(activeId)) activeId = uni.sunId; // stale theme sun
   try { vault.tab().activeId = activeId; } catch {}
   syncLensBtn();
@@ -1158,6 +1711,14 @@ function setCollapsed(id, on) {
   saveUi();
   try { applyDocWidth(); } catch {}
 }
+// bottom pill "Hover peek": on = hovering a body lights up its row in the general list
+function syncHv() {
+  const b = $('#hvBtn');
+  if (!b) return;
+  b.classList.toggle('on', hoverPrev);
+  b.textContent = (hoverPrev ? '◉' : '○') + ' Hover peek';
+  b.title = hoverPrev ? 'Hover highlight on — hovering a body lights up its row (click to turn off)' : 'Hover highlight off — hovering a body does nothing (click to turn on)';
+}
 // bottom pill "Tethers" button: show/hide the tether lines only (bodies always stay).
 // It drives the same tetherScale as the left-panel Tether row, so both stay in sync.
 function syncIsoBtn() {
@@ -1165,6 +1726,39 @@ function syncIsoBtn() {
   if (!b) return;
   b.classList.toggle('on', tetherScale > 0);
   b.textContent = (tetherScale > 0 ? '◉' : '○') + ' Tethers';
+}
+// bottom pill "Labels" button (next to Hover peek): canvas-wide on/off for
+// the ASSOCIATED-document name labels only — orb labels stay on the
+// left-panel Labels row. On = every associated document currently in view
+// shows its name; off = all hidden. With nothing in view the button sits
+// off and explains how to show documents first.
+function visibleAssocOverlays() {
+  if (!lensThematic) return [];
+  const themes = thematicWhole ? wholeThemes : (thematicThemes.get(vault.activeTabId) || []);
+  const out = [];
+  for (const th of themes) { if (assocOverlayFor(th)) out.push(th); }
+  return out;
+}
+function syncLbPill() {
+  const b = $('#lbPillBtn');
+  if (!b) return;
+  const vis = visibleAssocOverlays();
+  const on = vis.length > 0 && vis.every(th => assocOverlayFor(th).labels);
+  b.classList.toggle('on', on);
+  b.textContent = (on ? '◉' : '○') + ' Labels';
+  b.title = !vis.length
+    ? 'No associated documents in view — right-click a theme orb (or empty canvas) to show them (orb labels stay in the left pane)'
+    : on ? 'Labels on — hide every associated-document name (orb labels stay in the left pane)'
+    : 'Labels off — show names under every associated document (orb labels stay in the left pane)';
+}
+// bottom pill "Tips" toggle: collapses only the tips rows, never the buttons
+function syncTipsBtn() {
+  const b = $('#tipsBtn'), bar = $('#hintBar');
+  if (!b || !bar) return;
+  bar.classList.toggle('notips', tipsCollapsed);
+  b.classList.toggle('open', !tipsCollapsed); // red border while the tips are shown (non-collapsed)
+  b.textContent = (tipsCollapsed ? '+' : '–') + ' Tips';
+  b.title = tipsCollapsed ? 'Show the tips below the pill buttons' : 'Hide the tips below the pill buttons (buttons stay)';
 }
 
 // ---------- "?" explicator popups: editable in the editor, locked in desktop exports ----------
@@ -1330,14 +1924,17 @@ function renderTabs() {
     return `<button class="tab${t.id === vault.activeTabId ? ' active' : ''}${iso ? ' iso' : ''}${tinted ? ' tinted' : ''}" data-tab="${t.id}"${tinted ? ` style="--tabc:${t.color}"` : ''} title="${esc(t.name)}${t.main ? ' — main verse' : ''}${iso ? ' — isolated verse: uploads, searches and deletes stay in this tab' : ''} — double-click to rename, right-click for associations">${t.main ? '★ ' : ''}${iso ? '◌ ' : ''}${esc(t.name)} · ${t.docs.length}${t.id === repOf.get(t.id) ? `<span class="tabsave" data-savetab="${t.id}" title="Save ALL projects to your computer as a backup file">save project</span>` : ''}<span class="tabx" data-closetab="${t.id}" title="Close canvas">×</span></button>`;
   }).join('') + (vault.tabs.length
     ? `<button class="tab tabadd" data-addtab="1" title="New project canvas">+</button>`
-    : `<button class="tab tabadd" data-addtab="1" title="Create new project canvas">Create Project</button>`) + `<button class="tab tabopen" data-openproj="1" title="Reopen the projects held in the in-app autosave">Open Existing Project</button></span>` + `<span class="viewmodes"><span class="vm-label">Universe view modes:</span><button class="vm" data-vm="main" title="Main view — the regular canvas universe (one body per document)">Main</button><span class="vm-sep">|</span><button class="vm" data-vm="thematic" title="Thematic view — the ideas the documents share, distilled into theme bodies">Thematic</button><span class="vm-sep">|</span><button class="vm" data-vm="tag" title="Tags view — the labels on the documents, one body per tag (same as Show tags view in the tags pane)">Tag</button></span>`;
-  try { applyDocWidth(); } catch {} // tab widths move the pill: keep the reader clear of it
+    : `<button class="tab tabadd" data-addtab="1" title="Create new project canvas">Create Project</button>`) + `<button class="tab tabopen" data-openproj="1" title="Reopen the projects held in the in-app autosave">Open Existing Project</button></span>` + `<span class="viewmodes"><span class="vm-label">Universe view modes:</span><button class="vm" data-vm="main" title="Main view — the regular canvas universe (one body per document)">Main</button><span class="vm-sep">|</span><button class="vm" data-vm="thematic" title="Thematic view — the ideas the documents share, distilled into theme bodies">Thematic</button><span class="vm-sep">|</span><button class="vm" data-vm="tag" title="Tags view — the labels on the documents, one body per tag (same as Show tags view in the tags pane)">Tag</button></span>` + `<span class="statrow${statsCollapsed ? ' collapsed' : ''}"><button class="vm statstoggle" data-statstoggle="1" title="${statsCollapsed ? 'Show the verse stats' : 'Collapse the verse stats'}">${statsCollapsed ? '+' : '–'}</button><span class="statbits"><b id="stBodies">–</b> bodies · <b id="stLinks">–</b> tethers · system energy <b id="stKe">–</b> <span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="energy"><span class="help-text" data-help-text="energy">Total motion in the document universe. High "system energy" numbers mean bodies are flying fast — especially if more files ('bodies') are being added — and it settles as correlational orbits stabilize.</span><button class="help-edit-btn" data-help-edit="energy" title="Edit this explanation">✎ edit</button></div></span> · rim <b id="stRim">–</b> <span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="rim"><span class="help-text" data-help-text="rim">The edge of the visualized document universe. Files ('bodies') drifting past it are loners with no links — a single reference can pull them back in and connect them.</span><button class="help-edit-btn" data-help-edit="rim" title="Edit this explanation">✎ edit</button></div></span></span></span>`;
+  try { applyDocWidth(); } catch {} // tab widths move the pill; the reader paints above it
   try { syncViewModes(); } catch {}
+  try { syncIntakeLog(); } catch {} // the VisiDocsVerse pane shows THIS tab's last message, never another verse's
 }
 function switchCanvas(id) {
   const t = vault.tabs.find(t => t.id === id);
   if (!t || id === vault.activeTabId) return;
   pushView(); // Return can come back to the previous canvas
+  paneId = null; // new canvas, new reader — the pane follows again
+  assocSelId = null; srcHi = null; // the new canvas lights its own rows
   clearFit(); // snapshots belong to one canvas's universe
   try { vault.tab().activeId = activeId; } catch {} // remember where we were
   vault.activeTabId = id;
@@ -1366,6 +1963,7 @@ function switchCanvas(id) {
   matchSet = null;
   selSet.clear(); // selections never travel between canvases
   hideBoxSel();
+  try { syncLbPill(); } catch {}
   toast(`Canvas: ${t.name} (${t.docs.length} bodies)`);
 }
 async function closeCanvas(id) {
@@ -1603,52 +2201,184 @@ function updateStats() {
 function claimSun(id) {
   pushView(); // Return can come back to the previous sun
   activeId = id;
+  paneId = null; // the canvas moved — the pane follows it again
+  assocSelId = null; // a fresh selection drops the old associated pick (focusAssocDoc re-sets its own right after)
+  srcHoldHi(); srcHi = null; // focus owns the reader now — drop any hover trace
   try { const t = vault.tab(); if (t) t.activeId = id; vault.persist(); } catch {}
+}
+// selection never moves bodies: canvas orbs and icons, search picks, reader
+// rows and title links all drive the reader only. The physical sun changes
+// solely through explicit sun controls — the body's "Make sun" menu,
+// releasing it, intake, and fresh-universe builds (which crown the persisted
+// selection) — so the map never reshuffles under a click.
+function selectBody(id, label, quiet) {
+  if (!uni || !uni.byId.has(id)) return false;
+  if (activeId !== id) {
+    claimSun(id);
+    if (!quiet) toast(label + ' selected');
+  }
+  renderDoc();
+  return true;
 }
 // general state: no active body — the sun cools back to a body and the canvas
 // center becomes the gravitational center. Returns true when something changed.
 function defocusSun() {
   if (!uni) return false;
-  if (activeId == null && uni.sunId == null) return false;
+  if (activeId == null && uni.sunId == null && !paneId) return false;
   pushView(); // Return can come back to the released sun
   uni.defocus();
   activeId = null;
+  paneId = null; // released — the pane follows the canvas again
+  assocSelId = null; srcHi = null; // released — no selection left to stay lit
   try { const t = vault.tab(); if (t) t.activeId = null; vault.persist(); } catch {}
   renderDoc();
   updateStats();
   return true;
 }
-// sticky notes: one 140-char note per body, drawn as a yellow square left of its
-// label. Single source of truth on the vault doc — the canvas square and the
-// reader pop-out are mirror views re-rendered from it on every change.
-const NOTE_MAX = 140;
+// notes: one shared notepad per document lineage — a list of entries
+// ({id, text, at}) on the vault doc. The canvas sticky square, the reader
+// pop-out and the Notes book pane are mirror views re-rendered from it on
+// every change; edits in any tab's copy sync across the whole lineage, so
+// every surface shows the same notepad for that document.
+const NOTE_MAX = 2000; // per-entry cap (legacy 140-char notes migrate untouched)
 let notePopId = null; // doc id shown in the reader's note pop-out
 let noteEditId = null; // doc id being edited in the floating canvas editor
-function getNote(id) { const d = vault.byId(id); return (d && typeof d.note === 'string') ? d.note : ''; }
-function refreshNoteViews(id) {
-  if (activeId === id) renderDoc(); // refreshes the notes button too
-  if (notePopId === id && !$('#notePop').hidden) renderNotePop(false);
+function noteLogOf(d) {
+  if (!d) return [];
+  if (!Array.isArray(d.noteLog)) d.noteLog = [];
+  if (typeof d.note === 'string' && d.note.trim()) { // legacy single note -> first entry
+    d.noteLog.unshift({ id: 'n_' + Math.random().toString(36).slice(2, 10), text: d.note.slice(0, NOTE_MAX), at: Date.now() });
+    delete d.note;
+    try { vault.persist(); } catch {}
+  }
+  return d.noteLog;
 }
-function saveNote(id, text) {
+function noteCount(id) { // hot-path presence check: never migrates, never persists
+  const d = vault.byId(id);
+  if (!d) return 0;
+  if (Array.isArray(d.noteLog)) return d.noteLog.length;
+  return (typeof d.note === 'string' && d.note.trim()) ? 1 : 0;
+}
+function kinDocs(id) { // every copy of this doc, all tabs: same root id/origin
+  const d = vault.byId(id) || vault.byIdAnywhere(id);
+  if (!d) return [];
+  const root = d.origin || d.id;
+  const out = [];
+  for (const t of vault.tabs) for (const x of (t.docs || [])) {
+    if (x.id === id || x.id === root || x.origin === root) out.push(x);
+  }
+  return out;
+}
+function syncNoteKin(id) { // one notepad per document: mirror the entry list across the lineage
+  const d = vault.byId(id) || vault.byIdAnywhere(id);
+  if (!d) return;
+  const snap = cloneNoteLog(noteLogOf(d));
+  for (const x of kinDocs(id)) {
+    if (x === d) continue;
+    x.noteLog = cloneNoteLog(snap);
+    delete x.note;
+  }
+}
+function getNote(id) { const es = noteLogOf(vault.byId(id)); return es.length ? es[es.length - 1].text : ''; } // latest entry (legacy quick editors)
+function refreshNoteViews(id) {
+  if (shownId === id) renderDoc(); // refreshes the notes button too
+  if (notePopId === id && !$('#notePop').hidden) renderNotePop(false);
+  try { if (notesOpen && notesDocId === id) renderNotesPane(); } catch {}
+  try { syncNotesTab(); } catch {}
+}
+function saveNote(id, text) { // legacy quick editors: rewrite the latest entry (or append the first)
   const d = vault.byId(id); if (!d) return false;
   text = String(text ?? '').slice(0, NOTE_MAX);
-  if (text.trim()) d.note = text; else delete d.note;
+  const log = noteLogOf(d);
+  if (text.trim()) {
+    if (log.length) log[log.length - 1].text = text;
+    else log.push({ id: 'n_' + Math.random().toString(36).slice(2, 10), text, at: Date.now() });
+  } else if (log.length) log.pop(); // saving empty clears the latest entry
+  delete d.note;
   vault.persist();
+  syncNoteKin(id);
   refreshNoteViews(id);
   return true;
 }
-function deleteNote(id) {
-  const d = vault.byId(id); if (!d || !d.note) return false;
+function cleanNoteSpot(sp) { // validate a pinned-passage anchor (same rich shape as manual-tag spots)
+  if (!sp || typeof sp !== 'object' || Array.isArray(sp)) return null;
+  if (typeof sp.snip !== 'string' || sp.snip.replace(/\s+/g, ' ').trim().length < 2) return null;
+  const out = { snip: sp.snip.replace(/\s+/g, ' ').trim().slice(0, 300) };
+  if (isFinite(sp.at)) out.at = Math.max(0, Math.round(sp.at));
+  if (Array.isArray(sp.path) && sp.path.length <= 12 && sp.path.every(n => Number.isInteger(n) && n >= 0 && n < 10000)) out.path = sp.path.slice();
+  if (Number.isInteger(sp.off) && sp.off >= 0) out.off = sp.off;
+  return out;
+}
+function cloneNoteLog(log) { // deep copy (spots carry a DOM-path array — never share it)
+  return (Array.isArray(log) ? log : []).map(e => {
+    const c = { ...e };
+    if (c.spot && typeof c.spot === 'object') { c.spot = { ...c.spot }; if (Array.isArray(c.spot.path)) c.spot.path = [...c.spot.path]; }
+    return c;
+  });
+}
+function addNoteEntry(id, text, spot) { // append one entry (Notes pane, send-to-notes)
+  const d = vault.byId(id); if (!d) return null;
+  text = String(text ?? '').slice(0, NOTE_MAX);
+  if (!text.trim()) return null;
+  const e = { id: 'n_' + Math.random().toString(36).slice(2, 10), text, at: Date.now() };
+  const csp = cleanNoteSpot(spot);
+  if (csp) e.spot = csp; // pinned passage: the highlight persists while this entry lives
+  noteLogOf(d).push(e);
   delete d.note;
   vault.persist();
+  syncNoteKin(id);
+  refreshNoteViews(id);
+  return e;
+}
+function setNoteEntry(id, entryId, text) {
+  const d = vault.byId(id); if (!d) return false;
+  const e = noteLogOf(d).find(x => x.id === entryId);
+  if (!e) return false;
+  text = String(text ?? '').slice(0, NOTE_MAX);
+  if (!text.trim()) return deleteNoteEntry(id, entryId);
+  e.text = text;
+  vault.persist();
+  syncNoteKin(id);
   refreshNoteViews(id);
   return true;
+}
+function deleteNoteEntry(id, entryId) {
+  const d = vault.byId(id); if (!d) return false;
+  const log = noteLogOf(d);
+  const i = log.findIndex(x => x.id === entryId);
+  if (i < 0) return false;
+  log.splice(i, 1);
+  if (d.notePending === entryId) delete d.notePending;
+  delete d.note;
+  vault.persist();
+  syncNoteKin(id);
+  refreshNoteViews(id);
+  return true;
+}
+function clearNoteEntries(id) {
+  const d = vault.byId(id); if (!d) return 0;
+  const n = noteLogOf(d).length;
+  if (!n) return 0;
+  d.noteLog = [];
+  delete d.notePending; delete d.note;
+  vault.persist();
+  syncNoteKin(id);
+  refreshNoteViews(id);
+  return n;
+}
+function deleteNote(id) { // legacy quick editors: drop the latest entry
+  const d = vault.byId(id); if (!d) return false;
+  const log = noteLogOf(d);
+  if (!log.length) return false;
+  const last = log[log.length - 1];
+  return deleteNoteEntry(id, last.id);
 }
 // floating canvas editor (opened by clicking a body's note square; sun stays put)
 function openNoteEditor(id, cx, cy) {
   const d = vault.byId(id); if (!d) return;
   noteEditId = id;
-  $('#noteEditTitle').textContent = '◉ ' + vault.titleOf(d);
+  const elog = noteLogOf(d);
+  $('#noteEditTitle').textContent = '◉ ' + vault.titleOf(d) + (elog.length ? ` (${elog.length} ${elog.length === 1 ? 'entry' : 'entries'})` : '');
   $('#noteEditText').value = getNote(id);
   $('#noteEditCount').textContent = String(getNote(id).length);
   $('#noteEditDelete').style.display = getNote(id) ? '' : 'none';
@@ -1670,12 +2400,14 @@ function openNotePop(id) {
 function closeNotePop() { const el = $('#notePop'); if (el) el.hidden = true; notePopId = null; }
 function renderNotePop(editing) {
   const d = vault.byId(notePopId); if (!d) { closeNotePop(); return; }
-  const note = getNote(notePopId);
+  const log = noteLogOf(d);
+  const note = log.length ? log[log.length - 1].text : '';
   const box = $('#notePop');
+  const countLine = log.length > 1 ? `<div class="np-count">${log.length} entries in the shared notepad</div>` : '';
   if (editing || !note) {
     box.innerHTML = `<div class="np-head"><span class="np-title">◉ ${esc(vault.titleOf(d))}</span><span class="np-cap" data-np="close">✕</span></div>` +
-      `<textarea class="np-area" id="notePopText" maxlength="${NOTE_MAX}" placeholder="140 characters max…">${esc(note)}</textarea>` +
-      `<div class="np-count"><span id="notePopCount">${note.length}</span>/${NOTE_MAX}</div>` +
+      `<textarea class="np-area" id="notePopText" maxlength="${NOTE_MAX}" placeholder="2000 characters max…">${esc(note)}</textarea>` +
+      `<div class="np-count"><span id="notePopCount">${note.length}</span>/${NOTE_MAX}</div>` + countLine +
       `<div class="rowbtns"><button class="btn" data-np="save">Save</button><button class="btn" data-np="close">Cancel</button></div>`;
     const ta = $('#notePopText');
     if (ta) {
@@ -1683,16 +2415,18 @@ function renderNotePop(editing) {
       setTimeout(() => { try { ta.focus(); } catch {} }, 30);
     }
   } else {
-    box.innerHTML = `<div class="np-head"><span class="np-title">◉ ${esc(vault.titleOf(d))}</span><span class="np-cap" data-np="copy">copy</span><span class="np-cap danger" data-np="del">delete</span><span class="np-cap" data-np="edit">edit</span><span class="np-cap" data-np="close">✕</span></div>` +
-      `<div class="np-text">${esc(note)}</div>`;
+    box.innerHTML = `<div class="np-head"><span class="np-title">◉ ${esc(vault.titleOf(d))}</span><span class="np-cap" data-np="copy">copy</span><span class="np-cap danger" data-np="del">delete</span><span class="np-cap" data-np="edit">edit</span><span class="np-cap" data-np="pane">notes pane</span><span class="np-cap" data-np="close">✕</span></div>` +
+      `<div class="np-text">${esc(note)}</div>` + countLine;
   }
 }
 async function copyNotePop() {
-  const note = getNote(notePopId);
-  if (!note) return;
-  try { await navigator.clipboard.writeText(note); }
-  catch { const ta = document.createElement('textarea'); ta.value = note; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch {} ta.remove(); }
-  toast('Sticky note copied');
+  const d = vault.byId(notePopId);
+  if (!d) return;
+  const all = noteLogOf(d).map(e => e.text).join('\n\n');
+  if (!all) return;
+  try { await navigator.clipboard.writeText(all); }
+  catch { const ta = document.createElement('textarea'); ta.value = all; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch {} ta.remove(); }
+  toast(noteLogOf(d).length > 1 ? `${noteLogOf(d).length} note entries copied` : 'Sticky note copied');
 }
 function setKicker(s) { const k = $('#docPanel .kicker'); if (k && k.textContent !== s) k.textContent = s; }
 // tags-view pop-out: every tag in the active verse as its original pill on a
@@ -1734,7 +2468,7 @@ function openTagPop() {
   if (title) title.textContent = `ALL THEMATIC TAGS — ${tags.length}`;
   const list = box.querySelector('.tvp-tags');
   if (list) list.innerHTML = tags.length
-    ? tags.map(t => `<button class="tagpill${t.auto ? ' auto' : ''}${t.manual ? ' manual' : ''}" data-tag="${esc(t.disp)}" data-tpill="${esc(t.disp)}" draggable="true" title="Click to open its origin body · drag onto another tag to merge · × deletes">#${esc(t.disp)}${t.manual ? '<span class="mmark" title="Manually created tag">M</span>' : ''}<span class="tvp-x" data-tdel="${esc(t.disp)}" title="Delete #${esc(t.disp)} from every body on this canvas">×</span></button>`).join('')
+    ? tags.map(t => `<button class="tagpill${t.auto ? ' auto' : ''}${t.manual ? ' manual' : ''}" data-tag="${esc(t.disp)}" data-tpill="${esc(t.disp)}" draggable="true" title="Click to open its origin body · drag onto another tag to merge · × deletes · right-click renames">#${esc(t.disp)}${t.manual ? '<span class="mmark" title="Manually created tag">M</span>' : ''}<span class="tvp-x" data-tdel="${esc(t.disp)}" title="Delete #${esc(t.disp)} from every body on this canvas">×</span></button>`).join('')
     : '<span class="tvp-empty">No tags in this verse yet — add #hashtags to a body.</span>';
   syncTagVerseBtn();
   syncConfirmTip();
@@ -1787,22 +2521,78 @@ function srcSection(text) {
   return { label: 'Opening', ...srcTake(lines.slice(s), SRC_WORDS) };
 }
 function srcHighlight(id) {
-  srcClearHi();
   try {
     const p = $('#docPanel');
     if (!p || p.classList.contains('collapsed') || !p.offsetParent) return;
-    if (activeId || lensThematic || lensTags || thematicWhole) return; // general view only
+    // persistent gold works in every reader — hover callers still gate
+    // themselves to the released general view, preview/assoc call freely.
+    srcHi = id;
     const sel = `#docLinks .bl-row[data-open="${CSS.escape(id)}"]`;
     let row = document.querySelector(sel);
     if (!row) {
-      // previewed body lives past the 6 largest: unfold the full list, then flash it
+      // previewed body lives past the 6 largest: unfold the full list, then
+      // light it (renderGeneral nulls the hover id, so restore it after).
       const t = vault.tab();
-      if (t && (t.docs || []).length > 6 && !showAllBodies) { showAllBodies = true; renderGeneral(); row = document.querySelector(sel); }
+      if (t && (t.docs || []).length > 6 && !showAllBodies && !lensThematic && !lensTags && !thematicWhole) {
+        showAllBodies = true; renderGeneral(); srcHi = id;
+        paintGoldRows(); row = document.querySelector(sel);
+      }
     }
-    if (row) { row.classList.add('src-hi'); try { row.scrollIntoView({ block: 'nearest' }); } catch {} srcHi = id; }
+    paintGoldRows();
+    if (row) { try { row.scrollIntoView({ block: 'nearest' }); } catch {} }
   } catch {}
 }
-function srcClearHi() { try { document.querySelectorAll('#docLinks .bl-row.src-hi').forEach(b => b.classList.remove('src-hi')); } catch {} srcHi = null; }
+// every id whose row should stay gold while its selection stands: the hovered
+// body, the last associated-document pick, the selected orb, the pane pin and
+// whatever the reader shows, the open Notes pane's own document, plus the
+// physical sun (dot crowns never render).
+function goldIds() {
+  const s = new Set();
+  try {
+    if (srcHi) s.add(srcHi);
+    if (assocSelId) s.add(assocSelId);
+    if (activeId) s.add(activeId);
+    if (paneId) s.add(paneId);
+    if (shownId) s.add(shownId);
+    if (notesOpen && notesDocId) s.add(notesDocId); // its pane stands: row stays gold
+    const sun = (uni && uni.sunId && uni.byId && uni.byId.has(uni.sunId)) ? uni.sunId : null;
+    if (sun) s.add(sun);
+  } catch {}
+  return s;
+}
+// repaint the reader inventory gold from the live selection state. Every
+// render ends here (via syncDocActionButtons) so rebuilt rows re-light;
+// hover fades and preview closes funnel through srcClearHi, which keeps the
+// persistent ids lit. Pass an id to also scroll it into view.
+function paintGoldRows(scrollTo) {
+  try {
+    const dl = document.querySelector('#docLinks');
+    if (!dl) return;
+    const want = goldIds();
+    dl.querySelectorAll('.bl-row[data-open]').forEach(r => {
+      const id = r.getAttribute('data-open');
+      if (id && want.has(id)) r.classList.add('src-hi');
+      else r.classList.remove('src-hi');
+    });
+    // the open Notes pane red-frames its document's inventory note mark;
+    // closing the pane drops the frame (closeNotesPane repaints here too).
+    const openNote = (notesOpen && notesDocId && vault.byId(notesDocId)) ? notesDocId : null;
+    dl.querySelectorAll('.bl-note[data-notes-pane]').forEach(b => {
+      if (b.getAttribute('data-notes-pane') === openNote) b.classList.add('note-open');
+      else b.classList.remove('note-open');
+    });
+    if (scrollTo) {
+      const row = dl.querySelector(`.bl-row[data-open="${CSS.escape(scrollTo)}"]`);
+      if (row) { try { row.scrollIntoView({ block: 'center' }); } catch {} }
+    }
+  } catch {}
+}
+function srcClearHi() { srcHi = null; try { paintGoldRows(); } catch { try { document.querySelectorAll('#docLinks .bl-row.src-hi').forEach(b => b.classList.remove('src-hi')); } catch {} } }
+// hover handoff: the gold row lingers briefly after the cursor leaves its orb,
+// so the user can travel to the reader pane and click it; gliding onto the row
+// itself holds the highlight until the click lands.
+function srcClearHiSoon(ms) { try { clearTimeout(hoverHiTimer); } catch {} try { hoverHiTimer = setTimeout(() => { srcClearHi(); }, ms || 1400); } catch {} }
+function srcHoldHi() { try { clearTimeout(hoverHiTimer); } catch {} }
 function openSrcPop(id, x, y, sticky) {
   const d = vault.byId(id);
   const box = $('#srcPop');
@@ -1866,10 +2656,11 @@ function openSrcPop(id, x, y, sticky) {
     const rel = $('#svpRel'); if (rel) rel.textContent = 'release to close';
   }
   place(); // re-clamp: the sticky footer text above can wrap and grow the card
+  srcHoldHi(); // the preview owns the flash now — kill any hover fade
   srcHighlight(id);
   return true;
 }
-function closeSrcPop() { const box = $('#srcPop'); if (box) box.hidden = true; srcStickyId = null; srcClearHi(); }
+function closeSrcPop() { const box = $('#srcPop'); if (box) box.hidden = true; srcStickyId = null; srcHoldHi(); srcClearHi(); }
 // manual-spot plumbing: locate a creation anchor in the rendered reader text
 // and wrap it. Anchors are rich ({snip, at, path, off}): the DOM path is
 // tried first (verified against a snippet chunk), else the occurrence nearest
@@ -1936,8 +2727,9 @@ function spotDomRange(col, at, budget, isCounted) {
     return range;
   } catch { return null; }
 }
-function findSpotRange(root, entry) {
+function findSpotRange(root, entry, budget) {
   if (!root || !entry) return null;
+  const len = (typeof budget === 'number' && budget > 0) ? Math.min(2000, Math.round(budget)) : 80; // manual spots mark 80 chars; note highlights span their whole sent passage
   const snip = (typeof entry === 'string') ? entry : entry.snip;
   const norm = spotNormWs;
   const fullSnip = norm(snip);
@@ -1964,7 +2756,7 @@ function findSpotRange(root, entry) {
               from = ix + 1;
             }
             if (best >= 0 && bestDd < 5000) {
-              const r = spotDomRange(col, best, 80);
+              const r = spotDomRange(col, best, len);
               if (r) return r;
             }
           }
@@ -1978,7 +2770,7 @@ function findSpotRange(root, entry) {
   const wantAt = (typeof entry === 'object' && isFinite(entry.at)) ? entry.at : 0;
   // pass 1: the full distinctive snippet, no shrinking — exact or nothing
   const p1 = spotHits(full, fullSnip.slice(0, 120), 120);
-  if (p1.hits.length) return spotDomRange(col, spotNearest(p1.hits, wantAt), Math.min(p1.len, 80));
+  if (p1.hits.length) return spotDomRange(col, spotNearest(p1.hits, wantAt), Math.min(p1.len, len));
   // pass 2: punctuation-blind, so later tag-strip/merge edits can't break it
   const colA = spotCollect(root, spotNormAn);
   if (!colA) return null;
@@ -1986,7 +2778,7 @@ function findSpotRange(root, entry) {
   const wantAtA = spotNormAn(full.slice(0, wantAt)).length;
   const p2 = spotHits(fullA, spotNormAn(snip).slice(0, 120), 12);
   if (!p2.hits.length) return null;
-  return spotDomRange(colA, spotNearest(p2.hits, wantAtA), Math.min(p2.len, 80), spotCountAn);
+  return spotDomRange(colA, spotNearest(p2.hits, wantAtA), Math.min(p2.len, len), spotCountAn);
 }
 // wrap every text-node portion of a range in its own span — unlike
 // surroundContents this survives ranges that cross element boundaries
@@ -2070,8 +2862,8 @@ function markManualSpots(d) {
 function syncConfirmTip() {
   const tx = $('#tvpConfirmTxt'), bt = $('#tvpConfirmBtn');
   if (!tx || !bt) return;
-  if (skipTagConfirms) { tx.textContent = 'tag delete/merge confirmations are off'; bt.textContent = 'click to ask again'; }
-  else { tx.textContent = 'tag delete/merge confirmations are on'; bt.textContent = 'click to stop asking'; }
+  if (skipTagConfirms) { tx.textContent = 'tag delete/merge/rename confirmations are off'; bt.textContent = 'click to ask again'; }
+  else { tx.textContent = 'tag delete/merge/rename confirmations are on'; bt.textContent = 'click to stop asking'; }
 }
 // tag helpers shared by delete + merge (stripped/lowercase names, tag-boundary regexes)
 const normDisp = (s) => String(s || '').trim().toLowerCase().replace(/^(auto|manual)\//, '');
@@ -2093,7 +2885,6 @@ function focusTagOrigin(disp) {
   if (lensThematic || lensTags) { lensThematic = false; thematicWhole = false; lensTags = false; syncLensBtn(); applyLens(); saveUi(); }
   if (!uni) { toast('No universe to focus yet'); return false; }
   claimSun(doc.id);
-  try { uni.focus(doc.id); } catch {}
   renderDoc();
   // manual tag with a remembered creation spot: put the reader on it exactly
   try {
@@ -2181,7 +2972,7 @@ async function deleteTagUI(disp) {
   if (!carriers.length) { toast(`#${d} is not in this verse`); return; }
   const n = carriers.length;
   if (!skipTagConfirms) {
-    const sk = { label: "Don't ask again for tag deletes and merges", checked: skipTagConfirms };
+    const sk = { label: "Don't ask again for tag deletes, merges and renames", checked: skipTagConfirms };
     const ok = await confirmDlg(
       `Delete #${d}? Removes it from ${n} ${n === 1 ? 'body' : 'bodies'} on “${t.name}” (explicit uses are stripped from the text; auto-tags with that name stay suppressed). Write #${d} in any body to bring it back.`,
       'Delete tag', { title: `Delete #${d}`, skip: sk });
@@ -2198,7 +2989,7 @@ async function mergeTagsUI(src, dst) {
   const carriers = carriersOf(t, s);
   if (!carriers.length) { toast(`#${s} is not in this verse`); return; }
   if (!skipTagConfirms) {
-    const sk = { label: "Don't ask again for tag deletes and merges", checked: skipTagConfirms };
+    const sk = { label: "Don't ask again for tag deletes, merges and renames", checked: skipTagConfirms };
     const ok = await confirmDlg(
       `Merge #${s} into #${g}? ${carriers.length} ${carriers.length === 1 ? 'body carries' : 'bodies carry'} #${s} — they will carry #${g} instead, and #${s} disappears (its name is suppressed on “${t.name}”). #${g} keeps its name.`,
       'Merge tags', { title: `Merge #${s} → #${g}`, skip: sk });
@@ -2206,6 +2997,103 @@ async function mergeTagsUI(src, dst) {
     if (!ok) return;
   }
   mergeTags(s, g);
+}
+// rename one tag everywhere on the canvas: explicit #old in body texts becomes
+// #new, manual/old moves to manual/new with its spot anchor, auto-only sources
+// are grounded as explicit #new (like a merge), the old name is suppressed so
+// title words can't grow it back, and the new name is unsuppressed so it can
+// live. Renaming onto an existing name folds in (like a merge). Current canvas only.
+function renameTag(oldDisp, newRaw) {
+  const t = vault.tab();
+  if (!t) { toast('No open canvas — nothing to rename on'); return 0; }
+  const s = normDisp(oldDisp);
+  const g = String(newRaw || '').trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_\-/]/g, '');
+  if (!/^[a-z0-9_\-/]{2,}$/.test(s)) return 0;
+  if (!/^[a-z0-9_\-/]{2,}$/.test(g) || !/[a-z]/.test(g)) { toast('That name can’t be a tag — use at least 2 letters (a–z, 0–9)'); return 0; }
+  if (s === g) { toast('That’s the same name — nothing to rename'); return 0; }
+  const carriers = carriersOf(t, s);
+  if (!carriers.length) { toast(`#${s} is not in this verse`); return 0; }
+  vault.suppressTag(t, s);
+  // the new name must be allowed to live: drop it from this canvas's
+  // suppression (a previously deleted/merged-away name can be renamed back)
+  if (Array.isArray(t.suppressedTags) && t.suppressedTags.map(normDisp).includes(g)) {
+    t.suppressedTags = t.suppressedTags.filter(x => normDisp(x) !== g);
+  }
+  const re = tagUseRe(s);
+  for (const doc of carriers) {
+    const hasG = (doc.tags || []).some(tg => vault.stripAuto(tg) === g);
+    const hadManualS = (doc.tags || []).some(tg => vault.isManual(tg) && vault.stripAuto(tg) === s);
+    const anchorS = (doc.manualTags && doc.manualTags[s]) || null;
+    if (doc.manualTags) delete doc.manualTags[s];
+    doc.tags = (doc.tags || []).filter(tg => !(vault.isManual(tg) && vault.stripAuto(tg) === s));
+    if (hasG) {
+      // the new name already grounds this body: just drop the old one
+      doc.text = String(doc.text || '').replace(re, '$1');
+    } else {
+      let n = 0;
+      doc.text = String(doc.text || '').replace(re, (...a) => { n++; return a[1] + '#' + g; });
+      if (n === 0 && hadManualS) {
+        // a hand-placed tag keeps its hand-placed nature under the new name
+        doc.tags = (doc.tags || []).filter(tg => !(String(tg).toLowerCase().startsWith('auto/') && vault.stripAuto(tg) === g));
+        if (!doc.tags.some(tg => vault.stripAuto(tg) === g)) doc.tags.push('manual/' + g);
+        if (anchorS) { if (!doc.manualTags) doc.manualTags = {}; doc.manualTags[g] = anchorS; }
+      } else if (n === 0) {
+        // auto-only source: ground the new name explicitly so it survives
+        doc.text = String(doc.text || '').replace(/\s+$/, '') + '\n#' + g;
+      }
+      // n > 0: rewritten in the prose as explicit #new — no anchor needed
+    }
+    vault.recountDoc(doc);
+  }
+  // the tag page follows the rename: a focused #old becomes the focused #new
+  let followTag = null;
+  try {
+    if (activeId === 'tag:' + s) { activeId = 'tag:' + g; followTag = 'tag:' + g; }
+    if (vault.tab() && vault.tab().activeId === 'tag:' + s) vault.tab().activeId = 'tag:' + g;
+  } catch {}
+  // a search box showing the old name follows it too
+  try {
+    const si = $('#searchInput');
+    if (si && si.value === '#' + s) si.value = '#' + g;
+  } catch {}
+  vault.persist();
+  try { rebuild(activeId); } catch {}
+  // rebuild re-seats the Main universe first, which steals tab.activeId back
+  // when the sun is a tag body — re-assert the followed tag on the tags-view
+  // universe so canvas and reader stay on the renamed tag
+  try {
+    if (followTag && lensTags && uni && uni.byId && uni.byId.has(followTag)) {
+      activeId = followTag;
+      try { if (vault.tab()) vault.tab().activeId = followTag; vault.persist(); } catch {}
+      try { renderDoc(); } catch {}
+    }
+  } catch {}
+  try { if (!$('#tagPop').hidden) openTagPop(); } catch {}
+  toast(`Renamed #${s} to #${g} — ${carriers.length} ${carriers.length === 1 ? 'body' : 'bodies'} now ${carriers.length === 1 ? 'carries' : 'carry'} #${g}`);
+  return carriers.length;
+}
+async function renameTagConfirm(s, g) {
+  const t = vault.tab();
+  if (!t) return;
+  s = normDisp(s);
+  g = String(g || '').trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_\-/]/g, '');
+  if (!/^[a-z0-9_\-/]{2,}$/.test(s) || !/^[a-z0-9_\-/]{2,}$/.test(g) || !/[a-z]/.test(g)) { toast('That name can’t be a tag — use at least 2 letters (a–z, 0–9)'); return; }
+  if (s === g) { toast('That’s the same name — nothing to rename'); return; }
+  const carriers = carriersOf(t, s);
+  if (!carriers.length) { toast(`#${s} is not in this verse`); return; }
+  const n = carriers.length;
+  const already = carriersOf(t, g).length;
+  if (!skipTagConfirms) {
+    const sk = { label: "Don't ask again for tag deletes, merges and renames", checked: skipTagConfirms };
+    const ok = await confirmDlg(
+      already
+        ? `Rename #${s} to #${g}? ${n} ${n === 1 ? 'body carries' : 'bodies carry'} #${s} — #${g} already grounds ${already} ${already === 1 ? 'body' : 'bodies'}, so they will share it, and #${s} disappears (suppressed on “${t.name}”).`
+        : `Rename #${s} to #${g}? ${n} ${n === 1 ? 'body carries' : 'bodies carry'} #${s} — every explicit use is rewritten, manual anchors move with it, and #${s} disappears (suppressed on “${t.name}”).`,
+      'Rename tag', { title: `Rename #${s} → #${g}`, skip: sk });
+    if (ok && sk.checked !== skipTagConfirms) { skipTagConfirms = sk.checked; saveUi(); try { syncConfirmTip(); } catch {} }
+    if (!ok) return;
+  }
+  renameTag(s, g);
 }
 // tags pop-out geometry: null = flex-centered; dragged = fixed at the stored point (clamped on-screen)
 function applyTvpGeom() {
@@ -2216,10 +3104,235 @@ function applyTvpGeom() {
   tvpY = Math.max(8, Math.min(window.innerHeight - 60, tvpY));
   card.style.position = 'fixed'; card.style.left = tvpX + 'px'; card.style.top = tvpY + 'px'; card.style.margin = '0';
 }
+// in-body find: highlight every occurrence of a term inside the open body
+// and step through them. The term arrives from a search-result click
+// (lastSearchQ, captured before the box clears) or the find bar itself.
+// Highlighting is plain spans over text nodes (never touches the stored
+// text), re-applied after each reader render, cleared with × or Esc.
+let findTerm = '', findSpans = [], findIdx = -1, findBarOpen = false, lastSearchQ = '', findSideOn = false;
+const MAX_FIND_HITS = 500;
+function unwrapFind() {
+  const root = $('#docBody');
+  if (root) for (const sp of [...root.querySelectorAll('.find-hit')]) {
+    try { sp.replaceWith(document.createTextNode(sp.textContent)); } catch {}
+  }
+  // heal the shatter: every highlight cycle splits text nodes (wrapping the
+  // match, then unwrapping it leaves "art" as "a"|"rt"), and the highlighter
+  // only matches inside a single node — without this, terms spanning an old
+  // split silently find nothing, and find rots the more it is used.
+  try { if (root) root.normalize(); } catch {}
+  findSpans = []; findIdx = -1;
+}
+// reader action row: remove/delete/preview act on real documents only, but
+// Find works on whatever the reader shows (doc, theme, tag, overview) — so
+// the Find button never hides with the rest of the row.
+function syncDocActionButtons() {
+  const isDoc = !!vault.byId(shownId);
+  const rm = $('#docRemoveBtn'), del = $('#docDeleteBtn'), src = $('#docSrcBtn'), fnd = $('#docFindBtn');
+  if (rm) rm.hidden = !isDoc;
+  if (del) del.hidden = !isDoc;
+  if (src) src.hidden = !isDoc;
+  if (fnd) fnd.hidden = false;
+  // tag pages are derived views (no body to remove/delete/preview), but the
+  // focused tag itself can be renamed from here — no right-click needed
+  const trb = $('#docTagRenameBtn');
+  if (trb) trb.hidden = !((typeof activeId === 'string') && activeId.startsWith('tag:'));
+  const da = $('#docActions');
+  if (da) da.hidden = false;
+  try { paintCanvasDot(); } catch {} // inventories rebuilt above — re-apply the red canvas-dot mark
+  try { paintGoldRows(); } catch {} // ...and the persistent gold selection marks
+}
+function syncFindBar() {
+  const bar = $('#findBar'), fi = $('#findInput'), fc = $('#findCount');
+  if (!bar) return;
+  // gate on reader prose, never on vault: themes, tags and overviews are
+  // findable too, and this keeps both bars alive outside doc views.
+  const hasProse = !!($('#docBody') && $('#docBody').textContent.trim());
+  const show = !!(hasProse && (findTerm || findBarOpen));
+  bar.hidden = !show;
+  if (fi && document.activeElement !== fi && fi.value !== findTerm) fi.value = findTerm;
+  const count = findSpans.length ? `${findIdx + 1}/${findSpans.length}` : (findTerm ? '0/0' : '');
+  if (fc) fc.textContent = count;
+  // redundant side bar: same term, same count, parked left of the reader
+  const side = $('#findSide'), fi2 = $('#findInput2'), fc2 = $('#findCount2');
+  if (!side) return;
+  const p = $('#docPanel');
+  const panelOpen = p && !p.hidden && p.offsetParent !== null && !p.classList.contains('collapsed');
+  // the side bar, once summoned by ‹ ›, stays put even when the term is
+  // cleared to empty (only × / Esc dismisses it) so retyping never loses it
+  side.hidden = !(hasProse && panelOpen && findSideOn);
+  if (fi2 && document.activeElement !== fi2 && fi2.value !== findTerm) fi2.value = findTerm;
+  if (fc2) fc2.textContent = count;
+  if (!side.hidden) placeFindSide();
+}
+// side find bar: pinned left of the Active-body pane, centered on its height
+function placeFindSide() {
+  const side = $('#findSide'), p = $('#docPanel');
+  if (!side || side.hidden || !p) return;
+  const r = p.getBoundingClientRect();
+  const w = 210;
+  side.style.width = w + 'px';
+  side.style.left = Math.max(8, r.left - w - 8) + 'px';
+  const h = side.offsetHeight || 80;
+  side.style.top = Math.max(8, Math.min(window.innerHeight - h - 8, r.top + r.height / 2 - h / 2)) + 'px';
+}
+// back-to-top tab: appears once the reader pane is scrolled down, parked at
+// the pane's bottom-right; vanishes the moment the pane is back at the top.
+function placeTopBtn() {
+  const b = $('#docTopBtn'), p = $('#docPanel');
+  if (!b || b.hidden || !p) return;
+  const r = p.getBoundingClientRect();
+  b.style.left = Math.max(8, r.right - b.offsetWidth - 12) + 'px';
+  b.style.top = Math.max(8, Math.min(window.innerHeight - b.offsetHeight - 8, r.bottom - b.offsetHeight - 12)) + 'px';
+}
+function syncTopBtn() {
+  const b = $('#docTopBtn'), p = $('#docPanel');
+  if (!b || !p) return;
+  const open = !p.hidden && p.offsetParent !== null && !p.classList.contains('collapsed');
+  b.hidden = !(open && (p.scrollTop || 0) > 64);
+  if (!b.hidden) placeTopBtn();
+}
+function placeGlossTop() {
+  const b = $('#glossTopBtn'), p = $('#glossPane');
+  if (!b || b.hidden || !p) return;
+  const r = p.getBoundingClientRect();
+  // right edge stops 34px in so the pane's own resize grip stays grabbable
+  b.style.left = Math.max(8, r.right - b.offsetWidth - 34) + 'px';
+  b.style.top = Math.max(8, Math.min(window.innerHeight - b.offsetHeight - 8, r.bottom - b.offsetHeight - 12)) + 'px';
+}
+function syncGlossTop() {
+  const b = $('#glossTopBtn'), p = $('#glossPane'), body = $('#glossBody');
+  if (!b || !p || !body) return;
+  const open = glossOpen && !p.hidden && p.offsetParent !== null;
+  b.hidden = !(open && (body.scrollTop || 0) > 64);
+  if (!b.hidden) placeGlossTop();
+}
+// notes back-to-top tab: appears once the entries list is scrolled down,
+// parked at the pane's bottom-right; vanishes the moment it's back at top.
+function placeNotesTop() {
+  const b = $('#notesTopBtn'), p = $('#notesPane'), l = $('#notesList');
+  if (!b || b.hidden || !p || !l) return;
+  // anchored to the entries list (not the pane): it never covers Save/Cancel
+  const r = l.getBoundingClientRect();
+  b.style.left = Math.max(8, r.right - b.offsetWidth - 12) + 'px';
+  b.style.top = Math.max(8, Math.min(window.innerHeight - b.offsetHeight - 8, r.bottom - b.offsetHeight - 8)) + 'px';
+}
+function syncNotesTop() {
+  const b = $('#notesTopBtn'), p = $('#notesPane'), list = $('#notesList');
+  if (!b || !p || !list) return;
+  const open = notesOpen && !p.hidden && p.offsetParent !== null;
+  b.hidden = !(open && (list.scrollTop || 0) > 64);
+  if (!b.hidden) placeNotesTop();
+}
+function applyReaderFind() {
+  unwrapFind();
+  const root = $('#docBody');
+  if (root && findTerm) {
+    const q = findTerm.toLowerCase();
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) {
+      const n = walker.currentNode;
+      if (!n.nodeValue || !n.nodeValue.toLowerCase().includes(q)) continue;
+      if (n.parentElement && n.parentElement.closest && n.parentElement.closest('.imggal')) continue;
+      nodes.push(n);
+    }
+    for (const n of nodes) {
+      const text = n.nodeValue, low = text.toLowerCase();
+      const frag = document.createDocumentFragment();
+      let idx = 0, count = 0;
+      for (;;) {
+        if (findSpans.length >= MAX_FIND_HITS) break;
+        const p = low.indexOf(q, idx);
+        if (p < 0) break;
+        if (p > idx) frag.appendChild(document.createTextNode(text.slice(idx, p)));
+        const sp = document.createElement('span');
+        sp.className = 'find-hit';
+        sp.textContent = text.slice(p, p + findTerm.length);
+        frag.appendChild(sp);
+        findSpans.push(sp);
+        idx = p + findTerm.length;
+        count++;
+      }
+      if (count) {
+        if (idx < text.length) frag.appendChild(document.createTextNode(text.slice(idx)));
+        try { n.replaceWith(frag); } catch {}
+      }
+      if (findSpans.length >= MAX_FIND_HITS) break;
+    }
+  }
+  if (findSpans.length) { findIdx = 0; findSpans[0].classList.add('cur'); }
+  syncFindBar();
+}
+function stepFind(d) {
+  if (!findSpans.length) return;
+  findSpans.forEach(s => s.classList.remove('cur'));
+  findIdx = (((findIdx + d) % findSpans.length) + findSpans.length) % findSpans.length;
+  const sp = findSpans[findIdx];
+  sp.classList.add('cur');
+  try { sp.scrollIntoView({ block: 'center' }); } catch {}
+  syncFindBar();
+}
+function setReaderFind(term, jump) {
+  findTerm = String(term || '').trim().slice(0, 60);
+  applyReaderFind();
+  if (jump && findSpans.length) {
+    try { findSpans[0].scrollIntoView({ block: 'center' }); } catch {}
+    // second trigger for the side bar: a search-result jump that lands past
+    // the top of the body summons it (a jump already at the top needs no
+    // step controls); typing and "Find in body" never summon on their own.
+    // (the jump scrolls the reader pane — the body itself never scrolls.)
+    try {
+      const sc = document.getElementById('docPanel').scrollTop || document.getElementById('docBody').scrollTop || 0;
+      if (sc > 8) { findSideOn = true; syncFindBar(); }
+    } catch {}
+  }
+}
+function clearReaderFind() {
+  findTerm = ''; findBarOpen = false; findSideOn = false;
+  applyReaderFind();
+}
+
+// split inventory rows: the marker glyph gets its own dot box (canvas) and
+// the file name its own title box (pane) — one wrapped unit, same look.
+// Titles park the doc in the pane and never touch the canvas (any lens
+// included); dots put the body on the canvas as the sun and never open it in
+// the pane (lens members take the canvas to Main first).
+function blRow(id, dotGlyph, bodyHtml, rowCls, dotName, noteId) {
+  const rc = rowCls ? ' ' + rowCls : '';
+  // general doc inventories: a small gold note mark on rows whose document
+  // has notes — clicking it opens that document's Notes pane directly.
+  // Theme/tag rows pass no noteId (their ids are never docs, so nothing shows).
+  const nn = (noteId && noteCount(noteId)) || 0;
+  const nb = nn ? `<button class="bl-note${rc}" data-notes-pane="${noteId}" title="Open ${esc(dotName || noteId)}’s notes pane (${nn} ${nn === 1 ? 'entry' : 'entries'})"><svg class="bl-note-ic" viewBox="0 0 12 12" width="13" height="13" aria-hidden="true"><rect x="0.5" y="0.5" width="11" height="11" fill="#eccb45" stroke="rgba(138,106,31,.9)"/><line x1="2" y1="4.6" x2="10" y2="4.6" stroke="rgba(138,106,31,.55)" stroke-width="0.9"/><line x1="2" y1="7.4" x2="10" y2="7.4" stroke="rgba(138,106,31,.55)" stroke-width="0.9"/><line x1="2.9" y1="1.5" x2="2.9" y2="10.5" stroke="rgba(200,80,60,.7)" stroke-width="0.9"/></svg></button>` : '';
+  return `<span class="bl-wrap"><button class="bl-dot${rc}" data-canvas="${id}" title="Show “${esc(dotName || id)}” in the canvas">${dotGlyph}</button><button class="bl-row${rc}" data-open="${id}">${bodyHtml}</button>${nb}</span>`;
+}
+function paintCanvasDot() {
+  const dl = $('#docLinks');
+  if (!dl) return;
+  dl.querySelectorAll('.bl-dot.dot-on').forEach(b => b.classList.remove('dot-on'));
+  const sid = (uni && uni.sunId && uni.byId.has(uni.sunId)) ? uni.sunId : null;
+  if (!sid) return;
+  const b = dl.querySelector(`.bl-dot[data-canvas="${CSS.escape(sid)}"]`);
+  if (b) b.classList.add('dot-on');
+}
+// mass readout for a doc that isn't a body on the live canvas (e.g. a pane
+// pin parked from a lens): fall back to its node on any built universe.
+function mainNodeById(id) {
+  try {
+    for (const u of unis.values()) {
+      const n = u && u.byId && u.byId.get(id);
+      if (n) return n;
+    }
+  } catch {}
+  return null;
+}
+
 // general-state reader: no active body — a live overview with drill-down rows,
 // never stale bodies. Thematic general lists the lens's themes; regular general
 // lists the canvas. An empty canvas keeps its import hint.
 function renderGeneral() {
+  srcHi = null; // fresh rows — a stale hover id would block re-highlighting
   const t = vault.tab();
   const docs = t ? (t.docs || []) : [];
   if (!t) {
@@ -2230,9 +3343,9 @@ function renderGeneral() {
     $('#docTags').innerHTML = '';
     $('#docBody').innerHTML = '<span style="color:var(--mut)">Every canvas is closed. Click + in the top bar to start a fresh canvas, or open Open Existing Project to reopen a canvas from the in-app autosave or Recently closed.</span>';
     $('#docLinks').innerHTML = '';
-    const da = $('#docActions');
-    if (da) da.hidden = true;
-    try { syncResizeHandle(); } catch {}
+    try { syncDocActionButtons(); } catch {} // Find stays available even here
+    try { applyReaderFind(); } catch {} // rebuild highlights for the hint text
+    try { syncResizeHandle(); } catch {} try { syncNotesPaneDoc(); } catch {} // Notes book tab/pane follow the shown doc
     return;
   }
   if (lensThematic) {
@@ -2248,7 +3361,7 @@ function renderGeneral() {
     if (sg) sg.innerHTML = '';
     $('#docLinks').innerHTML = (themes.length ? `<div class="bl-head">THEMES — ${themes.length}</div>` : '') +
       [...themes].sort((a, b) => b.weight - a.weight || (a.id < b.id ? -1 : 1))
-        .map(th => `<button class="bl-row" data-open="${th.id}">◈ ${esc(th.label)}<span>${esc((th.terms || []).slice(0, 3).join(' · '))}</span></button>`).join('');
+        .map(th => blRow(th.id, '◈', `${esc(th.label)}<span>${esc((th.terms || []).slice(0, 3).join(' · '))}</span>`, '', th.label)).join('');
   } else if (lensTags) {
     // tags-view general state: the lens's tag bodies (regular docs aren't bodies here)
     const recs = tagRecords.get(vault.activeTabId) || [];
@@ -2262,7 +3375,7 @@ function renderGeneral() {
     $('#docBody').innerHTML = '<span style="color:var(--mut)">One body per tag, webbed by the bodies they share. Click a tag to make it the gravitational center; click empty space to release the center — the canvas middle holds gravity in this state.</span>';
     $('#docLinks').innerHTML = `<div class="bl-head">TAGS — ${recs.length} <button class="viewall" data-tvexit="1" title="Leave the tags view">Exit tags view</button></div>` +
       [...recs].sort((a, b) => b.members.length - a.members.length || (a.id < b.id ? -1 : 1))
-        .map(r => `<button class="bl-row" data-open="${r.id}">◈ ${esc(r.label)}<span>grounds ${r.members.length} ${r.members.length === 1 ? 'body' : 'bodies'}</span></button>`).join('');
+        .map(r => blRow(r.id, '◈', `${esc(r.label)}<span>grounds ${r.members.length} ${r.members.length === 1 ? 'body' : 'bodies'}</span>`, '', r.label)).join('');
   } else {
     setKicker('◌ GENERAL STATE — CENTER GRAVITY');
     const sg = $('#docShared');
@@ -2299,24 +3412,36 @@ function renderGeneral() {
       $('#docLinks').innerHTML = `<div class="bl-head">LARGEST BODIES — ${big.length}` +
         (docs.length > 6 ? ` <button class="viewall" data-viewall="1" title="${showAllBodies ? 'Collapse back to the 6 largest' : `Also list the other ${docs.length - 6}`}">${showAllBodies ? 'Show fewer' : 'View all bodies'}</button>` : '') +
         ` <button class="viewall" data-tagpop="1" title="Show every tag in this verse as pills on a glass card">All thematic tags</button></div>` +
-        big.map(o => `<button class="bl-row" data-open="${o.id}">◉ ${esc(vault.titleOf(o))}<span>${rowSub(o)}</span></button>`).join('') +
-        rest.map(o => `<button class="bl-row rest-row" data-open="${o.id}"><span class="rest-dot">●</span> ${esc(vault.titleOf(o))}<span>${rowSub(o)}</span></button>`).join('');
+        big.map(o => blRow(o.id, '◉', `${esc(vault.titleOf(o))}<span>${rowSub(o)}</span>`, '', vault.titleOf(o), o.id)).join('') +
+        rest.map(o => blRow(o.id, '<span class="rest-dot">●</span>', `${esc(vault.titleOf(o))}<span>${rowSub(o)}</span>`, 'rest-row', vault.titleOf(o), o.id)).join('');
     }
   }
-  const da = $('#docActions');
-  if (da) da.hidden = true; // nothing active — nothing to remove or delete
-  try { syncResizeHandle(); } catch {}
+  try { syncDocActionButtons(); } catch {} // overview keeps Find; remove/delete/preview hide
+  try { applyReaderFind(); } catch {} // rebuild highlights for the overview prose
+  try { syncResizeHandle(); } catch {} try { syncNotesPaneDoc(); } catch {} // Notes book tab/pane follow the shown doc
 }
+let lastDocShown = null; // identity of what's in the reader — a newly shown doc always starts scrolled to the top
 function renderDoc() {
-  const d = vault.byId(activeId);
+  // pane-only pins: a title click parks a doc in the pane without touching
+  // the canvas; anything the pin can't resolve falls back to the canvas pick.
+  if (paneId && !vault.byId(paneId)) paneId = null;
+  const vid = paneId || activeId;
+  shownId = vid;
+  const rkey = (vault.activeTabId || '') + '|' + (vid || 'general');
+  if (rkey !== lastDocShown) {
+    lastDocShown = rkey;
+    try { $('#docPanel').scrollTop = 0; $('#docBody').scrollTop = 0; } catch {}
+    try { syncTopBtn(); } catch {} // newly shown body starts at top — no tab
+  }
+  const d = vault.byId(vid);
   if (!d) {
-    const th = themeById(activeId);
-    if (th && uni && uni.byId.has(activeId)) {
+    const th = themeById(vid);
+    if (th && uni && uni.byId.has(vid)) {
       setKicker(thematicWhole ? '◈ ACTIVE THEME — WHOLE VISIDOCSVERSE' : '◈ ACTIVE THEME — GRAVITATIONAL CENTER');
       renderThemeDoc(th); return;
     }
-    const tg = tagById(activeId);
-    if (tg && uni && uni.byId.has(activeId)) {
+    const tg = tagById(vid);
+    if (tg && uni && uni.byId.has(vid)) {
       setKicker('◈ ACTIVE TAG — GRAVITATIONAL CENTER');
       renderTagDoc(tg); return;
     }
@@ -2324,23 +3449,26 @@ function renderDoc() {
     renderGeneral();
     return;
   }
-  setKicker('◉ ACTIVE BODY — GRAVITATIONAL CENTER');
+  if (paneId && paneId !== activeId) setKicker('◉ READING — CANVAS UNCHANGED');
+  else setKicker('◉ ACTIVE BODY — GRAVITATIONAL CENTER');
   $('#docTitle').textContent = vault.titleOf(d);
-  const m = uni.byId.get(activeId);
+  const m = (uni && uni.byId.get(vid)) || mainNodeById(vid);
   $('#docMeta').innerHTML = `${d.words} words · mass ${(m ? (m.trueMass ?? m.mass) : 0).toFixed(1)} <span class="sg-help" data-sghelp tabindex="0">?</span> · ${d.links.length} outgoing refs<div class="sg-help-pop" role="note" data-help-pop="mass"><span class="help-text" data-help-text="mass">${esc(helpTexts.mass)}</span><button class="help-edit-btn" data-help-edit="mass" title="Edit this explanation">✎ edit</button></div>`;
   $('#docTags').innerHTML = d.tags.map(t => {
     const disp = vault.stripAuto(t);
     const low = String(t).toLowerCase();
     const cls = low.startsWith('auto/') ? ' auto' : (low.startsWith('manual/') ? ' manual' : '');
     const mark = low.startsWith('manual/') ? '<span class="mmark" title="Manually created tag">M</span>' : '';
-    const tip = low.startsWith('manual/') ? `Manually created tag — click to search` : `#${esc(disp)} — click to search`;
+    const tip = low.startsWith('manual/') ? `Manually created tag — click to search · right-click to rename` : `#${esc(disp)} — click to search · right-click to rename`;
     return `<button class="tagpill${cls}" data-tag="${esc(disp)}" title="${tip}">#${esc(disp)}${mark}</button>`;
   }).join('') +
     `<button class="tagpill addtagbtn" data-addtag="${d.id}" title="Declare what this body belongs with: writes a #tag into its text. Bodies sharing it pull together, share weight, match in search, and form one Tags-view node — and unlike auto tags, it always counts. E.g. #thesis_core">+ #tag</button>` +
-    `<button class="tagpill notesbtn" data-notes="${d.id}" title="Sticky note for this body (140 characters max)">notes</button>`;
+    `<button class="tagpill notesbtn${noteCount(d.id) ? '' : ' note-zero'}" data-notes="${d.id}" title="Notes for this body — one shared notepad (sticky square, this button and the Notes book tab all show the same entries)">notes ·${noteCount(d.id)}</button>`;
   $('#docBody').innerHTML = renderBody(d.text, d.images);
   hydrateImages($('#docBody'), d.images);
   try { markManualSpots(d); } catch {} // persistent gold markers on manual-tag spots
+  try { markNoteSpots(d); } catch {} // sent highlights stay marked while their note entry lives
+  try { applyReaderFind(); } catch {} // in-body find highlights survive re-renders
   // shared ground -> top hover spillover menu (up to 12 tethers, scrolls)
   const res = edgeInfo.filter(e => e.kind === 'topic' && (e.source === d.id || e.target === d.id)).slice(0, 12);
   const sg = $('#docShared');
@@ -2356,20 +3484,21 @@ function renderDoc() {
   // bodies referencing this one stay inline below the body text
   const back = vault.docs.filter(o => o.id !== d.id && o.links.some(t => vault.byTitle(t)?.id === d.id));
   $('#docLinks').innerHTML = (back.length ? `<div class="bl-head">PULLED INTO ORBIT — ${back.length}</div>` : '') +
-    back.map(o => `<button class="bl-row" data-open="${o.id}">◉ ${esc(vault.titleOf(o))}</button>`).join('');
-  const da = $('#docActions');
-  if (da) da.hidden = false;
-  try { syncResizeHandle(); } catch {}
+    back.map(o => blRow(o.id, '◉', `${esc(vault.titleOf(o))}`, '', vault.titleOf(o))).join('');
+  try { syncDocActionButtons(); } catch {} // real doc — all four action buttons show
+  try { syncResizeHandle(); } catch {} try { syncNotesPaneDoc(); } catch {} // Notes book tab/pane follow the shown doc
 }
 
 // reader panel for a distilled theme body: its concepts + grounded member docs.
 // Member rows reuse data-open, so clicking one focuses that doc in the lens.
+// The theme's best-fit ungrounded files ride along in their own inventory
+// section below (same row shape/click, so icon clicks can flash them too).
 function renderThemeDoc(th) {
   const node = uni ? uni.byId.get(th.id) : null;
   $('#docTitle').textContent = '◈ ' + th.label;
   $('#docMeta').innerHTML = `theme · weight ${th.weight.toFixed(1)} · mass ${((node && (node.trueMass ?? node.mass)) ?? th.mass).toFixed(1)} <span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="mass"><span class="help-text" data-help-text="mass">${esc(helpTexts.mass)}</span><button class="help-edit-btn" data-help-edit="mass" title="Edit this explanation">✎ edit</button></div>`;
   $('#docTags').innerHTML = th.terms.map(term =>
-    `<button class="tagpill" data-tag="${esc(term)}">#${esc(term)}</button>`).join('');
+    `<button class="tagpill" data-tag="${esc(term)}" title="Click to search · right-click to rename">#${esc(term)}</button>`).join('');
   // theme summary, wired to THIS theme: its top-evidence concepts, its weight
   // rank across the lens, and its closest neighboring theme by shared grounded
   // bodies — so every theme reads distinctly instead of sharing boilerplate.
@@ -2410,11 +3539,14 @@ function renderThemeDoc(th) {
         `<button class="bl-row" data-open="${r.oid}">◈ ${esc(r.label)}<span>${esc(r.span)}</span></button>`).join('') : '<div class="sg-empty">No shared ground.</div>') + `</div>`;
   }
   const rows = th.members.map(id => vault.byIdAnywhere(id)).filter(Boolean);
+  const ungrRows = (assocUngrMap().get(th.id) || []).filter(o => o && !((th.members || []).includes(o.id)));
   $('#docLinks').innerHTML = (rows.length ? `<div class="bl-head">GROUNDED BODIES — ${rows.length}</div>` : '') +
-    rows.map(o => `<button class="bl-row" data-open="${o.id}">◉ ${esc(vault.titleOf(o))}</button>`).join('');
-  const da = $('#docActions');
-  if (da) da.hidden = true; // themes are derived — nothing to remove or delete
-  try { syncResizeHandle(); } catch {}
+    rows.map(o => blRow(o.id, '◉', `${esc(vault.titleOf(o))}`, '', vault.titleOf(o))).join('') +
+    (ungrRows.length ? `<div class="bl-head">UNGROUNDED — ${ungrRows.length}</div>` +
+    ungrRows.map(o => blRow(o.id, '◉', `${esc(vault.titleOf(o))}`, 'ungr-row', vault.titleOf(o))).join('') : '');
+  try { syncDocActionButtons(); } catch {} // derived theme — Find stays, the rest hide
+  try { applyReaderFind(); } catch {} // rebuild highlights for the theme summary
+  try { syncResizeHandle(); } catch {} try { syncNotesPaneDoc(); } catch {} // Notes book tab/pane follow the shown doc
 }
 
 // reader panel for an active tag body: the tag plus the member bodies grounding it.
@@ -2424,7 +3556,7 @@ function renderTagDoc(tg) {
   $('#docTitle').textContent = '◈ ' + tg.label;
   $('#docMeta').innerHTML = `tag · grounds ${tg.members.length} ${tg.members.length === 1 ? 'body' : 'bodies'} · mass ${((node && (node.trueMass ?? node.mass)) ?? tg.mass).toFixed(1)} <span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="mass"><span class="help-text" data-help-text="mass">${esc(helpTexts.mass)}</span><button class="help-edit-btn" data-help-edit="mass" title="Edit this explanation">✎ edit</button></div>`;
   $('#docTags').innerHTML = (tg.terms || []).map(term =>
-    `<button class="tagpill" data-tag="${esc(term)}">#${esc(term)}</button>`).join('');
+    `<button class="tagpill" data-tag="${esc(term)}" title="Click to search · right-click to rename">#${esc(term)}</button>`).join('');
   // tag summary, wired to THIS tag: its grounded bodies, its rank by grounding
   // power across the verse, and its closest neighboring tag by shared bodies.
   const tAll = tagRecords.get(vault.activeTabId) || [];
@@ -2462,10 +3594,10 @@ function renderTagDoc(tg) {
   }
   const tDocRows = tg.members.map(id => vault.byIdAnywhere(id)).filter(Boolean);
   $('#docLinks').innerHTML = (tDocRows.length ? `<div class="bl-head">GROUNDED BODIES — ${tDocRows.length} <button class="viewall" data-tvexit="1" title="Leave the tags view">Exit tags view</button></div>` : '') +
-    tDocRows.map(o => `<button class="bl-row" data-open="${o.id}">◉ ${esc(vault.titleOf(o))}<span>${o.words} words</span></button>`).join('');
-  const tda = $('#docActions');
-  if (tda) tda.hidden = true; // tags are derived — nothing to remove or delete
-  try { syncResizeHandle(); } catch {}
+    tDocRows.map(o => blRow(o.id, '◉', `${esc(vault.titleOf(o))}<span>${o.words} words</span>`, '', vault.titleOf(o))).join('');
+  try { syncDocActionButtons(); } catch {} // derived tag — Find stays, the rest hide
+  try { applyReaderFind(); } catch {} // rebuild highlights for the tag summary
+  try { syncResizeHandle(); } catch {} try { syncNotesPaneDoc(); } catch {} // Notes book tab/pane follow the shown doc
 }
 
 function renderBody(text, images) {
@@ -3314,11 +4446,12 @@ function loop() {
     if (viewNotesAll || viewNotesSun) {
       noteMarks = new Map();
       // All: solid squares, only on bodies that actually have notes — never placeholders
-      if (viewNotesAll) for (const d of vault.docs) if (typeof d.note === 'string' && d.note) noteMarks.set(d.id, 'full');
+      if (viewNotesAll) for (const d of vault.docs) if (noteCount(d.id)) noteMarks.set(d.id, 'full');
       // Active body: the selected body always gets its square — solid when noted, hollow frame when not
       if (viewNotesSun && activeId && vault.byId(activeId) && !noteMarks.has(activeId)) noteMarks.set(activeId, 'empty');
     }
-    ren.draw(uni, { match: matchSet, now: virtT, noteMarks });
+    ren.selId = activeId; // gold follows the reader's selection (clicks never move bodies)
+    ren.draw(uni, { match: matchSet, now: virtT, noteMarks, assoc: assocDrawData() });
     if (autoDist) drawMiniMap(); // verse map tracks the pinned orb live
     if ((tick.n = (tick.n || 0) + 1) % 20 === 0) updateStats();
     raf = requestAnimationFrame(tick);
@@ -3380,23 +4513,20 @@ function boot() {
     const noteId = (viewNotesAll || viewNotesSun) ? ren.noteHit(sx, sy) : null;
     const n2 = uni ? ren.pick(uni.nodes, sx, sy) : null;
     if (noteId && vault.byId(noteId)) openNoteEditor(noteId, x, y);
-    else if (n2 && uni.focus(n2.id)) {
-      claimSun(n2.id);
-      renderDoc();
-      const nd = vault.byId(n2.id);
-      toast((nd ? vault.titleOf(nd) : n2.label) + ' is now the sun');
+    else if (n2) {
+      const nd2 = vault.byId(n2.id);
+      selectBody(n2.id, nd2 ? vault.titleOf(nd2) : n2.label);
     }
     if (n2 && selSet.size && !selSet.has(n2.id)) { selSet.clear(); hideBoxSel(); }
     try { openCtx(x, y, n2 ? n2.id : null); } catch (err) { toast('Menu failed: ' + ((err && err.message) || err)); }
     srcSuppress = true; // swallow the native duplicate on platforms that fire it on release
-    setProbe(probePress + ' → menu');
   };
   const endDrag = (e) => {
     if (e && e.isPrimary === false) return;
     if (e && e.button === 2 && srcHold) {
       const h = srcHold; srcHold = null;
       try { clearTimeout(h.timer); } catch {}
-      if (h.fired || h.moved) { closeSrcPop(); srcSuppress = true; setProbe(probePress + (h.fired ? ' → preview closed' : ' → pan end')); return; } // release ends the preview (or the pan): no menu, no focus change
+      if (h.fired || h.moved) { closeSrcPop(); srcSuppress = true; return; } // release ends the preview (or the pan): no menu, no focus change
       srcQuickClick(e.clientX, e.clientY);
       return;
     }
@@ -3443,18 +4573,20 @@ function boot() {
     }
     const quick = performance.now() - downAt < 500;
     if (!moved && quick) {
-      setProbe(probePress + ' → click path (button ' + (e && e.button) + ')');
       const r = cv.getBoundingClientRect();
       const sx = e.clientX - r.left, sy = e.clientY - r.top;
       const n = ren.pick(uni.nodes, sx, sy);
+      // associated paper icon first: light up the doc's row in the theme's
+      // grounded-bodies inventory (the icon sits atop its seed orb, so it
+      // must win over the orb's own focus)
+      const ah = (ren.assocHit) ? ren.assocHit(sx, sy) : null;
       // sticky-note square first: it opens the note editor without moving the sun
       const noteId = (viewNotesAll || viewNotesSun) ? ren.noteHit(sx, sy) : null;
-      if (noteId && vault.byId(noteId)) { openNoteEditor(noteId, e.clientX, e.clientY); }
-      else if (n && uni.focus(n.id)) {
-        claimSun(n.id);
-        renderDoc();
+      if (ah) { focusAssocDoc(ah.theme, ah.doc); }
+      else if (noteId && vault.byId(noteId)) { openNoteEditor(noteId, e.clientX, e.clientY); }
+      else if (n) {
         const nd = vault.byId(n.id);
-        toast((nd ? vault.titleOf(nd) : n.label) + ' is now the sun');
+        selectBody(n.id, nd ? vault.titleOf(nd) : n.label);
       } else if (!n) {
         // off-click into empty space: drop the box selection AND the sun — no
         // active body, so the canvas center becomes the gravitational center.
@@ -3478,12 +4610,6 @@ function boot() {
   };
   cv.addEventListener('pointerdown', (e) => {
     if (e.isPrimary === false) return;
-    try {
-      const pr = cv.getBoundingClientRect();
-      const ph = uni ? ren.pick(uni.nodes, e.clientX - pr.left, e.clientY - pr.top) : null;
-      probePress = `press b${e.button}${ph ? ' @' + String(ph.id || '').slice(0, 16) : ' empty'}`;
-    } catch { probePress = `press b${e.button}`; }
-    setProbe(probePress + ' …');
     if (srcStickyId) closeSrcPop(); // pinned preview: any fresh canvas press dismisses it
     srcSuppress = false; // stale menu-swallows die on the next press
     if (e.button === 2 && uni) {
@@ -3500,7 +4626,7 @@ function boot() {
           const hd = vault.byId(srcHold.id);
           if (hd && !lensThematic && !thematicWhole && !lensTags) {
             srcHold.fired = true;
-            try { openSrcPop(srcHold.id, srcHold.x, srcHold.y); setProbe(probePress + ' → preview open'); }
+            try { openSrcPop(srcHold.id, srcHold.x, srcHold.y); }
             catch (err) { toast('Preview failed: ' + ((err && err.message) || err)); }
           } else {
             // theme/tag body (or a lens view): a hold raises their menu instead.
@@ -3508,7 +4634,7 @@ function boot() {
             const mx = srcHold.x, my = srcHold.y, mid = srcHold.id;
             try { clearTimeout(srcHold.timer); } catch {}
             srcHold = null; srcSuppress = true;
-            try { openCtx(mx, my, mid); setProbe(probePress + ' → menu'); }
+            try { openCtx(mx, my, mid); }
             catch (err) { toast('Menu failed: ' + ((err && err.message) || err)); }
           }
         }, SRC_HOLD_MS);
@@ -3567,7 +4693,6 @@ function boot() {
       if (!moved && Math.hypot(e.clientX - downX, e.clientY - downY) > 4) {
         moved = true;
         dragMode = downNode ? 'rotate' : 'pan';
-        if (dragMode === 'move' && downNode) downNode._held = true;
         ren.cam.auto = false;
         cv.style.cursor = dragMode === 'pan' ? 'grabbing' : 'move';
       }
@@ -3577,7 +4702,9 @@ function boot() {
         if (autoDist && downNode && (dragMode === 'move' || dragMode === 'rotate')) {
           dragMode = e.altKey ? 'move' : 'rotate';
           downNode._held = dragMode === 'move';
-          cv.style.cursor = 'move';
+          // the cursor reports the live mode: the move arrows only while Alt
+          // is actually placing the body, grabbing while the drag only orbits
+          cv.style.cursor = dragMode === 'move' ? 'move' : 'grabbing';
         }
         if (dragMode === 'pan') {
           ren.cam.px = Math.max(-2500, Math.min(2500, (ren.cam.px || 0) + dx));
@@ -3588,6 +4715,9 @@ function boot() {
           downNode._ox = downNode.x; downNode._oy = downNode.y; downNode._oz = downNode.z;
           downNode.vx = downNode.vy = downNode.vz = 0;
         } else {
+          // plain body drag (any mode): orbiting only, never placement — so
+          // never the move cursor either
+          cv.style.cursor = 'grabbing';
           ren.cam.yaw += dx * 0.005;
           ren.cam.pitch = Math.max(-1.2, Math.min(1.2, ren.cam.pitch + dy * 0.004));
         }
@@ -3595,12 +4725,28 @@ function boot() {
       }
     } else {
       const r = cv.getBoundingClientRect();
-      ren.hover = uni ? ren.pick(uni.nodes, e.clientX - r.left, e.clientY - r.top) : null;
-      cv.style.cursor = ren.hover ? 'pointer' : 'grab';
+      // sticky-note squares show a plain arrow, never the hand: the hand is
+      // reserved for bodies (drag/focus), the square just opens its editor
+      const nh = (viewNotesAll || viewNotesSun) ? ren.noteHit(e.clientX - r.left, e.clientY - r.top) : null;
+      // associated paper icons show a plain arrow, never the hand: the hand
+      // is reserved for orbs (drag/focus), like the sticky-note squares above
+      const ah = ren.assocHit ? ren.assocHit(e.clientX - r.left, e.clientY - r.top) : null;
+      ren.hover = (!nh && !ah && uni) ? ren.pick(uni.nodes, e.clientX - r.left, e.clientY - r.top) : null;
+      cv.style.cursor = (nh || ah) ? 'default' : (ren.hover ? 'pointer' : 'grab');
+      // hover highlight: released general view only — the body's row in the
+      // general list lights up (never while a preview pop-out is open)
+      try {
+        const previewOpen = !$('#srcPop').hidden;
+        const hid = (hoverPrev && activeId == null && !previewOpen && ren.hover && ren.hover.id) ? ren.hover.id : null;
+        if (hid !== srcHi) { if (hid) { srcHoldHi(); srcHighlight(hid); } else srcClearHiSoon(); }
+      } catch {}
     }
   });
   cv.addEventListener('pointerup', endDrag);
-  cv.addEventListener('pointercancel', () => { if (downNode) downNode._held = false; dragMode = null; downNode = null; marquee.hidden = true; marqueeDel.hidden = true; cv.style.cursor = 'grab'; if (srcHold) { try { clearTimeout(srcHold.timer); } catch {} srcHold = null; } closeSrcPop(); setProbe(probePress + ' → CANCELLED by browser'); });
+  cv.addEventListener('pointerleave', () => {
+    try { ren.hover = null; cv.style.cursor = 'grab'; if (hoverPrev && $('#srcPop').hidden) srcClearHiSoon(); } catch {}
+  });
+  cv.addEventListener('pointercancel', () => { if (downNode) downNode._held = false; dragMode = null; downNode = null; marquee.hidden = true; marqueeDel.hidden = true; cv.style.cursor = 'grab'; if (srcHold) { try { clearTimeout(srcHold.timer); } catch {} srcHold = null; } closeSrcPop(); });
   document.addEventListener('pointerup', (e) => {
     // right-button release outside the canvas (right presses are never
     // capture-held, so off-canvas right releases land here): mirror the
@@ -3608,7 +4754,7 @@ function boot() {
     if (e && e.button === 2 && srcHold) {
       const h = srcHold; srcHold = null;
       try { clearTimeout(h.timer); } catch {}
-      if (h.fired || h.moved) { closeSrcPop(); srcSuppress = true; setProbe(probePress + (h.fired ? ' → preview closed' : ' → pan end')); }
+      if (h.fired || h.moved) { closeSrcPop(); srcSuppress = true; }
       else srcQuickClick(e.clientX, e.clientY);
     }
     // a right-drag released off-canvas never saw endDrag: don't strand it.
@@ -3629,10 +4775,13 @@ function boot() {
   }, { passive: false });
 
   // panels
+  // in-body find state + helpers now live at module level (just above renderGeneral):
+  // renderDoc/renderThemeDoc/renderTagDoc/renderGeneral call them, so boot scope hid them.
   const inp = $('#searchInput');
   inp.addEventListener('input', () => {
     const raw = inp.value.trim().toLowerCase();
     const q = raw.startsWith('#') ? raw.slice(1).trim() : raw;
+    lastSearchQ = q;
     const pop = $('#searchPop');
     if (!q) { pop.innerHTML = ''; matchSet = null; return; }
     const hits = vault.search(q);
@@ -3683,6 +4832,17 @@ function boot() {
     // view-modes strip under the top tabs: Main / Thematic / Tag
     const vm = e.target.closest('[data-vm]');
     if (vm) { e.stopPropagation(); goViewMode(vm.dataset.vm); return; }
+    const stt = e.target.closest('[data-statstoggle]');
+    if (stt) {
+      e.stopPropagation();
+      statsCollapsed = !statsCollapsed;
+      saveUi();
+      const row = stt.closest('.statrow');
+      if (row) row.classList.toggle('collapsed', statsCollapsed);
+      stt.textContent = statsCollapsed ? '+' : '–';
+      stt.title = statsCollapsed ? 'Show the verse stats' : 'Collapse the verse stats';
+      return;
+    }
     const opPick = e.target.closest('[data-openpick]');
     if (opPick) { e.stopPropagation(); hideOpenProjMenu(); switchCanvas(opPick.dataset.openpick); return; }
     const opRe = e.target.closest('[data-reopen]');
@@ -3713,10 +4873,55 @@ function boot() {
       saveUi();
       try { syncConfirmTip(); } catch {}
       toast(skipTagConfirms
-        ? 'Tag confirmations off — deletes and merges run immediately (toggle back anytime in the tags pane tips)'
-        : 'Tag confirmations on — deletes and merges ask first');
+        ? 'Tag confirmations off — deletes, merges and renames run immediately (toggle back anytime in the tags pane tips)'
+        : 'Tag confirmations on — deletes, merges and renames ask first');
       return;
     }
+    const dc = e.target.closest('[data-canvas]');
+    if (dc) {
+      // dot-box: put this body on the canvas as the sun and never open it in
+      // the pane. Bodies that aren't on this canvas (lens members) take the
+      // canvas to the Main view first; the pane then follows the canvas —
+      // the clicked doc itself is never opened by a dot.
+      e.stopPropagation();
+      const key = dc.dataset.canvas;
+      let nm = key;
+      try {
+        const dd = vault.byIdAnywhere(key);
+        if (dd) nm = vault.titleOf(dd);
+        else { const th = themeById(key); if (th) nm = '◈ ' + th.label; else { const tg = tagById(key); if (tg) nm = '◈ ' + tg.label; } }
+      } catch {}
+      const crownHere = () => {
+        if (uni && uni.byId.has(key) && typeof uni.focus === 'function' && uni.focus(key)) {
+          toast(`${nm} is now the sun`);
+          return true;
+        }
+        return false;
+      };
+      if (crownHere()) { try { paintCanvasDot(); } catch {} try { paintGoldRows(); } catch {} }
+      else if (lensThematic || lensTags) {
+        try { pushView(); } catch {} // Return can come back to the lens view being left
+        paneId = null; // the pane follows the canvas — never the clicked doc
+        activeId = null; // land neutral: the crown below owns the canvas, not a stale pick
+        assocSelId = null; srcHi = null; // the restored Main view lights its own rows
+        try { const t = vault.tab(); if (t) { t.activeId = null; vault.persist(); } } catch {}
+        lensThematic = false; thematicWhole = false; lensTags = false;
+        try { syncLensBtn(); } catch {}
+        try { syncTagVerseBtn(); } catch {}
+        try { applyLens(); saveUi(); } catch {}
+        if (crownHere()) toast(`${nm} is now the sun`);
+        try { paintCanvasDot(); } catch {} try { paintGoldRows(); } catch {}
+      } else {
+        const prow = document.querySelector(`#docLinks .bl-row[data-open="${CSS.escape(key)}"]`);
+        if (prow) prow.click();
+        try { paintCanvasDot(); } catch {} try { paintGoldRows(); } catch {}
+      }
+      return;
+    }
+    // inventory note marks: open that document's Notes pane directly
+    // (same destination as the reader's notes button below)
+    const npp = e.target.closest('[data-notes-pane]');
+    if (npp) { e.stopPropagation(); setNotes(true, npp.dataset.notesPane); return; }
     const o = e.target.closest('[data-open]');
     if (o) {
       if (!vault.tab() || !uni) {
@@ -3729,6 +4934,18 @@ function boot() {
       // whichever canvas holds the doc, leaving the lens first.
       let d = vault.byId(key);
       const wasLens = lensThematic || lensTags;
+      // inventory title boxes are pane-only: the reader parks on the doc
+      // while the canvas (gold, sun, camera, even the lens) stays exactly as
+      // it is. Non-inventory rows and cross-canvas docs keep the old path.
+      if (d && o.closest('#docLinks')) {
+        paneId = key;
+        renderDoc();
+        if (lastSearchQ) { const fq = lastSearchQ; lastSearchQ = ''; setReaderFind(fq, true); }
+        document.querySelectorAll('.help-open').forEach(w => w.classList.remove('open', 'help-open'));
+        $('#searchPop').innerHTML = ''; inp.value = ''; matchSet = null;
+        if (window.innerWidth <= 760) $('#docPanel').classList.add('open');
+        return;
+      }
       if (!d && key && !String(key).startsWith('theme_') && !String(key).startsWith('tag:')) {
         const ht = vault.tabs.find(t => (t.docs || []).some(x => x.id === key));
         if (ht) {
@@ -3746,12 +4963,15 @@ function boot() {
         if (lensThematic || lensTags) { lensThematic = false; thematicWhole = false; lensTags = false; syncLensBtn(); applyLens(); saveUi(); }
         if (wasLens) toast(`Regular view — “${vault.titleOf(d)}”`);
         claimSun(d.id);
-        uni.focus(d.id);
         renderDoc();
+        // a search-result click carries its term into the reader: every
+        // occurrence lights up and the first scrolls into view (consumed —
+        // later row clicks open clean until the next search).
+        if (lastSearchQ) { const fq = lastSearchQ; lastSearchQ = ''; setReaderFind(fq, true); }
         const w2 = document.querySelector('#docShared'); document.querySelectorAll('.help-open').forEach(w => w.classList.remove('open', 'help-open'))
       }
-      else if (typeof key === 'string' && key.startsWith('theme_') && uni.byId.has(key) && uni.focus(key)) { claimSun(key); renderDoc(); }
-      else if (typeof key === 'string' && key.startsWith('tag:') && lensTags && uni.byId.has(key) && uni.focus(key)) { claimSun(key); renderDoc(); }
+      else if (typeof key === 'string' && key.startsWith('theme_') && uni.byId.has(key)) { if (activeId !== key) claimSun(key); renderDoc(); }
+      else if (typeof key === 'string' && key.startsWith('tag:') && lensTags && uni.byId.has(key)) { if (activeId !== key) claimSun(key); renderDoc(); }
       $('#searchPop').innerHTML = ''; inp.value = ''; matchSet = null;
       if (window.innerWidth <= 760) $('#docPanel').classList.add('open');
       return;
@@ -3765,12 +4985,12 @@ function boot() {
     const w = e.target.closest('[data-wl]');
     if (w) {
       const d = vault.byTitle(w.dataset.wl);
-      if (d && uni.focus(d.id)) { claimSun(d.id); renderDoc(); }
+      if (d && selectBody(d.id, vault.titleOf(d), true)) { /* reader follows, map holds still */ }
       else toast(`"${w.dataset.wl}" is uncharted space`);
       return;
     }
     const nb = e.target.closest('[data-notes]');
-    if (nb) { openNotePop(nb.dataset.notes); return; }
+    if (nb) { setNotes(true, nb.dataset.notes); return; }
     // reader "+ #tag": write an explicit (hand-written, in-prose) tag — the
     // in-app counterpart to typing #tag in an imported file
     const ab = e.target.closest('[data-addtag]');
@@ -3791,6 +5011,94 @@ function boot() {
     const t = e.target.closest('[data-tag]');
     if (t) { inp.value = '#' + t.dataset.tag; inp.dispatchEvent(new Event('input')); }
   });
+  // find bar: manual in-body find lives here; search-result clicks feed it via
+  // setReaderFind above. Typing highlights live, Enter/› steps, Esc clears.
+  // once opened, the main bar persists even when emptied — only × / Esc closes it
+  const fi = $('#findInput');
+  if (fi) {
+    fi.addEventListener('input', () => { if (fi.value.trim()) findBarOpen = true; setReaderFind(fi.value, false); });
+    fi.addEventListener('keydown', (ev) => {
+      ev.stopPropagation();
+      if (ev.key === 'Enter') { ev.preventDefault(); stepFind(ev.shiftKey ? -1 : 1); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); clearReaderFind(); try { fi.blur(); } catch {} }
+    });
+    fi.addEventListener('click', (ev) => ev.stopPropagation());
+  }
+  const fp = $('#findPrev');
+  if (fp) fp.onclick = () => { findSideOn = true; stepFind(-1); }; // first ‹ summons the side bar
+  const fnx = $('#findNext');
+  if (fnx) fnx.onclick = () => { findSideOn = true; stepFind(1); }; // first › summons the side bar
+  const fx = $('#findClose');
+  if (fx) fx.onclick = () => { clearReaderFind(); try { $('#docBody').scrollTop = 0; } catch {} };
+  // redundant side find bar (left of the reader, centered on its height):
+  // same term, same matches, same ‹ › — either × clears both bars.
+  const fiS = $('#findInput2');
+  if (fiS) {
+    fiS.addEventListener('input', () => { if (fiS.value.trim()) findBarOpen = true; setReaderFind(fiS.value, false); });
+    fiS.addEventListener('keydown', (ev) => {
+      ev.stopPropagation();
+      if (ev.key === 'Enter') { ev.preventDefault(); stepFind(ev.shiftKey ? -1 : 1); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); clearReaderFind(); try { fiS.blur(); } catch {} }
+    });
+    fiS.addEventListener('click', (ev) => ev.stopPropagation());
+  }
+  const fpS = $('#findPrev2');
+  if (fpS) fpS.onclick = () => stepFind(-1);
+  const fnS = $('#findNext2');
+  if (fnS) fnS.onclick = () => stepFind(1);
+  const fxS = $('#findClose2');
+  if (fxS) fxS.onclick = () => { clearReaderFind(); try { $('#docBody').scrollTop = 0; } catch {} };
+  const fb = $('#docFindBtn');
+  if (fb) fb.onclick = () => {
+    findBarOpen = true;
+    const fi2 = $('#findInput');
+    if (fi2) {
+      if (!fi2.value.trim() && inp.value.trim()) setReaderFind(inp.value.trim().replace(/^#/, ''), false);
+      else syncFindBar();
+      fi2.focus();
+      try { fi2.select(); } catch {}
+    } else syncFindBar();
+  };
+  // back-to-top tab: tracks the reader pane's scroll, jumps to top on click
+  const dp = $('#docPanel'), tb = $('#docTopBtn');
+  if (dp) dp.addEventListener('scroll', () => { try { syncTopBtn(); } catch {} }, { passive: true });
+  if (tb) tb.onclick = () => {
+    try {
+      dp.scrollTo({ top: 0, behavior: 'auto' });
+      dp.scrollTop = 0; $('#docBody').scrollTop = 0;
+    } catch { try { dp.scrollTop = 0; } catch {} }
+    try { syncTopBtn(); } catch {}
+  };
+  // glossary back-to-top tab: tracks the glossary body's scroll, jumps to top
+  const gb = $('#glossBody'), gtb = $('#glossTopBtn');
+  if (gb) gb.addEventListener('scroll', () => { try { syncGlossTop(); } catch {} }, { passive: true });
+  if (gtb) gtb.onclick = () => {
+    try { gb.scrollTo({ top: 0, behavior: 'auto' }); gb.scrollTop = 0; }
+    catch { try { gb.scrollTop = 0; } catch {} }
+    try { syncGlossTop(); } catch {}
+  };
+  // notes back-to-top tab: tracks the entries list's scroll, jumps to top
+  const nl2 = $('#notesList'), ntb = $('#notesTopBtn');
+  if (nl2) nl2.addEventListener('scroll', () => { try { syncNotesTop(); } catch {} }, { passive: true });
+  if (ntb) ntb.onclick = () => {
+    try { nl2.scrollTo({ top: 0, behavior: 'auto' }); nl2.scrollTop = 0; }
+    catch { try { nl2.scrollTop = 0; } catch {} }
+    try { syncNotesTop(); } catch {}
+  };
+  // hover handoff: the gold row holds while the cursor rides it to the click —
+  // gliding onto the row cancels the fade, leaving it re-arms a shorter one.
+  try {
+    const dl = $('#docLinks');
+    if (dl) {
+      dl.addEventListener('mouseover', (e) => { try { if (hoverPrev && e.target && e.target.closest && e.target.closest('.bl-row.src-hi')) srcHoldHi(); } catch {} });
+      dl.addEventListener('mouseout', (e) => {
+        try {
+          const r = e.target && e.target.closest ? e.target.closest('.bl-row.src-hi') : null;
+          if (hoverPrev && r && (!e.relatedTarget || !r.contains(e.relatedTarget))) srcClearHiSoon(800);
+        } catch {}
+      });
+    }
+  } catch {}
   // reader pictures: click to zoom into a full-screen lightbox, click out to close
   $('#docBody').addEventListener('click', (e) => {
     const im = e.target && e.target.closest ? e.target.closest('img[data-full]') : null;
@@ -3814,6 +5122,8 @@ function boot() {
     if (!sel || sel.isCollapsed || !raw.trim() || !$('#docBody').contains(sel.anchorNode)) return;
     e.preventDefault();
     e.stopPropagation();
+    // the note keeps the RAW selection's anchor (read before word-snapping below)
+    const noteSpot = readReaderSelection().spot;
     // snap the selection out to whole words so tags never start/end mid-word
     try {
       if (sel.anchorNode && sel.anchorNode === sel.focusNode && sel.anchorNode.nodeType === 3) {
@@ -3852,7 +5162,7 @@ function boot() {
         }
       }
     } catch {}
-    openSelTagMenu(e.clientX, e.clientY, snippet, slugTag(useRaw), anchor);
+    openSelTagMenu(e.clientX, e.clientY, snippet, slugTag(useRaw), anchor, useRaw, noteSpot);
   });
   // Esc closes the tags-view pop-out and the glossary pane (never while typing in a field)
   document.addEventListener('keydown', (e) => {
@@ -4153,6 +5463,17 @@ function boot() {
         head.className = 'ctx-head';
         head.textContent = '◈ ' + th.label;
         ctx.appendChild(head);
+        if (lensThematic) {
+          // associated-document overlay: pin this orb's grounded member docs
+          // around it as paper icons, or lift them back off
+          const ovth = assocOverlayFor(th);
+          if (!ovth) {
+            ctx.appendChild(ctxItem('⧉  Show all associated documents (with labels)', false, () => showAssoc(th.id, true)));
+            ctx.appendChild(ctxItem('⧉  Show associated documents (no labels)', false, () => showAssoc(th.id, false)));
+          } else {
+            ctx.appendChild(ctxItem('✕  Remove associated documents from view', false, () => hideAssoc(th.id)));
+          }
+        }
         ctx.appendChild(ctxItem('ℹ  Properties', false, () => showThemeProps(th)));
         ctx.hidden = false;
         const w = Math.min(280, ctx.offsetWidth || 220), h = ctx.offsetHeight || 200;
@@ -4171,6 +5492,7 @@ function boot() {
           head.textContent = `#${rec.label || id} — ${rec.members.length} ${rec.members.length === 1 ? 'body' : 'bodies'}`;
           ctx.appendChild(head);
           ctx.appendChild(ctxItem('☰  Show in Tags pane', false, () => openTagPop()));
+          ctx.appendChild(ctxItem('✎  Rename tag…', false, () => openTagRenameEditor(x, y, (rec.terms && rec.terms[0]) || String(rec.id || '').replace(/^tag:/, ''))));
           ctx.hidden = false;
           const w = Math.min(280, ctx.offsetWidth || 220), h = ctx.offsetHeight || 200;
           ctx.style.left = Math.min(x, window.innerWidth - w - 8) + 'px';
@@ -4332,10 +5654,41 @@ function boot() {
       ctx.appendChild(ctxItem('✕  Remove from this canvas', true, () => removeFromCanvas(id)));
       ctx.appendChild(ctxItem('✕  Delete from entire universe', true, () => deleteEverywhere(id)));
     } else {
+      if (lensThematic) {
+        // whole-canvas associated documents: every theme's members at once
+        ctx.appendChild(ctxItem('⧉  Show all associated documents for entire canvas (with labels)', false, () => showAssocAll(true)));
+        ctx.appendChild(ctxItem('⧉  Show all associated documents for entire canvas (no labels)', false, () => showAssocAll(false)));
+        ctx.appendChild(ctxItem('✕  Clear all associated documents from view', false, () => clearAssoc()));
+        const hrA = document.createElement('hr');
+        ctx.appendChild(hrA);
+      }
       ctx.appendChild(ctxItem('⌂  Reset view', false, () => ren.resetView()));
       ctx.appendChild(ctxItem(rotOn ? '⏸  Pause universe' : '▶  Resume universe', false, () => { setRot(!rotOn); toast(rotOn ? 'Universe resumed' : 'Universe paused'); }));
       ctx.appendChild(ctxItem(`✕  Remove all from this canvas${vault.tab() && vault.tab().docs.length ? ` (${vault.tab().docs.length})` : ''}`, true, () => removeAllFromCanvas()));
     }
+    ctx.hidden = false;
+    const w = Math.min(280, ctx.offsetWidth || 220), h = ctx.offsetHeight || 200;
+    ctx.style.left = Math.min(x, window.innerWidth - w - 8) + 'px';
+    ctx.style.top = Math.min(y, window.innerHeight - h - 8) + 'px';
+  }
+  // associated paper icon menu: the icon is not a universe body (just an
+  // annotation), so it gets its own small menu — remove takes the doc off
+  // this canvas only, exactly like the body menu's remove.
+  function openAssocDocCtx(x, y, a) {
+    const d = vault.byId(a.doc);
+    ctx.innerHTML = '';
+    const head = document.createElement('div');
+    head.className = 'ctx-head';
+    head.textContent = '▤ ' + (d ? vault.titleOf(d) : (a.title || a.doc));
+    ctx.appendChild(head);
+    const note = document.createElement('div');
+    note.className = 'ctx-note';
+    note.textContent = a.ungr
+      ? 'Not grounded in any theme — shown palest so every file displays'
+      : 'Associated document — grounded in this theme' + (d ? '' : ' (kept on another canvas)');
+    ctx.appendChild(note);
+    if (d) ctx.appendChild(ctxItem('✕  Remove from this canvas', true, () => removeFromCanvas(a.doc)));
+    else ctx.appendChild(ctxItem('✕  Remove from this canvas', true, () => toast('That body lives on another canvas — switch there to remove it')));
     ctx.hidden = false;
     const w = Math.min(280, ctx.offsetWidth || 220), h = ctx.offsetHeight || 200;
     ctx.style.left = Math.min(x, window.innerWidth - w - 8) + 'px';
@@ -4426,13 +5779,13 @@ function boot() {
     });
     inp.addEventListener('click', (ev) => ev.stopPropagation());
   }
-  function openSelTagMenu(x, y, snippet, slug, spot) {
+  function openSelTagMenu(x, y, snippet, slug, spot, full, noteSpot) {
     ctx.innerHTML = '';
     const head = document.createElement('div');
     head.className = 'ctx-head';
     head.textContent = `✎ “${snippet}”`;
     ctx.appendChild(head);
-    if (slug) ctx.appendChild(ctxItem(`＋  Tag as #${slug} (manual M)`, false, () => addManualTag(activeId, slug, spot)));
+    if (slug) ctx.appendChild(ctxItem(`＋  Tag as #${slug} (manual M)`, false, () => addManualTag(shownId, slug, spot)));
     else ctx.appendChild(ctxItem('＋  Tag selection…', false, () => toast('That selection can’t be a tag — it needs at least 2 letters (a–z, 0–9)')));
     // typed name: the auto slug is only a suggestion — the user can type any
     // tag name here (inline editor, since native prompt() is blocked in some
@@ -4441,11 +5794,12 @@ function boot() {
     {
       const nm = document.createElement('button');
       nm.className = 'ctx-item';
-      nm.textContent = '✎  Name it yourself…';
+      nm.textContent = '✎  Name the tag yourself…';
       nm.title = 'Type your own tag name instead of the suggested one';
-      nm.onclick = (e) => { e.stopPropagation(); openSelTagNameEditor(x, y, snippet, slug, spot); };
+      nm.onclick = (e) => { e.stopPropagation(); openSelTagNameEditor(x, y, snippet, slug, spot, full, noteSpot); };
       ctx.appendChild(nm);
     }
+    ctx.appendChild(ctxItem('🗒  Send selection to notes', false, () => sendSelectionToNotes(full || snippet, noteSpot)));
     ctx.appendChild(ctxItem('⧉  Copy selection', false, async () => {
       try { await navigator.clipboard.writeText(snippet); toast('Selection copied'); }
       catch { toast('Copy blocked by the browser'); }
@@ -4458,7 +5812,7 @@ function boot() {
   // typed-name mode for manual tags: an inline input prefilled with the
   // suggested slug (or empty when the selection can't auto-slug). Enter/Save
   // commits through the same addManualTag path; Esc goes back to the menu.
-  function openSelTagNameEditor(x, y, snippet, slug, spot) {
+  function openSelTagNameEditor(x, y, snippet, slug, spot, full, noteSpot) {
     ctx.innerHTML = '';
     const head = document.createElement('div');
     head.className = 'ctx-head';
@@ -4474,7 +5828,7 @@ function boot() {
     const commit = () => {
       const typed = slugTag(inp.value.trim());
       if (!typed) { toast('That name can’t be a tag — use at least 2 letters (a–z, 0–9)'); inp.focus(); return; }
-      if (addManualTag(activeId, typed, spot)) closeCtx();
+      if (addManualTag(shownId, typed, spot)) closeCtx();
     };
     const save = document.createElement('button');
     save.className = 'ctx-item';
@@ -4484,7 +5838,7 @@ function boot() {
     const back = document.createElement('button');
     back.className = 'ctx-item';
     back.textContent = '‹ Back';
-    back.onclick = (e) => { e.stopPropagation(); openSelTagMenu(x, y, snippet, slug, spot); };
+    back.onclick = (e) => { e.stopPropagation(); openSelTagMenu(x, y, snippet, slug, spot, full, noteSpot); };
     ctx.appendChild(back);
     ctx.hidden = false;
     const w = Math.min(280, ctx.offsetWidth || 220), h = ctx.offsetHeight || 200;
@@ -4495,20 +5849,88 @@ function boot() {
     inp.addEventListener('keydown', (ev) => {
       ev.stopPropagation();
       if (ev.key === 'Enter') commit();
-      else if (ev.key === 'Escape') openSelTagMenu(x, y, snippet, slug, spot);
+      else if (ev.key === 'Escape') openSelTagMenu(x, y, snippet, slug, spot, full, noteSpot);
     });
     inp.addEventListener('click', (ev) => ev.stopPropagation());
+  }
+  // typed-name editor for tag renames: an inline input prefilled with the old
+  // name (same slug rules as the explicit-tag editor). Enter/Save commits
+  // through the confirm flow; Esc closes. Shared by reader pills, the tag
+  // page, the tags pop-out and canvas tag bodies.
+  function openTagRenameEditor(x, y, oldDisp) {
+    const t = vault.tab();
+    if (!t) { toast('No open canvas — nothing to rename on'); return; }
+    const s = normDisp(oldDisp);
+    if (!/^[a-z0-9_\-/]{2,}$/.test(s)) { toast('That tag can’t be renamed'); return; }
+    if (!carriersOf(t, s).length) { toast(`#${s} is not in this verse`); return; }
+    ctx.innerHTML = '';
+    const head = document.createElement('div');
+    head.className = 'ctx-head';
+    head.textContent = `✎ Rename #${s}`;
+    ctx.appendChild(head);
+    const note = document.createElement('div');
+    note.className = 'ctx-note';
+    note.textContent = `Rewrites #${s} to the new name in every body on “${t.name}” — prose, manual tags and canvas labels follow.`;
+    ctx.appendChild(note);
+    const inp2 = document.createElement('input');
+    inp2.value = s;
+    inp2.maxLength = 40;
+    inp2.placeholder = 'type the new tag name…';
+    inp2.setAttribute('aria-label', 'New tag name');
+    inp2.style.cssText = 'width:100%;box-sizing:border-box;background:rgba(10,14,20,.8);border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:6px 8px;font-size:13px;outline:none;margin:2px 0 6px;';
+    ctx.appendChild(inp2);
+    const commit = () => {
+      const typed = String(inp2.value.trim().toLowerCase()).replace(/\s+/g, '_').replace(/[^a-z0-9_\-/]/g, '');
+      if (!/^[a-z0-9_\-/]{2,}$/.test(typed) || !/[a-z]/.test(typed)) { toast('That name can’t be a tag — use at least 2 letters (a–z, 0–9)'); inp2.focus(); return; }
+      if (typed === s) { closeCtx(); return; }
+      closeCtx();
+      renameTagConfirm(s, typed);
+    };
+    const save = document.createElement('button');
+    save.className = 'ctx-item';
+    save.textContent = '✓ Rename tag';
+    save.onclick = (e) => { e.stopPropagation(); commit(); };
+    ctx.appendChild(save);
+    ctx.hidden = false;
+    const w = Math.min(280, ctx.offsetWidth || 220), h = ctx.offsetHeight || 200;
+    ctx.style.left = Math.min(x, window.innerWidth - w - 8) + 'px';
+    ctx.style.top = Math.min(y, window.innerHeight - h - 8) + 'px';
+    inp2.focus();
+    try { inp2.setSelectionRange(inp2.value.length, inp2.value.length); } catch {}
+    inp2.addEventListener('keydown', (ev) => {
+      ev.stopPropagation();
+      if (ev.key === 'Enter') commit();
+      else if (ev.key === 'Escape') closeCtx();
+    });
+    inp2.addEventListener('click', (ev) => ev.stopPropagation());
   }
   const setRot = (on) => {
     rotOn = on;
     $('#rotBtn').textContent = rotOn ? '⏸ Pause' : '▶ Resume';
     saveUi();
   };
+  // tag rename: right-click any tag pill (reader tag row, tag/theme pages,
+  // inline #tags in the prose, or the tags pop-out) to rename it everywhere
+  // on this canvas. Capture-phase so the prose-selection menu never fires for
+  // a pill click; left-click behavior (search/focus) is untouched.
+  document.addEventListener('contextmenu', (e) => {
+    const pill = e.target && e.target.closest ? e.target.closest('#tagPop [data-tpill], #docTags [data-tag], #docBody .tag[data-tag]') : null;
+    if (!pill) return;
+    const disp = pill.dataset.tpill || pill.dataset.tag;
+    if (!disp) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openTagRenameEditor(e.clientX, e.clientY, disp);
+  }, true);
   cv.addEventListener('contextmenu', (e) => {
     if (srcSuppress) { e.preventDefault(); srcSuppress = false; return; }
     if (srcHold) { e.preventDefault(); return; } // press-time fire on some platforms: the hold path drives the menu
     e.preventDefault();
     const r = cv.getBoundingClientRect();
+    // associated paper icon first: its own menu (remove from this canvas),
+    // winning over the seed orb behind it
+    const ahm = (ren.assocHit) ? ren.assocHit(e.clientX - r.left, e.clientY - r.top) : null;
+    if (ahm) { openAssocDocCtx(e.clientX, e.clientY, ahm); return; }
     const n = uni ? ren.pick(uni.nodes, e.clientX - r.left, e.clientY - r.top) : null;
     if (n && selSet.size && !selSet.has(n.id)) { selSet.clear(); hideBoxSel(); } // right-click elsewhere: single-body menu instead
     openCtx(e.clientX, e.clientY, n ? n.id : null);
@@ -4516,7 +5938,7 @@ function boot() {
   document.addEventListener('click', (e) => { if (!ctx.hidden && !ctx.contains(e.target)) closeCtx(); });
   document.addEventListener('click', (e) => { const m = $('#openProjMenu'); if (m && !m.hidden && !m.contains(e.target) && !e.target.closest('[data-openproj]')) m.hidden = true; });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { closeCtx(); hideOpenProjMenu(); selSet.clear(); hideBoxSel(); closeSrcPop(); $('#propsModal').hidden = true; try { $('#imgLight').hidden = true; } catch {} closeHelpEditor(); closeNoteEditor(); closeNotePop(); const w2 = document.querySelector('#docShared'); document.querySelectorAll('.help-open').forEach(w => w.classList.remove('open', 'help-open')) }
+    if (e.key === 'Escape') { closeCtx(); hideOpenProjMenu(); selSet.clear(); hideBoxSel(); closeSrcPop(); $('#propsModal').hidden = true; try { $('#imgLight').hidden = true; } catch {} closeHelpEditor(); closeNoteEditor(); closeNotePop(); if (notesOpen) closeNotesPane(); const w2 = document.querySelector('#docShared'); document.querySelectorAll('.help-open').forEach(w => w.classList.remove('open', 'help-open')) }
     // box-selection shortcut: Delete/Backspace removes the shift-dragged
     // bodies outright (same confirm as the right-click menu)
     if ((e.key === 'Delete' || e.key === 'Backspace') && selSet.size && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')) {
@@ -4534,21 +5956,44 @@ function boot() {
       if (ren && ren.cam) ren.cam.dist = Math.min(8000, Math.max(220, ren.cam.dist * (e.key === 'ArrowUp' ? 1 / 1.1 : 1.1)));
     }
   });
+  // Ctrl/Cmd+A outside fields: confine "select all" to the reader prose, so one
+  // keypress can never wash the whole app blue — and copying the open document
+  // keeps working no matter where focus sits (canvas, panels, buttons).
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+    if (e.key !== 'a' && e.key !== 'A' && e.code !== 'KeyA') return;
+    const t = document.activeElement;
+    if (t && (t.isContentEditable || /INPUT|TEXTAREA|SELECT/.test(t.tagName || ''))) return; // fields keep native select-all
+    const root = document.getElementById('docBody');
+    if (!root || !root.textContent.trim()) return; // empty reader: leave the browser default alone
+    e.preventDefault();
+    try {
+      const r = document.createRange(); r.selectNodeContents(root);
+      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    } catch {}
+  });
   $('#propsClose').onclick = () => { $('#propsModal').hidden = true; };
   // reader-panel removal (same actions as the right-click menu — no right-click needed)
-  $('#docRemoveBtn').onclick = () => removeFromCanvas(activeId);
-  $('#docDeleteBtn').onclick = () => deleteEverywhere(activeId);
+  $('#docRemoveBtn').onclick = () => removeFromCanvas(shownId);
+  $('#docDeleteBtn').onclick = () => deleteEverywhere(shownId);
   // reader-panel source preview: the right-hold pop-out without right-click.
-  // Left-click a body (it becomes the active body), then pin its 120-word
-  // preview here; it stays until dismissed (works on touchscreens too).
+  // Pins the 120-word preview of whatever the reader shows (works on touchscreens too).
   $('#docSrcBtn').onclick = () => {
     if (srcStickyId || !$('#srcPop').hidden) { closeSrcPop(); return; }
-    if (!activeId || !vault.byId(activeId)) { toast('Left-click a body first — it becomes the active body'); return; }
+    if (!shownId || !vault.byId(shownId)) { toast('Open a document in the reader first'); return; }
     let x = window.innerWidth / 2, y = Math.max(8, window.innerHeight * 0.25);
-    try { const n = (uni.nodes || []).find(n => n.id === activeId); if (n && n._p) { x = n._p.x; y = n._p.y; } } catch {}
-    if (openSrcPop(activeId, x, y, true)) srcStickyId = activeId;
+    try { const n = (uni.nodes || []).find(n => n.id === shownId); if (n && n._p) { x = n._p.x; y = n._p.y; } } catch {}
+    if (openSrcPop(shownId, x, y, true)) srcStickyId = shownId;
   };
   $('#svpX').onclick = () => closeSrcPop();
+  // tag-page rename button: the focused tag renamed everywhere on this canvas
+  // (same confirm flow as the right-click paths — no right-click needed).
+  $('#docTagRenameBtn').onclick = (e) => {
+    if (e) e.stopPropagation(); // the document click-closer would shut the editor instantly
+    if (typeof activeId !== 'string' || !activeId.startsWith('tag:')) { toast('Open a tag first — click a tag body on the canvas'); return; }
+    const r = $('#docTagRenameBtn').getBoundingClientRect();
+    openTagRenameEditor(Math.max(8, Math.min(window.innerWidth - 300, r.left)), r.bottom + 6, activeId.slice(4));
+  };
   // universe speed controls: Pause freezes physics + camera + glow; log slider = fine slow-mo
   const rotSlider = $('#rotSpeed');
   rotSlider.value = speedToSlider(rotMul);
@@ -4561,6 +6006,16 @@ function boot() {
     if (rotMul === 0 && rotOn) toast('Speed at full stop — raise the slider or hit Pause');
   });
   $('#rotBtn').onclick = () => { setRot(!rotOn); toast(rotOn ? 'Universe resumed' : 'Universe paused'); };
+  // hover highlight: in the released general view, hovering a body lights up
+  // its row in the general list (persisted setting, pill button is first)
+  const hvBtnEl = $('#hvBtn');
+  if (hvBtnEl) hvBtnEl.onclick = () => {
+    hoverPrev = !hoverPrev;
+    if (!hoverPrev) { srcHoldHi(); srcClearHi(); } // setting off clears any hover highlight
+    syncHv(); saveUi();
+    toast(hoverPrev ? 'Hover highlight on — hovering a body lights up its row' : 'Hover highlight off');
+  };
+  syncHv();
   // body texture overlays: slider = opacity, button = on/off toggle
   ren.overlayAlpha = ovAlpha;
   ren.simpleOrb = simpleOrb;
@@ -4595,6 +6050,24 @@ function boot() {
     toast(lbScale > 0 ? 'Labels on (' + Math.round(lbScale * 100) + '%)' : 'Labels hidden');
   };
   syncLb();
+  // pill Labels button: one tap flips the name labels on EVERY associated
+  // document currently in view (orb labels untouched — left pane owns those).
+  // Mixed states normalize: if any shown name is on, the tap turns all off.
+  const lbPillEl = $('#lbPillBtn');
+  if (lbPillEl) lbPillEl.onclick = () => {
+    const vis = visibleAssocOverlays();
+    if (!vis.length) { toast('No associated documents in view — right-click a theme orb (or empty canvas) to show them'); return; }
+    const turnOn = !vis.every(th => assocOverlayFor(th).labels);
+    const scope = assocScopeKey();
+    const all = assocAll.get(scope);
+    if (all) all.labels = turnOn;
+    for (const th of vis) {
+      const r = assocReq.get(scope + '|' + th.id);
+      if (r) r.labels = turnOn;
+    }
+    try { syncLbPill(); } catch {}
+    toast(turnOn ? 'Associated-document labels on' : 'Associated-document labels off');
+  };
   // body size: slider scales orbs + triangles, button toggles 100% <-> last size
   ren.bodyScale = sizeScale;
   const szSlider = $('#szSize'), szLbl = $('#szMul'), szBtnEl = $('#szBtn');
@@ -4797,7 +6270,7 @@ function boot() {
   applyGlaze();
   // column collapse arrows (persisted, collapse = shrink up to a top tab)
   document.querySelectorAll('[data-collapse]').forEach(b => {
-    b.onclick = (e) => { e.stopPropagation(); setCollapsed(b.dataset.collapse, !document.getElementById(b.dataset.collapse)?.classList.contains('collapsed')); };
+    b.onclick = (e) => { e.stopPropagation(); setCollapsed(b.dataset.collapse, !document.getElementById(b.dataset.collapse)?.classList.contains('collapsed')); try { syncFindBar(); } catch {} try { syncTopBtn(); } catch {} try { syncNotesTab(); } catch {} };
   });
   if (leftCollapsed) setCollapsed('leftPanel', true);
   if (docCollapsed) setCollapsed('docPanel', true);
@@ -4815,16 +6288,17 @@ function boot() {
       if (!dragging) return;
       docWidth = clampDocW(dragW + dir * (e.clientX - dragX));
       applyDocWidth();
+      try { placeFindSide(); } catch {} try { placeTopBtn(); } catch {} try { syncNotesTab(); } catch {} try { if (notesOpen) applyNotesGeom(); } catch {}
     });
     const endDrag = () => { if (!dragging) return; dragging = false; saveUi(); };
     el.addEventListener('pointerup', endDrag);
     el.addEventListener('pointercancel', endDrag);
-    el.addEventListener('dblclick', () => { docWidth = 0; applyDocWidth(); saveUi(); toast('Reader width reset'); });
+    el.addEventListener('dblclick', () => { docWidth = 0; applyDocWidth(); try { placeFindSide(); } catch {} try { placeTopBtn(); } catch {} try { syncNotesTab(); } catch {} try { if (notesOpen) applyNotesGeom(); } catch {} saveUi(); toast('Reader width reset'); });
   };
   try {
     applyDocWidth();
     wireResize(document.getElementById('docResize'), -1); // left edge: drag left = widen
-    window.addEventListener('resize', () => applyDocWidth());
+    window.addEventListener('resize', () => { applyDocWidth(); try { placeFindSide(); } catch {} try { placeTopBtn(); } catch {} try { syncNotesTab(); } catch {} try { if (notesOpen) applyNotesGeom(); } catch {} });
   } catch {}
   // verse minimap: header-drags to move, corner-drags to resize (both persist)
   try {
@@ -4832,6 +6306,7 @@ function boot() {
     if (box && head) {
       let mv = null;
       head.addEventListener('pointerdown', (e) => {
+        if (e.target && e.target.closest && e.target.closest('#miniMapFold')) return; // the fold button keeps its own click
         const r = box.getBoundingClientRect();
         box.style.left = r.left + 'px'; box.style.top = r.top + 'px';
         box.style.right = 'auto'; box.style.bottom = 'auto';
@@ -4847,6 +6322,14 @@ function boot() {
       const endMv = () => { if (!mv) return; mv = null; saveUi(); };
       head.addEventListener('pointerup', endMv);
       head.addEventListener('pointercancel', endMv);
+      const fold = document.getElementById('miniMapFold');
+      if (fold) fold.onclick = (e) => {
+        e.stopPropagation();
+        miniFolded = !miniFolded;
+        applyMiniGeom(); syncMiniFold();
+        if (!miniFolded) drawMiniMap(); // fresh frame the moment it reopens
+        saveUi();
+      };
     }
     if (box && grip) {
       let rs = null;
@@ -4899,14 +6382,16 @@ function boot() {
       window.addEventListener('resize', () => { if (tvpX != null && !tbox.hidden) applyTvpGeom(); });
     }
   } catch {}
-  // glossary of terms: bottom-pill strip opens the pane; header-drags to move,
-  // corner-drags to resize (both persist, like the verse map)
+  // glossary of terms: book tab on the VisiDocsverse pane toggles it open;
+  // the pane itself header-drags to move, corner-drags to resize (handy while
+  // open — every open restarts at the dock). The old bottom-pill strip is gone.
   try {
     const gbox = document.getElementById('glossPane');
     if (gbox) {
       const ghead = document.getElementById('glossHead'), ggrip = document.getElementById('glossResize');
-      const strip = document.getElementById('glossBar'), gclose = document.getElementById('glossClose');
-      if (strip) strip.onclick = () => setGloss(true);
+      const gclose = document.getElementById('glossClose');
+      const gtab = document.getElementById('glossTab');
+      if (gtab) { gtab.onclick = () => setGloss(!glossOpen); gtab.classList.toggle('open', glossOpen); }
       if (gclose) gclose.onclick = () => setGloss(false);
       if (ghead) {
         let mv = null;
@@ -4946,9 +6431,55 @@ function boot() {
         ggrip.addEventListener('pointerup', endRs);
         ggrip.addEventListener('pointercancel', endRs);
       }
-      window.addEventListener('resize', () => { if (glossOpen) applyGlossGeom(); });
+      window.addEventListener('resize', () => { if (glossOpen) applyGlossGeom(); try { syncNotesTab(); } catch {} try { if (notesOpen) applyNotesGeom(); } catch {} });
+      // the top pill grows as tabs render (after this wiring runs) and the
+      // bottom pill hides on small screens — re-clamp into the band whenever
+      // either pill's geometry settles, not just on window resize.
+      try {
+        const reGloss = () => { if (glossOpen) applyGlossGeom(); try { syncNotesTab(); } catch {} try { if (notesOpen) applyNotesGeom(); } catch {} };
+        if (window.ResizeObserver) {
+          const ro = new ResizeObserver(() => reGloss());
+          const tb = document.getElementById('tabBar'), hb = document.getElementById('hintBar');
+          if (tb) ro.observe(tb); if (hb) ro.observe(hb);
+        }
+        requestAnimationFrame(() => reGloss());
+        setTimeout(() => reGloss(), 600);
+      } catch {}
       syncGloss();
     }
+    // Notes book pane: fixed beside the reader (never draggable), wiring only
+    try {
+      const nt = $('#notesTab');
+      if (nt) nt.onclick = () => setNotes(!notesOpen, vault.byId(shownId) ? shownId : activeId);
+      const nc = $('#notesClose');
+      if (nc) nc.onclick = () => closeNotesPane();
+      const na = $('#notesAutoCk');
+      if (na) { na.checked = notesAuto !== false; na.onchange = () => { notesAuto = na.checked; saveUi(); if (notesAuto) autoSaveNoteEntry(); toast(notesAuto ? 'Notes auto-save on' : 'Notes auto-save off — use Save to push'); }; }
+      const nar = $('#notesArea');
+      if (nar) nar.addEventListener('input', onNotesInput);
+      const nsv = $('#notesSave');
+      if (nsv) nsv.onclick = saveNotesPane;
+      const nda = $('#notesDelAll');
+      if (nda) nda.onclick = () => { const n = clearNoteEntries(notesDocId); toast(n ? `All ${n} note ${n === 1 ? 'entry' : 'entries'} deleted` : 'No note entries to delete'); };
+      const ncn = $('#notesCancel');
+      if (ncn) ncn.onclick = cancelNotesPane;
+      const nss = $('#notesSelBtn');
+      if (nss) nss.onclick = () => sendSelectionToNotes();
+      const nll = $('#notesList');
+      if (nll) nll.addEventListener('click', (e) => {
+        const x = e.target.closest('[data-ndel]');
+        if (x && notesDocId) { if (deleteNoteEntry(notesDocId, x.dataset.ndel)) toast('Note entry deleted'); return; }
+        const box = e.target.closest('[data-nejump]');
+        // copying note text (a live selection inside the notes list) must not
+        // jump on mouse-up — only a plain click on a pinned box jumps. Stale
+        // reader selections don't count (scoped to #notesList).
+        if (box && notesDocId) { try { const s = window.getSelection(); if (s && !s.isCollapsed && s.anchorNode && nll.contains(s.anchorNode)) return; } catch {} jumpToNoteSpot(box.dataset.nejump); } // pinned box -> quick-jump to its passage
+        else if (box && !notesDocId) toast('Open a document body first — notes live on bodies');
+        else if (e.target.closest('.ne') && notesDocId) toast('That entry has no body position — only sent highlights jump');
+      });
+      syncNotesTab();
+      if (notesOpen) { if (vault.byId(notesDocId || activeId)) setNotes(true, notesDocId || activeId); else { notesOpen = false; syncNotesTab(); } }
+    } catch {}
   } catch {}
   // bottom pill "Tethers" button: show/hide the tether lines (bodies always stay put)
   const isoBtn = $('#isoBtn');
@@ -4959,6 +6490,15 @@ function boot() {
     toast(tetherScale > 0 ? 'Tethers shown' : 'Tethers hidden');
   };
   syncIsoBtn();
+  // bottom pill "Tips" toggle: collapses only the tip rows, buttons always stay
+  const tipsBtn = $('#tipsBtn');
+  if (tipsBtn) tipsBtn.onclick = () => {
+    tipsCollapsed = !tipsCollapsed;
+    saveUi();
+    syncTipsBtn();
+    toast(tipsCollapsed ? 'Tips hidden — buttons stay' : 'Tips shown');
+  };
+  syncTipsBtn();
   // bottom pill "Distribute" button: pin bodies in a fit-to-canvas orb, overriding
   // orbital motion; toggling off restores dynamics (persisted)
   const autoBtn = $('#autoBtn');
@@ -5100,16 +6640,18 @@ function boot() {
   { const nva = $('#notesViewAll'); if (nva) { nva.checked = viewNotesAll; nva.onchange = () => { viewNotesAll = nva.checked; saveUi(); }; } }
   { const nvs = $('#notesViewSun'); if (nvs) { nvs.checked = viewNotesSun; nvs.onchange = () => { viewNotesSun = nvs.checked; saveUi(); }; } }
   $('#noteEditSave').onclick = () => { if (noteEditId && saveNote(noteEditId, $('#noteEditText').value)) toast('Sticky note saved'); closeNoteEditor(); };
-  $('#noteEditDelete').onclick = () => { if (noteEditId && deleteNote(noteEditId)) toast('Sticky note deleted'); closeNoteEditor(); };
+  $('#noteEditDelete').onclick = () => { if (noteEditId && deleteNote(noteEditId)) toast('Latest note entry deleted'); closeNoteEditor(); };
   $('#noteEditCancel').onclick = closeNoteEditor;
+  $('#noteEditPane').onclick = () => { const id = noteEditId; closeNoteEditor(); if (id) setNotes(true, id); };
   $('#noteEditText').addEventListener('input', (e) => { $('#noteEditCount').textContent = String(e.target.value.length); });
   $('#notePop').addEventListener('click', (e) => {
     const b = e.target.closest('[data-np]'); if (!b || !notePopId) return;
     const k = b.dataset.np;
     if (k === 'close') closeNotePop();
     else if (k === 'copy') copyNotePop();
-    else if (k === 'del') { if (deleteNote(notePopId)) toast('Sticky note deleted'); }
+    else if (k === 'del') { if (deleteNote(notePopId)) toast('Latest note entry deleted'); }
     else if (k === 'edit') renderNotePop(true);
+    else if (k === 'pane') { const id = notePopId; closeNotePop(); setNotes(true, id); }
     else if (k === 'save') { const ta = $('#notePopText'); if (ta && saveNote(notePopId, ta.value)) toast('Sticky note saved'); }
   });
   // a persisted general state reopens on the whole-visidocsverse map when the lens is on
@@ -5341,17 +6883,17 @@ function boot() {
       mainPjs, indexHtml, files,
       // deep-clone doc rows: the backup must be a snapshot, not a live
       // reference — otherwise docs added after "build" leak into the file.
-      tabs: vault.tabs.map(t => ({ id: t.id, name: t.name, docs: (t.docs || []).map(d => ({ ...d, links: [...(d.links || [])], tags: [...(d.tags || [])] })), activeId: t.activeId, main: t.main === true, assoc: [...(t.assoc || [])], color: t.color || null, suppressedTags: [...(t.suppressedTags || [])], disassociated: vault.isIso(t) })),
+      tabs: vault.tabs.map(t => ({ id: t.id, name: t.name, docs: (t.docs || []).map(d => ({ ...d, links: [...(d.links || [])], tags: [...(d.tags || [])], noteLog: Array.isArray(d.noteLog) && d.noteLog.length ? cloneNoteLog(d.noteLog) : undefined })), activeId: t.activeId, main: t.main === true, assoc: [...(t.assoc || [])], color: t.color || null, suppressedTags: [...(t.suppressedTags || [])], disassociated: vault.isIso(t) })),
       activeTabId: vault.activeTabId,
-      vault: vault.docs.map(d => ({ ...d, links: [...(d.links || [])], tags: [...(d.tags || [])] })), // legacy compat: active canvas docs
+      vault: vault.docs.map(d => ({ ...d, links: [...(d.links || [])], tags: [...(d.tags || [])], noteLog: Array.isArray(d.noteLog) && d.noteLog.length ? cloneNoteLog(d.noteLog) : undefined })), // legacy compat: active canvas docs
       settings: {
         rotOn, rotMul, speedMul: rotMul, autoDist, simpleOrb, simpleOrb2, triOrb,
-        miniX, miniY, miniW, miniH, tvpX, tvpY, glossX, glossY, glossW, glossH, glossOpen,
+        miniX, miniY, miniW, miniH, miniFolded, tvpX, tvpY, glossX, glossY, glossW, glossH, glossOpen, glossDockV1: true,
         ovAlpha, ovLast, lbScale, lbLast, sizeScale, sizeLast, spinOn, spinSpeed, compressScale, compressLast, bgShade,
         backdrop, backdropAlpha, backdropLast, paneAlpha, paneLast,
         glazeLeft, glazeDoc, glazeCloud, glazeMini, glazeGloss,
-        leftCollapsed, docCollapsed, docWidth, lensThematic, lensTags,
-        viewNotesAll, viewNotesSun,
+        leftCollapsed, docCollapsed, docWidth, hoverPrev, statsCollapsed, tipsCollapsed, lensThematic, lensTags,
+        viewNotesAll, viewNotesSun, notesOpen, notesAuto,
         topicSim: vault.topicSim, topicShared: vault.topicShared,
         topicMaxDf: vault.topicMaxDf, topicTopK: vault.topicTopK,
         topicIdfFloor: vault.topicIdfFloor,
@@ -5570,18 +7112,26 @@ function boot() {
       if (typeof s.miniX === 'number' && typeof s.miniY === 'number') { miniX = s.miniX; miniY = s.miniY; }
       if (typeof s.miniW === 'number' && s.miniW >= 140 && s.miniW <= 640) miniW = s.miniW;
       if (typeof s.miniH === 'number' && s.miniH >= 100 && s.miniH <= 480) miniH = s.miniH;
+      if (s.miniFolded === true) miniFolded = true; else if (s.miniFolded === false) miniFolded = false;
       if (typeof s.tvpX === 'number' && typeof s.tvpY === 'number') { tvpX = s.tvpX; tvpY = s.tvpY; }
       if (typeof s.glossX === 'number' && typeof s.glossY === 'number') { glossX = s.glossX; glossY = s.glossY; }
       if (typeof s.glossW === 'number' && s.glossW >= 240 && s.glossW <= 620) glossW = s.glossW;
       if (typeof s.glossH === 'number' && s.glossH >= 160 && s.glossH <= 720) glossH = s.glossH;
       if (s.glossOpen === true) glossOpen = true; else if (s.glossOpen === false) glossOpen = false;
+      if (!s.glossDockV1) { glossX = null; glossY = null; glossW = 0; glossH = 0; } // pre-dock backup: open tall beside the left panel
+      if (glossOpen) { glossX = null; glossY = null; } // restored-open panes restart at the dock
       if (typeof s.docWidth === 'number' && s.docWidth >= 260 && s.docWidth <= 900) docWidth = s.docWidth;
       else if (s.docWidth === 0) docWidth = 0;
       if (s.leftCollapsed === true) leftCollapsed = true; else if (s.leftCollapsed === false) leftCollapsed = false;
       if (s.docCollapsed === true) docCollapsed = true; else if (s.docCollapsed === false) docCollapsed = false;
+      if (s.hoverPrev === true) hoverPrev = true; else if (s.hoverPrev === false) hoverPrev = false;
+      if (s.statsCollapsed === true) statsCollapsed = true; else if (s.statsCollapsed === false) statsCollapsed = false;
+      if (s.tipsCollapsed === true) tipsCollapsed = true; else if (s.tipsCollapsed === false) tipsCollapsed = false;
       if (s.viewNotesAll === false) viewNotesAll = false; else if (s.viewNotesAll === true) viewNotesAll = true;
       if (s.viewNotesSun === false) viewNotesSun = false; else if (s.viewNotesSun === true) viewNotesSun = true;
       if (s.viewNotes === false) { viewNotesAll = false; viewNotesSun = false; }
+      if (s.notesAuto === false) notesAuto = false; else if (s.notesAuto === true) notesAuto = true;
+      if (s.notesOpen === true) notesOpen = true; else if (s.notesOpen === false) notesOpen = false;
       for (const k of ['topicSim', 'topicShared', 'topicMaxDf', 'topicTopK', 'topicIdfFloor']) {
         if (typeof s[k] === 'number' && isFinite(s[k])) vault[k] = s[k];
       }
@@ -5684,12 +7234,16 @@ function boot() {
     try {
       const nva = $('#notesViewAll'); if (nva) nva.checked = viewNotesAll !== false;
       const nvs = $('#notesViewSun'); if (nvs) nvs.checked = viewNotesSun !== false;
+      if (notesOpen && !vault.byId(notesDocId || activeId)) { notesOpen = false; notesDocId = null; }
+      syncNotesTab();
+      if (notesOpen) setNotes(true, notesDocId || activeId);
     } catch {}
     try {
       if (leftCollapsed) setCollapsed('leftPanel', true); else setCollapsed('leftPanel', false);
       if (docCollapsed) setCollapsed('docPanel', true); else setCollapsed('docPanel', false);
     } catch {}
-    try { if (ren) { ren.simpleOrb = simpleOrb; ren.stripOverlays = simpleOrb2; ren.triOrb = triOrb; } syncAutoBtn(); syncSimpleOrbBtn(); syncSimpleOrb2Btn(); syncTriOrbBtn(); } catch {}
+    try { if (ren) { ren.simpleOrb = simpleOrb; ren.stripOverlays = simpleOrb2; ren.triOrb = triOrb; } syncAutoBtn(); syncSimpleOrbBtn(); syncSimpleOrb2Btn(); syncTriOrbBtn(); syncHv(); syncLbPill(); } catch {}
+    try { syncHv(); } catch {}
     try {
       lensThematic = s.lensThematic === true;
       lensTags = s.lensTags === true;
@@ -5981,7 +7535,7 @@ function boot() {
     return r;
   }
   // DEV-ONLY-END
-    window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, vaultFs, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, loadBackupFromText, mergeBackupFromText, ingestFiles, getDropFiles, readFileAsText, intakeAllowed, cleanName, deleteTag, mergeTags, openTagPop, closeTagPop, get devBuilds() { return { ...devBuilds }; }, setDevBuilds, isDev, renderDevBox, saveAllProjects, openExistingProject, reopenClosed, loadClosed, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP };
+    window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, vaultFs, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, loadBackupFromText, mergeBackupFromText, ingestFiles, getDropFiles, readFileAsText, intakeAllowed, cleanName, deleteTag, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, get devBuilds() { return { ...devBuilds }; }, setDevBuilds, isDev, renderDevBox, saveAllProjects, openExistingProject, reopenClosed, loadClosed, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP };
   window.addEventListener('resize', () => ren.resize());
 }
 

@@ -40,6 +40,30 @@ function rgbHex(h) {
   if (s) return [...s[1]].map(c => parseInt(c + c, 16));
   return [130, 170, 255];
 }
+// ---- circular-text (sun-dial) collision capsules: a filename is a segment
+// (its text centerline) plus a thickness radius; icons and orbs are circles.
+// All exact, no bounding-box bloat on diagonal rays.
+function dPtSeg(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const L2 = dx * dx + dy * dy;
+  let t = L2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / L2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const cx = ax + dx * t, cy = ay + dy * t;
+  return Math.hypot(px - cx, py - cy);
+}
+function segSegInt(ax, ay, bx, by, cx, cy, dx, dy) {
+  const d1 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+  const d2 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+  const d3 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  const d4 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+  return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
+}
+function dSegSeg(ax, ay, bx, by, cx, cy, dx, dy) {
+  if (segSegInt(ax, ay, bx, by, cx, cy, dx, dy)) return 0;
+  return Math.min(
+    dPtSeg(ax, ay, cx, cy, dx, dy), dPtSeg(bx, by, cx, cy, dx, dy),
+    dPtSeg(cx, cy, ax, ay, bx, by), dPtSeg(dx, dy, ax, ay, bx, by));
+}
 export class Renderer {
   constructor(canvas) {
     this.cv = canvas;
@@ -260,11 +284,16 @@ export class Renderer {
     this.starfield(ctx, W, H, t);
     const match = opts.match; // Set of ids matching search (dims the rest)
     this._noteRects = new Map(); // screen-space sticky-note squares, rebuilt every frame for hit-testing
+    this._assocRects = []; // associated-doc paper icons, rebuilt every frame for hit-testing
     // an emptied workspace has no universe: keep rendering the backdrop + stars.
     const u = uni || { nodes: [], edges: [], byId: new Map(), sunId: null };
     // project + sort far -> near (z-buffered draw order)
     for (const n of u.nodes) n._p = this.project(n.x, n.y, n.z);
     const order = [...u.nodes].sort((a, b) => b._p.depth - a._p.depth);
+    // gold follows the reader's selection, not the physical sun: clicks never
+    // move bodies, so the gilded orb is "what you're viewing", set from app
+    // state each frame (falls back to the physical sun when nothing applies)
+    const sel = (this.selId && u.byId.has(this.selId)) ? this.selId : null;
     // neon tethers first (under the bodies)
     ctx.lineCap = 'round';
     const tc = rgbHex(this.tetherColor); // user-picked tint
@@ -297,6 +326,7 @@ export class Renderer {
     }
     for (const n of order) {
       const p = n._p;
+      const hot = sel ? (n.id === sel) : !!n.isActive;
       if (p.x < -80 || p.y < -60 || p.x > W + 80 || p.y > H + 60) continue;
       const dim = match && !match.has(n.id);
       ctx.globalAlpha = dim ? 0.15 : 1;
@@ -321,8 +351,8 @@ export class Renderer {
       const gl = (this.glowScale == null ? 1 : this.glowScale);
       if (gl > 0.01 && !this.simpleOrb) {
         const halo = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, Math.max(1, rad * 4 * gl));
-        const hc = n.isActive ? '255,210,120' : '90,150,255';
-        halo.addColorStop(0, `rgba(${hc},${n.isActive ? 0.5 : 0.35})`);
+        const hc = hot ? '255,210,120' : '90,150,255';
+        halo.addColorStop(0, `rgba(${hc},${hot ? 0.5 : 0.35})`);
         halo.addColorStop(1, `rgba(${hc},0)`);
         ctx.fillStyle = halo;
         ctx.beginPath(); ctx.arc(p.x, p.y, rad * 4 * pulse * gl, 0, 7); ctx.fill();
@@ -338,7 +368,7 @@ export class Renderer {
       // markings drift — that dissociation is what reads as 3D rotation.
       const hlx = this.triOrb ? p.x - rad * 0.3 + drift * rad * 0.45 : p.x - rad * 0.3;
       const body = ctx.createRadialGradient(hlx, p.y - rad * 0.3, 0, p.x, p.y, rad);
-      if (n.isActive) {
+      if (hot) {
         body.addColorStop(0, '#fff6dd'); body.addColorStop(0.5, '#ffce6b'); body.addColorStop(1, '#b36a00');
       } else {
         body.addColorStop(0, '#dcecff'); body.addColorStop(0.5, '#5f9dff'); body.addColorStop(1, '#173a7a');
@@ -376,7 +406,7 @@ export class Renderer {
           if (this.triOrb) triPath(p.x, p.y, rad * pulse);
           else { ctx.beginPath(); ctx.arc(p.x, p.y, rad * pulse, 0, 7); }
           ctx.clip();
-          ctx.globalAlpha *= this.overlayAlpha * (n.isActive ? 0.45 : 1); // sun keeps its gold signal
+          ctx.globalAlpha *= this.overlayAlpha * (hot ? 0.45 : 1); // sun keeps its gold signal
           ctx.translate(p.x, p.y);
           ctx.rotate((h2 % 360) * Math.PI / 180); // static per-body tilt
           if (h2 % 2) ctx.scale(-1, 1);
@@ -424,7 +454,7 @@ export class Renderer {
         }
       }
       // (triangles flip like cards; the flip itself is the motion cue)
-      if (n === this.hover || n.isActive) {
+      if (n === this.hover || hot) {
         const ring = mixHex('#1e2d50', '#ffffff', sh);
         ctx.strokeStyle = `rgba(${ring[0]},${ring[1]},${ring[2]},0.85)`; ctx.lineWidth = 1.3;
         ctx.beginPath(); ctx.arc(p.x, p.y, rad * pulse + 4, 0, 7); ctx.stroke();
@@ -440,7 +470,7 @@ export class Renderer {
       const lsc = (this.labelScale == null ? 1 : this.labelScale);
       if (lsc > 0.01) {
         const fs = Math.max(8, Math.min(15, 11 * (0.6 + p.s))) * lsc;
-        ctx.font = `${n.isActive ? '700' : '400'} ${fs.toFixed(1)}px Inter, system-ui, sans-serif`;
+        ctx.font = `${hot ? '700' : '400'} ${fs.toFixed(1)}px Inter, system-ui, sans-serif`;
         ctx.textAlign = 'center';
         ctx.lineWidth = 3;
         // label ink flips with the background so text stays readable on white
@@ -448,7 +478,7 @@ export class Renderer {
         const inkA = mixHex('#8a5a00', '#ffe9b8', sh);
         const halo = mixHex('#ffffff', '#0d1117', sh);
         ctx.strokeStyle = `rgba(${halo[0]},${halo[1]},${halo[2]},0.9)`;
-        ctx.fillStyle = n.isActive ? rgb(inkA) : `rgba(${ink[0]},${ink[1]},${ink[2]},${(0.45 + p.s * 0.5).toFixed(2)})`;
+        ctx.fillStyle = hot ? rgb(inkA) : `rgba(${ink[0]},${ink[1]},${ink[2]},${(0.45 + p.s * 0.5).toFixed(2)})`;
         const label = n.label.length > 24 ? n.label.slice(0, 23) + '…' : n.label;
         ctx.strokeText(label, p.x, p.y + rad + fs + 3);
         ctx.fillText(label, p.x, p.y + rad + fs + 3);
@@ -485,6 +515,328 @@ export class Renderer {
         }
       }
       ctx.globalAlpha = 1;
+    }
+    // associated-document overlay (thematic view): paper icons pinned around
+    // their seed orb — top grounding docs in the orb's own color, the rest
+    // lighter. Drawn last (annotation layer, like labels).
+    if (opts.assoc && opts.assoc.length) { try { this.drawAssoc(ctx, u, opts.assoc); } catch {} }
+  }
+  // associated-document paper icons (thematic view): one sheet per grounded
+  // doc, ringed around its seed orb so neighbors never impinge. Icons shrink
+  // and rings multiply as membership grows (all docs always shown, top
+  // grounding docs innermost); labels widen the slots they need. Records
+  // screen rects for click / right-click hit-testing.
+  assocHit(sx, sy) {
+    const rs = this._assocRects;
+    if (!rs) return null;
+    // two passes: icons first (small precise targets win over the long
+    // icon→label unions), then labels — so a click on a name never catches
+    // a neighboring ray's stretched hit box.
+    for (let i = rs.length - 1; i >= 0; i--) {
+      const r = rs[i];
+      if (sx >= r.ibx && sx <= r.ibx + r.ibw && sy >= r.iby && sy <= r.iby + r.ibh) return r;
+    }
+    for (let i = rs.length - 1; i >= 0; i--) {
+      const r = rs[i];
+      if (!r.lbw) continue;
+      // labels are rotated radial text anchored at one end: inverse-rotate
+      const dx = sx - r.lbx, dy = sy - r.lby;
+      const c = Math.cos(r.th), q = Math.sin(r.th);
+      const px = dx * c + dy * q, py = -dx * q + dy * c;
+      const inX = r.fl ? (px <= 3 && px >= -r.lbw - 3) : (px >= -3 && px <= r.lbw + 3);
+      if (inX && Math.abs(py) <= r.lbh / 2 + 3) return r;
+    }
+    return null;
+  }
+  paperDoc(ctx, x, y, s, pal) {
+    // a miniature sheet: tinted body, folded corner, ruled text lines
+    const w = s * 0.74, fold = Math.min(s * 0.26, w * 0.42);
+    const x0 = x - w / 2, y0 = y - s / 2, x1 = x + w / 2, y1 = y + s / 2;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0); ctx.lineTo(x1 - fold, y0); ctx.lineTo(x1, y0 + fold);
+    ctx.lineTo(x1, y1); ctx.lineTo(x0, y1); ctx.closePath();
+    ctx.fillStyle = pal.fill; ctx.fill();
+    ctx.strokeStyle = pal.edge; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x1 - fold, y0); ctx.lineTo(x1 - fold, y0 + fold); ctx.lineTo(x1, y0 + fold); ctx.closePath();
+    ctx.fillStyle = pal.fold; ctx.fill();
+    ctx.strokeStyle = pal.edge; ctx.lineWidth = 1; ctx.stroke();
+    ctx.strokeStyle = pal.ink; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (const yy of [y0 + s * 0.38, y0 + s * 0.54, y0 + s * 0.70]) {
+      ctx.moveTo(x0 + w * 0.16, yy); ctx.lineTo(x1 - w * 0.14, yy);
+    }
+    ctx.stroke();
+    return w;
+  }
+  drawAssoc(ctx, u, list) {
+    const sh = Math.max(0, Math.min(1, this.bgShade == null ? 1 : this.bgShade));
+    const halo = mixHex('#ffffff', '#0d1117', sh);
+    const palTopGold = { fill: '#ffce6b', edge: '#8a5a00', fold: '#ffe9b8', ink: 'rgba(90,60,0,.8)' };
+    const palRestGold = { fill: '#fff3d6', edge: '#d9b45c', fold: '#ffffff', ink: 'rgba(140,110,40,.75)' };
+    const palTopBlue = { fill: '#5f9dff', edge: '#173a7a', fold: '#cfe0ff', ink: 'rgba(255,255,255,.85)' };
+    const palRestBlue = { fill: '#d7e6ff', edge: '#7ea6e8', fold: '#ffffff', ink: 'rgba(60,90,150,.8)' };
+    const palUngrGold = { fill: '#f1ede4', edge: '#b3ab99', fold: '#ffffff', ink: 'rgba(120,110,95,.8)' };
+    const palUngrBlue = { fill: '#e9edf3', edge: '#a3adbf', fold: '#ffffff', ink: 'rgba(100,112,130,.8)' };
+    const byTheme = new Map();
+    for (const it of list) {
+      if (!byTheme.has(it.theme)) byTheme.set(it.theme, []);
+      byTheme.get(it.theme).push(it);
+    }
+    const r = this.cv.getBoundingClientRect();
+    const W = r.width || 300, H = r.height || 400;
+    // Phase 1 — sun-dial walk: paper icons ring the orb on a true circle of
+    // uniform edge clearance (pulse-proof, zoom-aware scale); each filename
+    // is drawn RADIALLY along its icon's spoke (like a reference sun-dial —
+    // reading outward, flipped past vertical so glyphs never invert),
+    // starting just outside its icon. Text thickness gives a thin uniform
+    // angular width, so a measured walk packs rays without same-ring
+    // collisions; overflow spills outward.
+    const placements = []; // {tid,it,x,y,w,s,fs,pal,ox,oy,a,a0,orb,base,th,lw,showLabel,lx,ly}
+    const orbDiscs = []; // every theme body's disc, so rays dodge other orbs too
+    {
+      const bsAll = (this.bodyScale == null ? 1 : this.bodyScale);
+      for (const n of u.byId.values()) {
+        if (!n || !n._p) continue;
+        const q = n._p;
+        orbDiscs.push({ id: n.id, x: q.x, y: q.y, r: Math.max(2, (n.radius || 6) * (n._fitBoost || 1) * q.s * 1.6 * bsAll) });
+      }
+    }
+    for (const [tid, items] of byTheme) {
+      const node = u.byId.get(tid);
+      if (!node || !node._p) continue;
+      const p = node._p;
+      if (p.x < -140 || p.y < -120 || p.x > W + 140 || p.y > H + 120) continue;
+      const bs = (this.bodyScale == null ? 1 : this.bodyScale);
+      const orbR = Math.max(2, (node.radius || 6) * (node._fitBoost || 1) * p.s * 1.6 * bs);
+      const showLabel = !!items[0].showLabel;
+      // zoom-aware icon scale: paper sheets stay readable when the orb fills
+      // the screen, and stay compact when it shrinks to a speck. p.s is the
+      // perspective scale (~1.1 at the default distance, ~3.2 fully zoomed
+      // in, ~0.1 fully out).
+      const zf = Math.max(0.9, Math.min(1.6, 0.75 + (p.s || 1) * 0.35));
+      let s = 15;
+      if (items.length > 12) s = 12;
+      if (items.length > 30) s = 10;
+      s = Math.min(24, s * zf);
+      const fs = Math.min(16, 10 * zf);
+      if (showLabel) {
+        ctx.font = `400 ${fs.toFixed(1)}px Inter, system-ui, sans-serif`;
+        for (const it of items) {
+          const t = it.title.length > 20 ? it.title.slice(0, 19) + '…' : it.title;
+          it._short = t;
+          it._lw = ctx.measureText(t).width;
+        }
+      }
+      // dynamic encircling: the ring is a true circle of uniform edge
+      // clearance, recomputed from the live orb radius every frame — so zoom
+      // never parks icons inside the disc (pulse-proof: the sphere breathes
+      // ±8%). A fixed 3-per-ring minimum used to cram icons where fewer fit;
+      // the angular walk below replaces it.
+      const edge = orbR * 1.08; // pulse-proof silhouette
+      const gap = s * 1.1 + 8 + (showLabel ? s * 1.9 : 0);
+      const step = showLabel ? s + fs + 18 : s + 12;
+      let ring = 0, base = edge + gap;
+      // text rides RADIALLY (like the reference sun-dial: tick, then the
+      // filename reading outward along its spoke, flipped past vertical so
+      // glyphs never invert). Angular half-width comes from text THICKNESS
+      // at the capsule's mid radius — thin uniform wedges, many rays/ring.
+      const halfAng = (it) => {
+        if (!showLabel) return (s * 0.37 + 5) / Math.max(8, base);
+        const lw = it._lw || 0;
+        const rs = base + s * 0.62 + 5;
+        // worst of the two wedges: the paper icon at the inner ring and the
+        // thin text capsule at its mid radius — spacing by the max keeps both
+        // clear on the same ring (the icon wedge usually binds near the hub)
+        return Math.max((s * 0.37 + 5) / Math.max(8, base), (fs / 2 + 6) / Math.max(8, rs + lw / 2));
+      };
+      // even sun: greedily fill rings by angular width, then spread each
+      // ring's rays UNIFORMLY around the circle (like the reference dial),
+      // so small themes fan out instead of bunching up
+      const lists = [[]];
+      for (const it of items) {
+        let hw = halfAng(it); // closure reads the current ring's base
+        const list = lists[lists.length - 1];
+        const used = list.reduce((sum, e) => sum + e.hw * 2, 0);
+        if (list.length > 0 && used + hw * 2 > Math.PI * 2 - 1e-6) {
+          ring++; if (ring > 12) break; // runaway guard: absurdly many/large labels
+          base += step;
+          hw = halfAng(it);
+          lists.push([]);
+        }
+        lists[lists.length - 1].push({ it, hw });
+      }
+      lists.forEach((list, ri) => {
+        const rBase = edge + gap + ri * step;
+        const n = list.length;
+        const rStart = -Math.PI / 2 + ri * 0.35;
+        list.forEach((e, k) => {
+          const ea = rStart + ((k + 0.5) * Math.PI * 2) / n;
+          const it = e.it;
+          const pal = it.ungr
+            ? (it.seedActive ? palUngrGold : palUngrBlue)
+            : it.top
+            ? (it.seedActive ? palTopGold : palTopBlue)
+            : (it.seedActive ? palRestGold : palRestBlue);
+          placements.push({
+            tid, it, s, fs, pal, showLabel, ox: p.x, oy: p.y, a: ea, a0: ea, orb: orbR, base: rBase,
+            x: p.x + Math.cos(ea) * rBase, y: p.y + Math.sin(ea) * rBase,
+            w: s * 0.74,
+            lw: showLabel ? (it._lw || 0) : 0, lx: 0, ly: 0,
+          });
+        });
+      });
+    }
+    // Phase 2 — sun-dial de-collision (convergent angular sweep). Each
+    // ray's filename is a radial capsule (text centerline + thickness); icons and orbs are circles. Up to 8 sweeps run in stable
+    // order; probes stay within ±0.7 rad of the even walk slot (no
+    // cross-circle herding). Deterministic frame to frame (no flicker).
+    const capAt = (pl, a) => {
+      // radial capsule: text centerline runs outward along the spoke from
+      // just outside the paper icon; rotation flips past vertical so text
+      // is never upside-down (left side reads outer→inner, like reference)
+      const rs = pl.base + pl.s * 0.62 + 5;
+      const cx = Math.cos(a), sy = Math.sin(a);
+      const x1 = pl.ox + cx * rs, y1 = pl.oy + sy * rs;
+      const x2 = pl.ox + cx * (rs + pl.lw), y2 = pl.oy + sy * (rs + pl.lw);
+      const flip = cx < 0;
+      // text anchor: ALWAYS the inner end (just outside the icon). Flipped
+      // rays use align-right + PI rotation, so glyphs still span rs→rs+lw
+      // outward and read outer→inner — anchoring the outer end instead would
+      // shove the whole name one full text-length too far out (the "names
+      // far from their icons" bug).
+      return {
+        lx: x1, ly: y1, th: flip ? a + Math.PI : a, flip,
+        x1, y1, x2, y2, r: pl.fs / 2 + 3,
+        ix: pl.ox + cx * pl.base, iy: pl.oy + sy * pl.base,
+        ir: Math.hypot(pl.w, pl.s) / 2 + 2,
+      };
+    };
+    const discs = orbDiscs.map((d) => ({ x: d.x, y: d.y, r: d.r, orb: d.id }));
+    const names = []; // orb text nameplates as horizontal capsules
+    {
+      const lsc = (this.labelScale == null ? 1 : this.labelScale);
+      if (lsc > 0.01) {
+        const bsAll = (this.bodyScale == null ? 1 : this.bodyScale);
+        for (const n of u.byId.values()) {
+          if (!n || !n._p || !n.label) continue;
+          const q = n._p;
+          const rad = Math.max(2, (n.radius || 6) * (n._fitBoost || 1) * q.s * 1.6 * bsAll);
+          const fsO = Math.max(8, Math.min(15, 11 * (0.6 + q.s))) * lsc;
+          ctx.font = `400 ${fsO.toFixed(1)}px Inter, system-ui, sans-serif`;
+          const tw = ctx.measureText(n.label.length > 24 ? n.label.slice(0, 23) + '…' : n.label).width;
+          const y0 = q.y + rad - 2, y1 = q.y + rad + 2 * fsO + 8;
+          names.push({ x1: q.x - tw / 2 - 3, y1: (y0 + y1) / 2, x2: q.x + tw / 2 + 3, y2: (y0 + y1) / 2, r: (y1 - y0) / 2, orb: n.id });
+        }
+      }
+    }
+    // A, B: {c: capsule|null, i: icon circle} — every pairing, both directions
+    const clash = (A, B) => {
+      if (A.c && B.c && dSegSeg(A.c.x1, A.c.y1, A.c.x2, A.c.y2, B.c.x1, B.c.y1, B.c.x2, B.c.y2) < A.c.r + B.c.r) return true;
+      if (A.c && B.i && dPtSeg(B.i.x, B.i.y, A.c.x1, A.c.y1, A.c.x2, A.c.y2) < A.c.r + B.i.r) return true;
+      if (A.i && B.c && dPtSeg(A.i.x, A.i.y, B.c.x1, B.c.y1, B.c.x2, B.c.y2) < A.i.r + B.c.r) return true;
+      if (A.i && B.i && Math.hypot(A.i.x - B.i.x, A.i.y - B.i.y) < A.i.r + B.i.r) return true;
+      return false;
+    };
+    const shapeAt = (pl, a) => {
+      const c = capAt(pl, a);
+      return { c: pl.showLabel ? c : null, i: { x: c.ix, y: c.iy, r: c.ir }, cap: c };
+    };
+    const cur = placements.map((pl) => shapeAt(pl, pl.a));
+    const hitsFixed = (pl, sh) => {
+      for (const d of discs) {
+        if (d.orb === pl.tid) continue; // own disc: ring clears it by construction
+        if (Math.hypot(sh.cap.ix - d.x, sh.cap.iy - d.y) < sh.cap.ir + d.r) return true;
+        if (sh.c && dPtSeg(d.x, d.y, sh.c.x1, sh.c.y1, sh.c.x2, sh.c.y2) < sh.c.r + d.r) return true;
+      }
+      for (const m of names) {
+        if (sh.c && dSegSeg(sh.c.x1, sh.c.y1, sh.c.x2, sh.c.y2, m.x1, m.y1, m.x2, m.y2) < sh.c.r + m.r) return true;
+        if (dPtSeg(sh.cap.ix, sh.cap.iy, m.x1, m.y1, m.x2, m.y2) < sh.cap.ir + m.r) return true;
+      }
+      return false;
+    };
+    const hitsOther = (i, sh) => {
+      for (let j = 0; j < placements.length; j++) {
+        if (j === i) continue;
+        if (clash(sh, cur[j])) return true;
+      }
+      return false;
+    };
+    for (let sweep = 0; sweep < 8; sweep++) {
+      let clean = true;
+      for (let i = 0; i < placements.length; i++) {
+        const pl = placements[i];
+        if (!pl.showLabel) continue; // icons alone: walk spacing suffices
+        let sh = shapeAt(pl, pl.a);
+        if (!hitsFixed(pl, sh) && !hitsOther(i, sh)) { cur[i] = sh; continue; }
+        // colliding: probe both directions in growing strides, first fully
+        // clear angle wins (positive side preferred on ties); probes stay
+        // within ±0.7 rad of the EVEN walk slot (no cross-circle herding),
+        // and on total failure the current angle is kept.
+        const midR = pl.base + pl.s * 0.62 + 5 + pl.lw / 2;
+        const stride = Math.max(0.05, (pl.fs / 2 + 12) / Math.max(8, midR) / 4);
+        const maxTravel = 1.0;
+        let found = false;
+        for (let d = stride; d <= maxTravel + 1e-9; d += stride) {
+          const cands = [pl.a + d, pl.a - d].filter((c) => Math.abs(c - pl.a0) <= 0.7);
+          for (const cand of cands) {
+            const sh2 = shapeAt(pl, cand);
+            if (!hitsFixed(pl, sh2) && !hitsOther(i, sh2)) {
+              pl.a = cand; cur[i] = sh2; found = true; break;
+            }
+          }
+          if (found) break;
+        }
+        if (!found) cur[i] = shapeAt(pl, pl.a);
+        clean = false;
+      }
+      if (clean) break;
+    }
+    for (let i = 0; i < placements.length; i++) {
+      const pl = placements[i], c = cur[i].cap;
+      pl.x = c.ix; pl.y = c.iy;
+      pl.lx = c.lx; pl.ly = c.ly; pl.th = c.th; pl.flip = c.flip;
+    }
+    // debug snapshot: final ray per placement (angle deg, ring base)
+    this._assocDebug = placements.map((pl) => ({ theme: pl.tid, title: pl.it.title, base: Math.round(pl.base), deg: Math.round(pl.a * 180 / Math.PI), show: !!pl.showLabel }));
+    // Phase 3 — draw everything (icons, radial labels) + hit rects.
+    for (const pl of placements) {
+      const { x, y, s, fs, pal, showLabel } = pl;
+      this.paperDoc(ctx, x, y, s, pal);
+      let rx = x - pl.w / 2 - 3, ry = y - s / 2 - 3, rw = pl.w + 6, rh = s + 6;
+      if (showLabel) {
+        const ink = pl.it.ungr
+          ? (pl.it.seedActive ? mixHex('#78716c', '#e7e2d5', sh) : mixHex('#646e82', '#c9d2e0', sh))
+          : pl.it.top
+          ? (pl.it.seedActive ? mixHex('#8a5a00', '#ffe9b8', sh) : mixHex('#dcecff', '#bed2f5', sh))
+          : mixHex('#1b2a45', '#bed2f5', sh);
+        ctx.font = `400 ${fs.toFixed(1)}px Inter, system-ui, sans-serif`;
+        ctx.save();
+        ctx.translate(pl.lx, pl.ly);
+        ctx.rotate(pl.th);
+        ctx.textAlign = pl.flip ? 'right' : 'left';
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = `rgba(${halo[0]},${halo[1]},${halo[2]},0.9)`;
+        ctx.fillStyle = `rgba(${ink[0]},${ink[1]},${ink[2]},0.95)`;
+        ctx.strokeText(pl.it._short, 0, 0);
+        ctx.fillText(pl.it._short, 0, 0);
+        ctx.restore();
+        ctx.textBaseline = 'alphabetic'; // orb labels below assume the default
+        // union = icon box + radial capsule's AABB (anchor + len along th)
+        const tdx = Math.cos(pl.th), tdy = Math.sin(pl.th);
+        const e1x = pl.lx + tdx * (pl.flip ? -pl.lw : pl.lw);
+        const e1y = pl.ly + tdy * (pl.flip ? -pl.lw : pl.lw);
+        const cr = fs / 2 + 3;
+        rx = Math.min(x - pl.w / 2, Math.min(pl.lx, e1x) - cr) - 3;
+        ry = Math.min(y - s / 2, Math.min(pl.ly, e1y) - cr) - 3;
+        rw = Math.max(x + pl.w / 2, Math.max(pl.lx, e1x) + cr) - rx + 3;
+        rh = Math.max(y + s / 2, Math.max(pl.ly, e1y) + cr) - ry + 3;
+      }
+      // lbx/lby = text ANCHOR + rotation + flip (assocHit maps into text space)
+      this._assocRects.push({ theme: pl.tid, doc: pl.it.doc, title: pl.it.title, ungr: !!pl.it.ungr, x: rx, y: ry, w: rw, h: rh,
+        ibx: pl.x - pl.w / 2 - 3, iby: pl.y - pl.s / 2 - 3, ibw: pl.w + 6, ibh: pl.s + 6,
+        lbx: showLabel ? pl.lx : 0, lby: showLabel ? pl.ly : 0, lbw: showLabel ? pl.lw : 0, lbh: showLabel ? fs : 0, th: showLabel ? pl.th : 0, fl: showLabel && pl.flip ? 1 : 0 });
     }
   }
   starfield(ctx, W, H, t = performance.now() / 1000) {
