@@ -3,6 +3,8 @@ import { vault } from './vault.js';
 import { Universe } from './physics.js';
 import { Renderer } from './render.js';
 import { imgPut, imgGet, imgKeys, imgDelete, migrateImageDB } from './imgstore.js';
+import { origPut, origGet, origKeys, origDelete } from './origstore.js';
+import * as vaultFs from './vault-fs.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -16,6 +18,11 @@ let viewNotesAll = true; // sticky-note squares on every body that HAS a note (s
 let viewNotesSun = true; // sticky-note square on the selected body (solid if noted, hollow frame if not)
 let selSet = new Set(); // marquee box selection: body ids in the active tab (owned here, read by ren.selSet)
 function pruneSel() { for (const sid of [...selSet]) if (!vault.byId(sid)) selSet.delete(sid); }
+// view-source hold state: right-press candidate -> timer -> glass preview pane
+let srcHold = null, srcSuppress = false, srcHi = null, srcStickyId = null, probePress = '';
+// input probe: echoes the last canvas press/release into #probeLine (left panel)
+// so button issues can be diagnosed without devtools. Temporary diagnostic.
+function setProbe(s) { try { const el = document.getElementById('probeLine'); if (el) el.textContent = 'input probe: ' + s; } catch {} }
 // the box-select action box (marquee rect + its in-box DELETE caption) lives in
 // boot()'s closure, but top-level removals / canvas jumps must also dismiss it —
 // the ids make that possible from any scope.
@@ -188,14 +195,29 @@ function confirmDlg(msg, okLabel = 'Confirm', opts = {}) {
     ok.textContent = okLabel;
     ok.disabled = arm > 0;
     cancelBtn.hidden = !cancel;
+    // optional "don't ask again" foot-row (tag delete/merge only): shown when
+    // opts.skip = {label, checked} is passed; the caller's holder object is
+    // updated with the checkbox state on close, other dialogs are unaffected.
+    const skipWrap = $('#confirmSkip'), skipBox = $('#confirmSkipBox'), skipLab = $('#confirmSkipLabel');
+    if (skipWrap) {
+      if (opts.skip && opts.skip.label) {
+        skipWrap.hidden = false;
+        if (skipLab) skipLab.textContent = opts.skip.label;
+        if (skipBox) skipBox.checked = !!opts.skip.checked;
+      } else skipWrap.hidden = true;
+    }
     m.hidden = false;
     const armTimer = arm > 0 ? setTimeout(() => { ok.disabled = false; }, arm) : null;
     const done = (v) => {
       if (armTimer) clearTimeout(armTimer);
+      let skipOn = null;
+      try { skipOn = (skipWrap && !skipWrap.hidden && skipBox) ? !!skipBox.checked : null; } catch { skipOn = null; }
+      if (skipWrap) skipWrap.hidden = true;
       m.hidden = true;
       cancelBtn.hidden = false;
       ok.onclick = cancelBtn.onclick = null;
       document.removeEventListener('keydown', onKey, true);
+      try { if (opts.skip && skipOn !== null) opts.skip.checked = skipOn; } catch {}
       resolve(v);
     };
     const onKey = (e) => {
@@ -239,9 +261,15 @@ let triOrb = false; // triangle mode: upside-down triangles instead of orbs (sam
 let miniX = null, miniY = null, miniW = 0, miniH = 0; // verse minimap geometry (null x/y = docked bottom-right; 0 w/h = default size)
 let glossX = null, glossY = null, glossW = 0, glossH = 0, glossOpen = false; // glossary pane geometry + visibility (same pattern as the minimap)
 let tvpX = null, tvpY = null; // tags pop-out card position (null = centered; header-drags to move, persists)
+let tvpDragTag = null; // tags-merge drag source: stripped tag name being dragged onto another pill (null = no drag)
+let tvpMergeAt = 0; // last merge-drop timestamp: the click that lands right after a drop is the drop itself, not a focus request
+let skipTagConfirms = false; // tags pop-out: skip the delete/merge confirmation dialogs (checkbox in the dialog, reversible toggle in the pane tips)
 let rotMul = 1;
 let ovAlpha = 0.6, ovLast = 0.6;
 let lbScale = 1, lbLast = 1; // file-name label size (0 = hidden) // body texture overlay opacity (0 = off)
+let sizeScale = 1, sizeLast = 1.5; // orb/triangle size multiplier (slider 5-300%, button toggles 100% <-> last)
+let spinOn = false, spinSpeed = 40; // body rotation around the vertical axis: on/off + speed 0-100
+let compressScale = 1, compressLast = 0.6; // horizontal squish (1 = round, lower = narrower)
 let bgShade = 1; // canvas background shade (1 = black deep-space, 0 = white)
 let glowScale = 1, glowLast = 1; // halo radius multiplier (0 = none, 1 = current, 2 = double)
 let tetherScale = 1, tetherLast = 1; // tether thickness multiplier (0 = hidden, 1 = current, 2 = double)
@@ -254,13 +282,13 @@ let leftCollapsed = false, docCollapsed = false; // panel collapse state (collap
 let docWidth = 0; // reader pane width override in px (0 = default 380)
 let showAllBodies = false; // general-state reader: also list every body past the 6 largest (collapsed on canvas switch)
 let lensThematic = false; // thematic lens: same docs + same physics, recomposed from theme/tag tethers
-let lensTags = false; // tags verse: same docs + same physics, recomposed from shared TAGS only (one body per tag)
+let lensTags = false; // tags view: same docs + same physics, recomposed from shared TAGS only (one body per tag)
 let thematicWhole = false; // whole-visidocsverse thematic: distilled from every shared canvas (general-state entry)
 let wholeUni = null, wholeBuilt = '', wholeThemes = []; // whole-visidocsverse thematic universe + its theme records
 const thematicUnis = new Map(); // tabId -> Universe (thematic recomposition; regular ones stay in unis)
 const thematicBuilt = new Map(); // tabId -> docs.length the thematic uni was built from
 const thematicThemes = new Map(); // tabId -> distilled theme records [{id,label,terms,weight,mass,members[]}]
-const tagUnis = new Map(); // tabId -> tags-verse Universe (same docs, tag bodies webbed by shared member docs)
+const tagUnis = new Map(); // tabId -> tags-view Universe (same docs, tag bodies webbed by shared member docs)
 const tagBuilt = new Map(); // tabId -> tag signature the tags uni was built from
 const tagRecords = new Map(); // tabId -> tag records [{id,label,terms,weight,mass,members[]}]
 const sliderToSpeed = (v) => {
@@ -296,8 +324,14 @@ try {
   const stored = ui.speedMul ?? ui.rotMul;
     if (typeof ui.ovAlpha === 'number' && ui.ovAlpha >= 0 && ui.ovAlpha <= 1) ovAlpha = ui.ovAlpha;
     if (typeof ui.ovLast === 'number' && ui.ovLast > 0 && ui.ovLast <= 1) ovLast = ui.ovLast;
-    if (typeof ui.lbScale === 'number' && ui.lbScale >= 0 && ui.lbScale <= 1.5) lbScale = ui.lbScale;
-    if (typeof ui.lbLast === 'number' && ui.lbLast > 0 && ui.lbLast <= 1.5) lbLast = ui.lbLast;
+    if (typeof ui.lbScale === 'number' && ui.lbScale >= 0 && ui.lbScale <= 3) lbScale = ui.lbScale;
+    if (typeof ui.lbLast === 'number' && ui.lbLast > 0 && ui.lbLast <= 3) lbLast = ui.lbLast;
+    if (typeof ui.sizeScale === 'number' && ui.sizeScale >= 0.05 && ui.sizeScale <= 3) sizeScale = ui.sizeScale;
+    if (typeof ui.sizeLast === 'number' && ui.sizeLast >= 0.05 && ui.sizeLast <= 3) sizeLast = ui.sizeLast;
+    if (ui.spinOn === true) spinOn = true;
+    if (typeof ui.spinSpeed === 'number' && ui.spinSpeed >= 0 && ui.spinSpeed <= 100) spinSpeed = ui.spinSpeed;
+    if (typeof ui.compressScale === 'number' && ui.compressScale >= 0.2 && ui.compressScale <= 1) compressScale = ui.compressScale;
+    if (typeof ui.compressLast === 'number' && ui.compressLast >= 0.2 && ui.compressLast <= 1) compressLast = ui.compressLast;
     if (typeof ui.bgShade === 'number' && ui.bgShade >= 0 && ui.bgShade <= 1) bgShade = ui.bgShade;
     if (typeof ui.glow === 'number' && ui.glow >= 0 && ui.glow <= 2) glowScale = ui.glow;
     if (typeof ui.glowLast === 'number' && ui.glowLast > 0 && ui.glowLast <= 2) glowLast = ui.glowLast;
@@ -319,13 +353,14 @@ try {
     if (typeof ui.docWidth === 'number' && ui.docWidth >= 260 && ui.docWidth <= 900) docWidth = ui.docWidth;
     if (ui.lensThematic === true) lensThematic = true;
     if (ui.lensTags === true) lensTags = true;
+    if (ui.skipTagConfirms === true) skipTagConfirms = true;
     if (ui.viewNotesAll === false) viewNotesAll = false;
     if (ui.viewNotesSun === false) viewNotesSun = false;
     if (ui.viewNotes === false) { viewNotesAll = false; viewNotesSun = false; } // legacy single toggle
   if (stored >= 0 && stored <= 3) rotMul = stored;
 } catch { /* fresh prefs */ }
 function saveUi() {
-  try { localStorage.setItem('visidocsverse.ui', JSON.stringify({ rotOn, rotMul, speedMul: rotMul, autoDist, simpleOrb, simpleOrb2, triOrb, miniX, miniY, miniW, miniH, tvpX, tvpY, glossX, glossY, glossW, glossH, glossOpen, ovAlpha, ovLast, lbScale, lbLast, bgShade, glow: glowScale, glowLast, tether: tetherScale, tetherLast, tetherColor, backdrop, backdropAlpha, backdropLast, paneAlpha, paneLast, glazeLeft, glazeDoc, glazeCloud, glazeMini, glazeGloss, leftCollapsed, docCollapsed, docWidth, lensThematic, lensTags, viewNotesAll, viewNotesSun })); } catch { /* private mode */ }
+  try { localStorage.setItem('visidocsverse.ui', JSON.stringify({ rotOn, rotMul, speedMul: rotMul, autoDist, simpleOrb, simpleOrb2, triOrb, miniX, miniY, miniW, miniH, tvpX, tvpY, glossX, glossY, glossW, glossH, glossOpen, ovAlpha, ovLast, lbScale, lbLast, sizeScale, sizeLast, spinOn, spinSpeed, compressScale, compressLast, bgShade, glow: glowScale, glowLast, tether: tetherScale, tetherLast, tetherColor, backdrop, backdropAlpha, backdropLast, paneAlpha, paneLast, glazeLeft, glazeDoc, glazeCloud, glazeMini, glazeGloss, leftCollapsed, docCollapsed, docWidth, lensThematic, lensTags, skipTagConfirms, viewNotesAll, viewNotesSun })); } catch { /* private mode */ }
 }
 // bottom hint pill: flip to a light pill on a white canvas, dark pill on black
 function syncHintContrast() {
@@ -517,9 +552,9 @@ function distillFor(bodies, edges, texts) {
 // compose theme bodies webbed by shared grounded docs into a settled universe.
 // preferredId becomes the sun when it names a theme; defaultToAnchor falls back
 // to the heaviest theme (per-canvas entry with a selected doc) — otherwise the
-// map stays sunless and the canvas center holds gravity. minShared (tags verse)
+// map stays sunless and the canvas center holds gravity. minShared (tags view)
 // only webs pairs sharing at least that many grounded docs, so incidental
-// single-doc links can't rope a dense verse into one ball. loneLink (tags verse)
+// single-doc links can't rope a dense verse into one ball. loneLink (tags view)
 // re-homes loners onto their single best partner instead of chaining every one
 // of them to the anchor — fifty anchor spokes would herd the whole verse into
 // the anchor's neighborhood.
@@ -641,10 +676,10 @@ function getThematicWhole() {
 function thematicUniFor(id) {
   return thematicWhole ? getThematicWhole() : getThematicUni(id);
 }
-// ---------- tags verse: one body per TAG, webbed by shared member docs ----------
+// ---------- tags view: one body per TAG, webbed by shared member docs ----------
 // Distilled straight from the docs' own tags (explicit + auto/, prefix-blind —
 // the same matching the mass/tether code uses), NOT from text concepts, so this
-// is a different verse from the bottom-pill Thematic lens. Records reuse the
+// is a separate view from the Thematic view. Records reuse the
 // theme shape, so seatThematic composes them identically.
 function tagsFor(docs) {
   const byTag = new Map();
@@ -705,7 +740,7 @@ function getTagUni(tabId) {
   }
   return u;
 }
-// rank-tier shells for the tags verse: grounding power sets depth (heaviest
+// rank-tier shells for the tags view: grounding power sets depth (heaviest
 // tags innermost, one-doc tags spread across three roomy outer shells so
 // co-shell neighbors stop weaving through each other), radii scaled so the
 // outer shells have real room no matter how many singletons the verse holds
@@ -744,19 +779,22 @@ function tagById(id) {
   const list = tagRecords.get(vault.activeTabId) || [];
   return list.find(r => r.id === id) || null;
 }
-// enter (true) or leave (false) the tags verse — mutually exclusive with the
-// bottom-pill Thematic lens, same physics, regular universe untouched
+// enter (true) or leave (false) the tags view — mutually exclusive with the
+// Thematic view logic, shared with the view-modes strip:
+// same docs + same physics, recomposed around shared themes; leaving the
+// view always drops the whole view.
 function setTagsVerse(on) {
-  if (!vault.tab()) { toast('No open canvas — click + or reopen a canvas before opening the tags verse.'); return; }
+  if (!vault.tab()) { toast('No open canvas — click + or reopen a canvas before opening the tags view.'); return; }
+  pushView(); // Return can come back to the pre-view state
   clearFit(); // the lens swaps the universe: a fitted view is stale
   if (on) {
     const recs = tagsFor(vault.tab().docs || []);
-    if (!recs.length) { toast('No tags in this verse yet — add #hashtags to a body'); return; }
+    if (!recs.length) { toast('No tags in this view yet — add #hashtags to a body'); return; }
     lensThematic = false; thematicWhole = false;
     lensTags = true;
     syncLensBtn(); applyLens(); saveUi();
     closeTagPop();
-    toast(`Tags verse — ${recs.length} tag${recs.length === 1 ? '' : 's'} across ${(vault.tab().docs || []).length} bodies`);
+    toast(`Tags view — ${recs.length} tag${recs.length === 1 ? '' : 's'} across ${(vault.tab().docs || []).length} bodies`);
   } else {
     if (!lensTags) return;
     lensTags = false;
@@ -764,6 +802,106 @@ function setTagsVerse(on) {
     try { syncTagVerseBtn(); } catch {} // the pop-out stays open on exit: refresh its button
     toast('Regular view restored');
   }
+}
+// Thematic view logic, shared with the view-modes strip entry:
+// same docs + same physics, recomposed by themes/tags. From the general
+// state (nothing selected) it distills the WHOLE visidocsverse; leaving the
+// view always drops the whole view.
+function toggleThematicLens() {
+  pushView(); // Return can come back to the pre-lens view
+  clearFit(); // the lens swaps the universe: a fitted view is stale
+  if (!vault.tab()) {
+    toast('No open canvas — click + or reopen a canvas before using the Thematic lens.');
+    return;
+  }
+  lensThematic = !lensThematic;
+  if (lensThematic) { thematicWhole = (activeId == null); lensTags = false; } // lenses are mutually exclusive
+  else thematicWhole = false;
+  applyLens();
+  saveUi();
+  if (!lensThematic) toast('Regular view restored');
+  else if (thematicWhole) {
+    const n = wholeThemes.length, m = wholeVisidocsverseDocs().length;
+    toast(n ? `Thematic lens — whole visidocsverse: ${n} theme${n === 1 ? '' : 's'} across ${m} bodies` : 'Thematic lens — no shared concepts in the visidocsverse yet');
+  } else {
+    const n = (thematicThemes.get(vault.activeTabId) || []).length;
+    toast(n ? `Thematic lens — ${n} theme${n === 1 ? '' : 's'} distilled from shared concepts` : 'Thematic lens — no shared concepts in this canvas yet');
+  }
+}
+// universe view modes (strip under the top tabs): Main = the regular canvas
+// universe, Thematic = the Thematic entry in the row, Tag = the entry that
+// toggles the tags view. Main and Tag toggle the same state those controls do.
+function goViewMode(mode) {
+  if (mode === 'thematic') { toggleThematicLens(); }
+  else if (mode === 'tag') { setTagsVerse(!lensTags); }
+  else {
+    if (!lensThematic && !lensTags) { toast('Main view — the regular canvas universe'); return; }
+    pushView(); // Return can come back to the lens being left
+    lensThematic = false; thematicWhole = false; lensTags = false;
+    clearFit();
+    applyLens(); saveUi();
+    try { syncTagVerseBtn(); } catch {}
+    toast('Main view — the regular canvas universe');
+  }
+  try { syncViewModes(); } catch {}
+}
+// view-modes strip state: highlight whichever view is live
+function syncViewModes() {
+  const bar = $('#tabBar');
+  if (!bar) return;
+  const cur = lensThematic ? 'thematic' : (lensTags ? 'tag' : 'main');
+  bar.querySelectorAll('[data-vm]').forEach(b => b.classList.toggle('on', b.dataset.vm === cur));
+}
+// Return: walk back through previous view states (canvas + lens + sun +
+// camera). Every user-driven view change pushes the state it leaves; Return
+// pops back to the newest state that differs from now. Applying a history
+// entry never pushes (repeated Returns keep walking back).
+const viewHistory = []; // [{tabId, lensThematic, thematicWhole, lensTags, activeId, cam}]
+let applyingHistory = false;
+function snapView() {
+  let cam = null;
+  try { if (ren && ren.cam) cam = { dist: ren.cam.dist, px: ren.cam.px, py: ren.cam.py }; } catch {}
+  return { tabId: vault.activeTabId, lensThematic, thematicWhole, lensTags, activeId, cam };
+}
+function sameView(a, b) {
+  if (!a || !b) return false;
+  const camEq = (x, y) => (!x && !y) || (!!x && !!y && x.dist === y.dist && x.px === y.px && x.py === y.py);
+  return a.tabId === b.tabId && !!a.lensThematic === !!b.lensThematic &&
+    !!a.thematicWhole === !!b.thematicWhole && !!a.lensTags === !!b.lensTags &&
+    (a.activeId || null) === (b.activeId || null) && camEq(a.cam, b.cam);
+}
+function pushView() {
+  if (applyingHistory) return;
+  try {
+    const s = snapView();
+    const last = viewHistory[viewHistory.length - 1];
+    if (last && sameView(last, s)) return; // no dupes
+    viewHistory.push(s);
+    if (viewHistory.length > 50) viewHistory.shift();
+  } catch { /* history is best-effort */ }
+}
+function goReturn() {
+  const now = snapView();
+  let target = null;
+  while (viewHistory.length) {
+    const cand = viewHistory.pop();
+    if (!sameView(cand, now)) { target = cand; break; }
+  }
+  if (!target) { toast('Nothing to return to yet'); return; }
+  applyingHistory = true;
+  try {
+    if (target.tabId !== vault.activeTabId && vault.tabs.some(t => t.id === target.tabId)) switchCanvas(target.tabId);
+    lensThematic = !!target.lensThematic; thematicWhole = !!target.thematicWhole; lensTags = !!target.lensTags;
+    activeId = target.activeId || null;
+    clearFit();
+    applyLens(); saveUi();
+    try { syncTagVerseBtn(); } catch {}
+    if (target.cam && ren && ren.cam) {
+      try { ren.cam.dist = target.cam.dist; ren.cam.px = target.cam.px; ren.cam.py = target.cam.py; } catch {}
+    }
+    toast('Returned to the previous view');
+  } finally { applyingHistory = false; }
+  try { syncViewModes(); } catch {}
 }
 // pill-button state dot: filled when the function is on, hollow when off.
 function setPillGlyph(id, on) {
@@ -989,15 +1127,9 @@ function dragWorldDelta(dx, dy, p) {
   const dY = dY2 * cp, dZ = -dY2 * sp;
   return [dX * cy + dZ * sy, dY, -dX * sy + dZ * cy];
 }
-function syncLensBtn() {
-  const b = $('#lensBtn');
-  if (!b) return;
-  b.classList.toggle('on', lensThematic);
-  b.textContent = (lensThematic ? '◉' : '○') + ' Thematic' + ((lensThematic && thematicWhole) ? ' ⋃' : '');
-  b.title = (lensThematic && thematicWhole)
-    ? 'Thematic lens: whole-visidocsverse theme map (click to restore the regular view)'
-    : 'Thematic lens: recompose the universe from shared themes + tags only (same physics, same bodies)';
-}
+// retired with the bottom-pill Thematic button: the view-modes strip now
+// shows lens state, so this is a no-op kept for its existing callers
+function syncLensBtn() {}
 function applyLens() {
   if (lensThematic) uni = thematicUniFor(vault.activeTabId) || unis.get(vault.activeTabId) || null;
   else if (lensTags) uni = tagUniFor(vault.activeTabId) || unis.get(vault.activeTabId) || null;
@@ -1010,6 +1142,7 @@ function applyLens() {
   if (uni && activeId && !uni.byId.has(activeId)) activeId = uni.sunId; // stale theme sun
   try { vault.tab().activeId = activeId; } catch {}
   syncLensBtn();
+  try { syncViewModes(); } catch {}
   renderDoc();
   updateStats();
 }
@@ -1044,10 +1177,10 @@ const DEFAULT_HELP = {
   mass: 'Mass is pull. Bigger, more comprehensive, files \'weigh\' more, so they tug harder on everything around them.',
   energy: 'Total motion in the document universe. High "system energy" numbers mean bodies are flying fast — especially if more files (\'bodies\') are being added — and it settles as correlational orbits stabilize.',
   rim: 'The edge of the visualized document universe. Files (\'bodies\') drifting past it are loners with no links — a single reference can pull them back in and connect them.',
-  thematic: 'Thematic lens: rebuilds the universe from shared themes + tags only — one body per theme, sized by its weight. Click a member to drill down; toggle Thematic off to restore the full universe.',
+  thematic: 'The Thematic view redraws the canvas around the ideas the documents share — terms that travel together become theme bodies, sized by thematic weight. Click a theme to see its members, click a member to open it as the sun; toggling Thematic off restores the Main view.',
 };
 const HELP_TITLES = {
-  shared: 'Shared Ground', mass: 'Mass', energy: 'System energy', rim: 'The rim', thematic: 'Thematic lens',
+  shared: 'Shared Ground', mass: 'Mass', energy: 'System energy', rim: 'The rim', thematic: 'Thematic view',
 };
 let helpTexts = { ...DEFAULT_HELP };
 try {
@@ -1059,6 +1192,13 @@ try {
 function saveHelp() {
   try { localStorage.setItem('visidocsverse.help', JSON.stringify(helpTexts)); } catch { /* private mode */ }
 }
+// one-time wording migration: installs carrying the pre-"view" Thematic
+// explanation get the new text, unless they customized it themselves
+try {
+  const OLD_THEMATIC = 'Thematic lens: rebuilds the universe from shared themes + tags only — one body per theme, sized by its weight. Click a member to drill down; toggle Thematic off to restore the full universe.';
+  const stored0 = JSON.parse(localStorage.getItem('visidocsverse.help') || '{}');
+  if (stored0 && stored0.thematic === OLD_THEMATIC) { helpTexts.thematic = DEFAULT_HELP.thematic; saveHelp(); }
+} catch { /* fresh prefs */ }
 function helpEditAllowed() {
   try {
     if (window.VISIDOCSVERSE_HELP_LOCKED === true) return false;
@@ -1190,12 +1330,14 @@ function renderTabs() {
     return `<button class="tab${t.id === vault.activeTabId ? ' active' : ''}${iso ? ' iso' : ''}${tinted ? ' tinted' : ''}" data-tab="${t.id}"${tinted ? ` style="--tabc:${t.color}"` : ''} title="${esc(t.name)}${t.main ? ' — main verse' : ''}${iso ? ' — isolated verse: uploads, searches and deletes stay in this tab' : ''} — double-click to rename, right-click for associations">${t.main ? '★ ' : ''}${iso ? '◌ ' : ''}${esc(t.name)} · ${t.docs.length}${t.id === repOf.get(t.id) ? `<span class="tabsave" data-savetab="${t.id}" title="Save ALL projects to your computer as a backup file">save project</span>` : ''}<span class="tabx" data-closetab="${t.id}" title="Close canvas">×</span></button>`;
   }).join('') + (vault.tabs.length
     ? `<button class="tab tabadd" data-addtab="1" title="New project canvas">+</button>`
-    : `<button class="tab tabadd" data-addtab="1" title="Create new project canvas">Create Project</button>`) + `<button class="tab tabopen" data-openproj="1" title="Reopen the projects held in the in-app autosave">Open Existing Project</button></span>`;
+    : `<button class="tab tabadd" data-addtab="1" title="Create new project canvas">Create Project</button>`) + `<button class="tab tabopen" data-openproj="1" title="Reopen the projects held in the in-app autosave">Open Existing Project</button></span>` + `<span class="viewmodes"><span class="vm-label">Universe view modes:</span><button class="vm" data-vm="main" title="Main view — the regular canvas universe (one body per document)">Main</button><span class="vm-sep">|</span><button class="vm" data-vm="thematic" title="Thematic view — the ideas the documents share, distilled into theme bodies">Thematic</button><span class="vm-sep">|</span><button class="vm" data-vm="tag" title="Tags view — the labels on the documents, one body per tag (same as Show tags view in the tags pane)">Tag</button></span>`;
   try { applyDocWidth(); } catch {} // tab widths move the pill: keep the reader clear of it
+  try { syncViewModes(); } catch {}
 }
 function switchCanvas(id) {
   const t = vault.tabs.find(t => t.id === id);
   if (!t || id === vault.activeTabId) return;
+  pushView(); // Return can come back to the previous canvas
   clearFit(); // snapshots belong to one canvas's universe
   try { vault.tab().activeId = activeId; } catch {} // remember where we were
   vault.activeTabId = id;
@@ -1203,19 +1345,19 @@ function switchCanvas(id) {
   if (!unis.has(id)) rebuildTab(id); // first visit builds it (copies snap into lockstep below)
   uni = unis.get(id); // swap live universes: formations hold, no re-scatter
   if (lensThematic) uni = thematicUniFor(id) || uni; // lens persists across canvases
-  else if (lensTags) uni = tagUniFor(id) || uni; // tags verse persists across canvases too
+  else if (lensTags) uni = tagUniFor(id) || uni; // tags view persists across canvases too
   if (thematicWhole) {
     // whole-visidocsverse view spans every canvas: keep a live whole theme, else stay general
     if (!themeById(activeId)) activeId = uni ? uni.sunId : null;
   } else {
     // an explicitly cleared sun (general state) stays cleared — don't resurrect docs[0]
     activeId = (t.activeId && vault.byId(t.activeId)) ? t.activeId : ((t.activeId === null && t.docs.length) ? null : (t.docs[0]?.id || null));
-    // a doc sun doesn't exist in the tags verse — fall back to its sun (or general)
+    // a doc sun doesn't exist in the tags view — fall back to its sun (or general)
     if (lensTags && uni && activeId && !uni.byId.has(activeId)) activeId = uni.sunId;
     t.activeId = activeId;
   }
   refreshEdgeInfo(id); // reader was showing the previous canvas's tethers (SHARED GROUND — 0)
-  syncLensBtn(); // the lens pill reflects whole/per-tab state, which jumps can change
+  syncLensBtn();
   showAllBodies = false; // a new canvas opens on its 6 largest, never mid-list
   renderDoc();
   updateStats();
@@ -1304,7 +1446,9 @@ async function removeFromCanvas(id) {
   rebuild(activeId);
   renderTabs();
   toast('Removed from this canvas');
-  purgeImages(); // picture bytes nobody references anymore get swept
+    purgeImages(); // picture bytes nobody references anymore get swept
+  vaultFs.pruneFolder(vault.tabs.flatMap(t => (t.docs || []).map(d => d.name))); // mirrored originals nobody references get swept too
+  vaultFs.queueVaultJsonMirror();
 }
 async function deleteEverywhere(id) {
   const d = vault.byId(id) || vault.tabs.flatMap(t => t.docs).find(x => x.id === id);
@@ -1325,7 +1469,9 @@ async function deleteEverywhere(id) {
   updateStats();
   renderTabs();
   toast(`Deleted ${n} ${n === 1 ? 'copy' : 'copies'} from the universe`);
-  purgeImages(); // picture bytes nobody references anymore get swept
+    purgeImages(); // picture bytes nobody references anymore get swept
+  vaultFs.pruneFolder(vault.tabs.flatMap(t => (t.docs || []).map(d => d.name))); // mirrored originals nobody references get swept too
+  vaultFs.queueVaultJsonMirror();
 }
 // empty the active canvas (bodies only — the canvas itself stays open; other canvases untouched)
 async function removeAllFromCanvas() {
@@ -1342,7 +1488,9 @@ async function removeAllFromCanvas() {
   rebuild(null);
   renderTabs();
   toast(`Removed everything from “${t.name}”`);
-  purgeImages(); // picture bytes nobody references anymore get swept
+    purgeImages(); // picture bytes nobody references anymore get swept
+  vaultFs.pruneFolder(vault.tabs.flatMap(t => (t.docs || []).map(d => d.name))); // mirrored originals nobody references get swept too
+  vaultFs.queueVaultJsonMirror();
 }
 
 // bulk removal for the marquee box selection: bodies AND their docs leave this
@@ -1364,7 +1512,9 @@ async function removeIdsFromCanvas(ids) {
   updateStats();
   renderTabs();
   toast(`Deleted ${targets.length} ${targets.length === 1 ? 'body' : 'bodies'} (+ docs) from “${t.name}”`);
-  purgeImages(); // picture bytes nobody references anymore get swept
+    purgeImages(); // picture bytes nobody references anymore get swept
+  vaultFs.pruneFolder(vault.tabs.flatMap(t => (t.docs || []).map(d => d.name))); // mirrored originals nobody references get swept too
+  vaultFs.queueVaultJsonMirror();
 }
 // nuke the whole tab universe + its docs (the "Remove all" sibling with explicit docs wording)
 async function removeUniverseFromCanvas() {
@@ -1383,7 +1533,9 @@ async function removeUniverseFromCanvas() {
   updateStats();
   renderTabs();
   toast(`Deleted the “${t.name}” universe + docs`);
-  purgeImages(); // picture bytes nobody references anymore get swept
+    purgeImages(); // picture bytes nobody references anymore get swept
+  vaultFs.pruneFolder(vault.tabs.flatMap(t => (t.docs || []).map(d => d.name))); // mirrored originals nobody references get swept too
+  vaultFs.queueVaultJsonMirror();
 }
 // per-canvas persistent universes: switching tabs swaps the live universe instead
 // of rebuilding, so every canvas holds its exact formation (rotation included).
@@ -1449,6 +1601,7 @@ function updateStats() {
 
 // remember a newly focused sun on its canvas (survives reloads via vault.persist)
 function claimSun(id) {
+  pushView(); // Return can come back to the previous sun
   activeId = id;
   try { const t = vault.tab(); if (t) t.activeId = id; vault.persist(); } catch {}
 }
@@ -1457,6 +1610,7 @@ function claimSun(id) {
 function defocusSun() {
   if (!uni) return false;
   if (activeId == null && uni.sunId == null) return false;
+  pushView(); // Return can come back to the released sun
   uni.defocus();
   activeId = null;
   try { const t = vault.tab(); if (t) t.activeId = null; vault.persist(); } catch {}
@@ -1541,7 +1695,7 @@ async function copyNotePop() {
   toast('Sticky note copied');
 }
 function setKicker(s) { const k = $('#docPanel .kicker'); if (k && k.textContent !== s) k.textContent = s; }
-// tags-verse pop-out: every tag in the active verse as its original pill on a
+// tags-view pop-out: every tag in the active verse as its original pill on a
 // glass card — frosted + dark font on a white canvas, clear glass + white font
 // on a black canvas (maximum contrast either way). Tag pills keep data-tag, so
 // clicking one still feeds the search box.
@@ -1551,18 +1705,20 @@ function verseTags() {
   for (const d of ((t && t.docs) || [])) for (const tg of (d.tags || [])) {
     const disp = vault.stripAuto(tg);
     if (!disp) continue;
-    if (!out.has(disp)) out.set(disp, { disp, auto: true });
-    if (!String(tg).startsWith('auto/')) out.get(disp).auto = false;
+    if (!out.has(disp)) out.set(disp, { disp, auto: true, manual: false });
+    const low = String(tg).toLowerCase();
+    if (!low.startsWith('auto/')) out.get(disp).auto = false;
+    if (low.startsWith('manual/')) out.get(disp).manual = true;
   }
   return [...out.values()].sort((a, b) => a.disp < b.disp ? -1 : 1);
 }
 function syncTagVerseBtn() {
   const b = $('#tagVerseBtn');
   if (!b) return;
-  b.textContent = lensTags ? '◈ Exit tags verse' : '◈ Show tags verse';
+  b.textContent = lensTags ? '◈ Exit tags view' : '◈ Show tags view';
   b.title = lensTags
-    ? 'Leave the tags verse — restore the regular view'
-    : 'Recompose this canvas from its shared tags — one body per tag, webbed by the bodies they share (separate from the bottom-pill Thematic lens)';
+    ? 'Leave the tags view — restore the Main view'
+    : 'Tags view: redraw the canvas around the labels on the documents — one body per tag, webbed by the member documents the tags share';
 }
 function openTagPop() {
   const box = $('#tagPop');
@@ -1578,13 +1734,479 @@ function openTagPop() {
   if (title) title.textContent = `ALL THEMATIC TAGS — ${tags.length}`;
   const list = box.querySelector('.tvp-tags');
   if (list) list.innerHTML = tags.length
-    ? tags.map(t => `<button class="tagpill${t.auto ? ' auto' : ''}" data-tag="${esc(t.disp)}">#${esc(t.disp)}</button>`).join('')
+    ? tags.map(t => `<button class="tagpill${t.auto ? ' auto' : ''}${t.manual ? ' manual' : ''}" data-tag="${esc(t.disp)}" data-tpill="${esc(t.disp)}" draggable="true" title="Click to open its origin body · drag onto another tag to merge · × deletes">#${esc(t.disp)}${t.manual ? '<span class="mmark" title="Manually created tag">M</span>' : ''}<span class="tvp-x" data-tdel="${esc(t.disp)}" title="Delete #${esc(t.disp)} from every body on this canvas">×</span></button>`).join('')
     : '<span class="tvp-empty">No tags in this verse yet — add #hashtags to a body.</span>';
   syncTagVerseBtn();
+  syncConfirmTip();
   applyTvpGeom();
   box.hidden = false;
 }
 function closeTagPop() { const box = $('#tagPop'); if (box) box.hidden = true; }
+// ---------- view source: 120-word smart preview on right-hold ----------
+// Section-led excerpt: abstract for papers, foreword/preface/prologue/
+// introduction for books, opening lines otherwise; thumbnails for image-only docs.
+const SRC_WORDS = 120;
+const SRC_HOLD_MS = 280;
+const SRC_SEC_RES = [
+  [/^\s*abstract\b/i, 'Abstract'],
+  [/^\s*(executive\s+summary|summary|synopsis)\b/i, 'Summary'],
+  [/^\s*foreword\b/i, 'Foreword'],
+  [/^\s*preface\b/i, 'Preface'],
+  [/^\s*prologue\b/i, 'Prologue'],
+  [/^\s*(introduction|intro|overview)\b/i, 'Introduction'],
+];
+const SRC_STOP_RE = /^\s*(references|bibliography|works\s+cited|appendix|acknowledg(e)?ments?|contents|table\s+of\s+contents|chapter\s+\d+)\b/i;
+function srcWords(s) { return (String(s || '').match(/\S+/g) || []); }
+function srcTake(lines, budget) {
+  // gather lines until the word budget or a stop heading (past 30 words)
+  const out = [];
+  let n = 0, ci = 0;
+  for (const ln of lines) {
+    ci++;
+    if (n >= 30 && (SRC_STOP_RE.test(ln) || /^#{1,3}\s+\S/.test(ln))) break;
+    const ws = srcWords(ln);
+    if (!ws.length) { if (n > 0) out.push(''); continue; }
+    if (n + ws.length > budget) { out.push(ws.slice(0, budget - n).join(' ')); n = budget; break; }
+    out.push(ln); n += ws.length;
+    if (n >= budget) break;
+  }
+  return { text: out.join('\n').replace(/\n{3,}/g, '\n\n').trim(), words: n, more: ci < lines.length || n >= budget };
+}
+function srcSection(text) {
+  const lines = String(text || '').split('\n');
+  for (const [re, label] of SRC_SEC_RES) {
+    const i = lines.findIndex(l => re.test(l));
+    if (i >= 0) {
+      const take = srcTake(lines.slice(i + 1), SRC_WORDS);
+      if (take.words > 0) return { label, ...take };
+    }
+  }
+  // opening: strip a leading H1 title (already in the header), skip blanks
+  let s = (lines[0] && /^#\s+/.test(lines[0])) ? 1 : 0;
+  while (s < lines.length && !lines[s].trim()) s++;
+  return { label: 'Opening', ...srcTake(lines.slice(s), SRC_WORDS) };
+}
+function srcHighlight(id) {
+  srcClearHi();
+  try {
+    const p = $('#docPanel');
+    if (!p || p.classList.contains('collapsed') || !p.offsetParent) return;
+    if (activeId || lensThematic || lensTags || thematicWhole) return; // general view only
+    const sel = `#docLinks .bl-row[data-open="${CSS.escape(id)}"]`;
+    let row = document.querySelector(sel);
+    if (!row) {
+      // previewed body lives past the 6 largest: unfold the full list, then flash it
+      const t = vault.tab();
+      if (t && (t.docs || []).length > 6 && !showAllBodies) { showAllBodies = true; renderGeneral(); row = document.querySelector(sel); }
+    }
+    if (row) { row.classList.add('src-hi'); try { row.scrollIntoView({ block: 'nearest' }); } catch {} srcHi = id; }
+  } catch {}
+}
+function srcClearHi() { try { document.querySelectorAll('#docLinks .bl-row.src-hi').forEach(b => b.classList.remove('src-hi')); } catch {} srcHi = null; }
+function openSrcPop(id, x, y, sticky) {
+  const d = vault.byId(id);
+  const box = $('#srcPop');
+  if (!d || !box) return false;
+  // overlays never stack: a preview dismisses the lightbox and any menu, so
+  // clicks can never land on the wrong layer (zoom opening over a preview,
+  // or a preview's ✕ buried under the zoom).
+  try { $('#imgLight').hidden = true; } catch {}
+  try { $('#ctxMenu').hidden = true; } catch {}
+  const card = box.querySelector('.svp-card');
+  const darkCanvas = (typeof bgShade === 'number' ? bgShade : 1) > 0.5;
+  if (card) { card.classList.toggle('tvp-clear', darkCanvas); card.classList.toggle('tvp-frost', !darkCanvas); }
+  $('#svpTitle').textContent = vault.titleOf(d);
+  const words = srcWords(d.text).length;
+  const imgs = (d.images || []).filter(im => im && im.key);
+  const body = $('#svpBody'), cap = $('#svpCap'), foot = $('#svpFoot');
+  cap.hidden = true; cap.textContent = '';
+  if (words < 8 && imgs.length) {
+    // picture-only body: miniaturized picture instead of words
+    $('#svpSec').textContent = 'Image';
+    body.innerHTML = '<span style="color:var(--mut)">loading thumbnail…</span>';
+    const first = imgs[0];
+    const titleAtOpen = vault.titleOf(d);
+    (async () => {
+      try {
+        let url = imgUrlCache.get(first.key);
+        if (!url) {
+          const rec = await imgGet(first.key);
+          if (!rec || !rec.blob || !(rec.blob.size > 0)) throw 0;
+          url = URL.createObjectURL(rec.blob); imgUrlCache.set(first.key, url);
+        }
+        if (box.hidden || $('#svpTitle').textContent !== titleAtOpen) return; // moved on
+        body.innerHTML = '';
+        const img = document.createElement('img');
+        img.onload = () => { try { if (!box.hidden) place(); } catch {} };
+        img.src = url; img.alt = first.cap || titleAtOpen;
+        body.appendChild(img);
+      } catch { body.innerHTML = '<span style="color:var(--mut)">image kept on the original device — not in this backup</span>'; }
+    })();
+    if (imgs.length > 1 || words > 0) { cap.hidden = false; cap.textContent = `${imgs.length} image${imgs.length === 1 ? '' : 's'}${words ? ` · ${words} words` : ''}${first.cap ? ` — ${first.cap}` : ''}`; }
+    foot.textContent = 'thumbnail preview · release to close';
+  } else {
+    const sec = srcSection(d.text);
+    $('#svpSec').textContent = sec.label;
+    body.textContent = (sec.text || '(no readable text)') + (sec.more && sec.text ? '…' : '');
+    foot.textContent = `${Math.min(sec.words, SRC_WORDS)} of ${d.words} words · release to close`;
+  }
+  // pin near the press, clamped on screen using the card's real size
+  // (content varies — fixed 320px math let tall previews run off the edge)
+  box.hidden = false;
+  const place = () => {
+    const w = card.offsetWidth || 360, h = card.offsetHeight || 320;
+    card.style.left = Math.max(8, Math.min(Math.max(8, window.innerWidth - w - 8), x + 14)) + 'px';
+    card.style.top = Math.max(8, Math.min(Math.max(8, window.innerHeight - h - 8), y + 12)) + 'px';
+  };
+  place();
+  if (sticky) {
+    const rel = $('#svpRel'); if (rel) rel.textContent = 'pinned';
+    foot.textContent = 'pinned preview — click 👁 again, press Esc, or click the canvas to close';
+  } else {
+    const rel = $('#svpRel'); if (rel) rel.textContent = 'release to close';
+  }
+  place(); // re-clamp: the sticky footer text above can wrap and grow the card
+  srcHighlight(id);
+  return true;
+}
+function closeSrcPop() { const box = $('#srcPop'); if (box) box.hidden = true; srcStickyId = null; srcClearHi(); }
+// manual-spot plumbing: locate a creation anchor in the rendered reader text
+// and wrap it. Anchors are rich ({snip, at, path, off}): the DOM path is
+// tried first (verified against a snippet chunk), else the occurrence nearest
+// the recorded stripped offset wins — repeated boilerplate can't misroute the
+// jump. Plain-string anchors from older tags behave as before (first
+// occurrence). Matching runs in two passes: whitespace-blind exact first
+// (fresh anchors land precisely), then punctuation-blind (lowercased,
+// a–z 0–9 only) so anchors survive later text edits that add/remove #tag
+// markers, [[ ]] brackets or ** stars — without this the search shrank to a
+// generic substring and jumped to the wrong occurrence (e.g. a section
+// title). The recorded offset is mapped into each pass's own coordinate
+// space, so "nearest" stays meaningful in both.
+const spotNormWs = (s) => String(s || '').replace(/\s+/g, '');
+const spotNormAn = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+const spotCountWs = (c) => !/\s/.test(c);
+const spotCountAn = (c) => /[a-z0-9]/i.test(c);
+function spotCollect(root, norm) {
+  const nodes = [];
+  try {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let n; while ((n = walker.nextNode())) { if (n.textContent) nodes.push(n); }
+  } catch { return null; }
+  if (!nodes.length) return null;
+  const nx = norm || spotNormWs;
+  return { nodes, parts: nodes.map(n => nx(n.textContent)) };
+}
+function spotRawOff(text, k, isCounted) {
+  const cnt = isCounted || spotCountWs;
+  let c = 0;
+  for (let i = 0; i < text.length; i++) { if (cnt(text[i])) { if (c === k) return i; c++; } }
+  return text.length;
+}
+function spotHits(full, target, minLen) {
+  let t = target;
+  for (;;) {
+    const hits = [];
+    let from = 0, ix;
+    while ((ix = full.indexOf(t, from)) >= 0) { hits.push(ix); from = ix + 1; }
+    if (hits.length || t.length <= minLen) return { hits, len: t.length };
+    t = t.slice(0, Math.max(minLen, Math.floor(t.length * 0.7)));
+  }
+}
+function spotNearest(hits, wantAt) {
+  let at = hits[0], best = Math.abs(hits[0] - wantAt);
+  for (const h of hits) { const dd = Math.abs(h - wantAt); if (dd < best) { best = dd; at = h; } }
+  return at;
+}
+function spotDomRange(col, at, budget, isCounted) {
+  let acc = 0, si = -1, soff = 0;
+  for (let i = 0; i < col.parts.length; i++) {
+    if (at < acc + col.parts[i].length) { si = i; soff = at - acc; break; }
+    acc += col.parts[i].length;
+  }
+  if (si < 0) return null;
+  let ei = si, eoff = soff, left = budget;
+  for (let i = si; i < col.parts.length && left > 0; i++) {
+    const take = Math.min(col.parts[i].length - (i === si ? soff : 0), left);
+    ei = i; eoff = (i === si ? soff : 0) + take; left -= take;
+  }
+  try {
+    const range = document.createRange();
+    range.setStart(col.nodes[si], spotRawOff(col.nodes[si].textContent, soff, isCounted));
+    range.setEnd(col.nodes[ei], spotRawOff(col.nodes[ei].textContent, eoff, isCounted));
+    return range;
+  } catch { return null; }
+}
+function findSpotRange(root, entry) {
+  if (!root || !entry) return null;
+  const snip = (typeof entry === 'string') ? entry : entry.snip;
+  const norm = spotNormWs;
+  const fullSnip = norm(snip);
+  if (fullSnip.length < 2) return null;
+  if (typeof entry === 'object' && Array.isArray(entry.path)) {
+    try {
+      let n = root;
+      for (const ix of entry.path) { n = n.childNodes[ix]; if (!n) throw 0; }
+      if (n.nodeType === 3) {
+        const chunk = fullSnip.slice(0, 24);
+        const here = norm(n.textContent) + norm((n.nextSibling && n.nextSibling.textContent) || '');
+        if (chunk && here.includes(chunk)) {
+          const col = spotCollect(root);
+          if (col) {
+            const full2 = col.parts.join('');
+            let nodeAt = 0;
+            for (const nd of col.nodes) { if (nd === n) break; nodeAt += norm(nd.textContent).length; }
+            // the snip STARTS inside this node (recorded off could be deep
+            // into it), so start the range at the chunk — not at node start
+            let from = 0, ix, best = -1, bestDd = Infinity;
+            while ((ix = full2.indexOf(chunk, from)) >= 0) {
+              const dd = ix < nodeAt ? (nodeAt - ix) * 4 : ix - nodeAt;
+              if (dd < bestDd) { bestDd = dd; best = ix; }
+              from = ix + 1;
+            }
+            if (best >= 0 && bestDd < 5000) {
+              const r = spotDomRange(col, best, 80);
+              if (r) return r;
+            }
+          }
+        }
+      }
+    } catch { /* fall through to text search */ }
+  }
+  const col = spotCollect(root);
+  if (!col) return null;
+  const full = col.parts.join('');
+  const wantAt = (typeof entry === 'object' && isFinite(entry.at)) ? entry.at : 0;
+  // pass 1: the full distinctive snippet, no shrinking — exact or nothing
+  const p1 = spotHits(full, fullSnip.slice(0, 120), 120);
+  if (p1.hits.length) return spotDomRange(col, spotNearest(p1.hits, wantAt), Math.min(p1.len, 80));
+  // pass 2: punctuation-blind, so later tag-strip/merge edits can't break it
+  const colA = spotCollect(root, spotNormAn);
+  if (!colA) return null;
+  const fullA = colA.parts.join('');
+  const wantAtA = spotNormAn(full.slice(0, wantAt)).length;
+  const p2 = spotHits(fullA, spotNormAn(snip).slice(0, 120), 12);
+  if (!p2.hits.length) return null;
+  return spotDomRange(colA, spotNearest(p2.hits, wantAtA), Math.min(p2.len, 80), spotCountAn);
+}
+// wrap every text-node portion of a range in its own span — unlike
+// surroundContents this survives ranges that cross element boundaries
+// (explicit #tag pills, [[link]] spans, <strong>, <br> runs), which manual
+// spots routinely do. Ranges crossing such markup used to throw and silently
+// skip the highlight entirely. Returns the created spans (possibly empty).
+function wrapRangeText(root, range, cls, attrs) {
+  const out = [];
+  if (!root || !range || range.collapsed) return out;
+  let nodes = [];
+  try {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let n; while ((n = walker.nextNode())) nodes.push(n);
+  } catch { return out; }
+  for (const t of nodes) {
+    if (!t.parentNode || !root.contains(t)) continue;
+    try {
+      if (range.comparePoint(t, 0) > 0) continue; // range ends before this node
+      if (range.comparePoint(t, t.textContent.length) < 0) continue; // range starts after this node
+    } catch { continue; }
+    let s = 0, e = t.textContent.length;
+    if (t === range.startContainer) s = Math.min(range.startOffset, e);
+    if (t === range.endContainer) e = Math.max(Math.min(range.endOffset, t.textContent.length), s);
+    if (e <= s) continue;
+    try {
+      let target = t;
+      if (s > 0) target = target.splitText(s);
+      const len = e - s;
+      if (len < target.textContent.length) target.splitText(len);
+      const mark = document.createElement('span');
+      mark.className = cls;
+      if (attrs) for (const [k, val] of Object.entries(attrs)) mark.setAttribute(k, val);
+      target.parentNode.insertBefore(mark, target);
+      mark.appendChild(target);
+      out.push(mark);
+    } catch { /* keep going — other nodes may still wrap */ }
+  }
+  return out;
+}
+// jump the reader to a manual tag's creation spot: center + gold flash
+function scrollToManualSpot(entry) {
+  const root = $('#docBody');
+  if (!root) return false;
+  let r = null;
+  try { r = findSpotRange(root, entry); } catch { return false; }
+  if (!r || r.collapsed) return false;
+  try {
+    const token = 'sf' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+    const marks = wrapRangeText(root, r, 'spot-flash', { 'data-sflash': token });
+    if (!marks.length) throw 0;
+    try { marks[0].scrollIntoView({ block: 'center' }); } catch {}
+    setTimeout(() => {
+      try {
+        root.querySelectorAll(`[data-sflash="${token}"]`).forEach(mark => {
+          const p = mark.parentNode; if (!p) return;
+          while (mark.firstChild) p.insertBefore(mark.firstChild, mark);
+          p.removeChild(mark);
+        });
+      } catch {}
+    }, 2600);
+    return true;
+  } catch {
+    try { r.startContainer.parentElement.scrollIntoView({ block: 'center' }); return true; } catch { return false; }
+  }
+}
+// persistent gold markers on every manual-tag spot in the open reader,
+// re-applied on each render (renderDoc rebuilds the DOM, wiping old marks)
+function markManualSpots(d) {
+  const root = $('#docBody');
+  if (!root || !d || !d.manualTags) return;
+  for (const [slug, anchor] of Object.entries(d.manualTags)) {
+    if (!(d.tags || []).some(tg => vault.stripAuto(tg) === slug && String(tg).toLowerCase().startsWith('manual/'))) continue;
+    let r = null;
+    try { r = findSpotRange(root, anchor); } catch { continue; }
+    if (!r || r.collapsed) continue;
+    wrapRangeText(root, r, 'spot-mark', { 'data-mtag': slug, title: `Manual tag #${slug} — click its pill to jump here` });
+  }
+}
+// tags-pane tips: the Confirms row mirrors the skipTagConfirms pref (gold term,
+// clickable toggle so "don't ask again" is always reversible from the pane).
+function syncConfirmTip() {
+  const tx = $('#tvpConfirmTxt'), bt = $('#tvpConfirmBtn');
+  if (!tx || !bt) return;
+  if (skipTagConfirms) { tx.textContent = 'tag delete/merge confirmations are off'; bt.textContent = 'click to ask again'; }
+  else { tx.textContent = 'tag delete/merge confirmations are on'; bt.textContent = 'click to stop asking'; }
+}
+// tag helpers shared by delete + merge (stripped/lowercase names, tag-boundary regexes)
+const normDisp = (s) => String(s || '').trim().toLowerCase().replace(/^(auto|manual)\//, '');
+const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const tagUseRe = (disp) => new RegExp('(^|\\s)#' + escRe(disp) + '(?![A-Za-z0-9_\\-/])', 'gi');
+const carriersOf = (tab, disp) => ((tab && tab.docs) || []).filter(d => ((d.tags || []).some(tg => vault.stripAuto(tg) === disp)));
+// click a tag in the thematic tags pane: the origin body becomes the sun on
+// the canvas AND shows in the Active body reader, so verse and reader agree.
+// Origin = the first body carrying the tag, preferring one where the tag was
+// actually written (explicit #tag or manual M) over pure auto derivations.
+function focusTagOrigin(disp) {
+  const t = vault.tab();
+  if (!t) { toast('No open canvas — nothing to focus'); return false; }
+  const d = normDisp(disp);
+  const docs = (t.docs || []).filter(x => (x.tags || []).some(tg => vault.stripAuto(tg) === d));
+  if (!docs.length) { toast(`#${d} is not in this verse`); return false; }
+  const doc = docs.find(x => (x.tags || []).some(tg => { const l = String(tg).toLowerCase(); return vault.stripAuto(tg) === d && !l.startsWith('auto/'); })) || docs[0];
+  // a lens shows tag/theme nodes, not bodies — leave it so canvas + reader agree
+  if (lensThematic || lensTags) { lensThematic = false; thematicWhole = false; lensTags = false; syncLensBtn(); applyLens(); saveUi(); }
+  if (!uni) { toast('No universe to focus yet'); return false; }
+  claimSun(doc.id);
+  try { uni.focus(doc.id); } catch {}
+  renderDoc();
+  // manual tag with a remembered creation spot: put the reader on it exactly
+  try {
+    const spot = doc.manualTags && doc.manualTags[d];
+    if (spot) scrollToManualSpot(spot);
+  } catch {}
+  try { $('#searchPop').innerHTML = ''; $('#searchInput').value = ''; matchSet = null; } catch {}
+  if (window.innerWidth <= 760) $('#docPanel').classList.add('open');
+  toast(`#${d} → “${vault.titleOf(doc)}”`);
+  return true;
+}
+// delete a tag from the whole canvas: strip every explicit #tag from body texts,
+// recount (auto/* recompute), and suppress the auto form so title words can't
+// resurrect it. Explicit #tags are never suppressed — writing #name in any body
+// brings the tag back. Current canvas only.
+function deleteTag(disp) {
+  const t = vault.tab();
+  if (!t) { toast('No open canvas — nothing to delete from'); return 0; }
+  const d = normDisp(disp);
+  if (!/^[a-z0-9_\-/]{2,}$/.test(d)) return 0;
+  const carriers = carriersOf(t, d);
+  if (!carriers.length) { toast(`#${d} is not in this verse`); return 0; }
+  vault.suppressTag(t, d);
+  const re = tagUseRe(d);
+  for (const doc of carriers) {
+    doc.text = String(doc.text || '').replace(re, '$1');
+    // manual tags aren't in the text — drop their entries directly
+    doc.tags = (doc.tags || []).filter(tg => !(vault.isManual(tg) && vault.stripAuto(tg) === d));
+    if (doc.manualTags) delete doc.manualTags[d];
+    vault.recountDoc(doc);
+  }
+  vault.persist();
+  try { rebuild(activeId); } catch {}
+  try { if (!$('#tagPop').hidden) openTagPop(); } catch {}
+  toast(`Deleted #${d} from ${carriers.length} ${carriers.length === 1 ? 'body' : 'bodies'} — write #${d} in any body to bring it back`);
+  return carriers.length;
+}
+// merge one tag into another (simple hierarchy: the receiving tag is the
+// primary and keeps its name; the moved tag is rewritten into it everywhere
+// and does not retain its name). Docs carrying the source gain the target
+// (explicit #target, appended when the doc only had it as auto), the source's
+// explicit uses are removed, and its auto form is suppressed. Current canvas only.
+function mergeTags(src, dst) {
+  const t = vault.tab();
+  if (!t) { toast('No open canvas — nothing to merge into'); return 0; }
+  const s = normDisp(src), g = normDisp(dst);
+  if (!/^[a-z0-9_\-/]{2,}$/.test(s) || !/^[a-z0-9_\-/]{2,}$/.test(g)) return 0;
+  if (s === g) { toast('Those are the same tag — nothing to merge'); return 0; }
+  const carriers = carriersOf(t, s);
+  if (!carriers.length) { toast(`#${s} is not in this verse`); return 0; }
+  vault.suppressTag(t, s);
+  const reDel = tagUseRe(s), reRep = tagUseRe(s);
+  for (const doc of carriers) {
+    const hasDst = (doc.tags || []).some(tg => vault.stripAuto(tg) === g);
+    const hadManual = (doc.tags || []).some(tg => vault.isManual(tg) && vault.stripAuto(tg) === s);
+    // the manual source never survives a merge — its manual-ness moves to the target
+    doc.tags = (doc.tags || []).filter(tg => !(vault.isManual(tg) && vault.stripAuto(tg) === s));
+    if (doc.manualTags && doc.manualTags[s]) { // carry the spot anchor onto the target name
+      if (!doc.manualTags[g]) doc.manualTags[g] = doc.manualTags[s];
+      delete doc.manualTags[s];
+    }
+    if (hasDst) {
+      doc.text = String(doc.text || '').replace(reDel, '$1'); // already grounded in target: just drop the source
+    } else {
+      let n = 0;
+      doc.text = String(doc.text || '').replace(reRep, (...a) => { n++; return a[1] + '#' + g; });
+      if (!n && hadManual) {
+        // source lived only as a manual tag: keep it manual on the target side
+        if (!doc.tags.some(tg => vault.stripAuto(tg) === g)) doc.tags.push('manual/' + g);
+      } else if (!n) doc.text = String(doc.text || '').replace(/\s+$/, '') + '\n#' + g; // auto-only source: ground the target explicitly
+    }
+    vault.recountDoc(doc);
+  }
+  vault.persist();
+  try { rebuild(activeId); } catch {}
+  try { if (!$('#tagPop').hidden) openTagPop(); } catch {}
+  toast(`Merged #${s} into #${g} — ${carriers.length} ${carriers.length === 1 ? 'body' : 'bodies'} now carry #${g}`);
+  return carriers.length;
+}
+async function deleteTagUI(disp) {
+  const t = vault.tab();
+  if (!t) return;
+  const d = normDisp(disp);
+  const carriers = carriersOf(t, d);
+  if (!carriers.length) { toast(`#${d} is not in this verse`); return; }
+  const n = carriers.length;
+  if (!skipTagConfirms) {
+    const sk = { label: "Don't ask again for tag deletes and merges", checked: skipTagConfirms };
+    const ok = await confirmDlg(
+      `Delete #${d}? Removes it from ${n} ${n === 1 ? 'body' : 'bodies'} on “${t.name}” (explicit uses are stripped from the text; auto-tags with that name stay suppressed). Write #${d} in any body to bring it back.`,
+      'Delete tag', { title: `Delete #${d}`, skip: sk });
+    if (ok && sk.checked !== skipTagConfirms) { skipTagConfirms = sk.checked; saveUi(); try { syncConfirmTip(); } catch {} }
+    if (!ok) return;
+  }
+  deleteTag(d);
+}
+async function mergeTagsUI(src, dst) {
+  const t = vault.tab();
+  if (!t) return;
+  const s = normDisp(src), g = normDisp(dst);
+  if (s === g || !s || !g) return;
+  const carriers = carriersOf(t, s);
+  if (!carriers.length) { toast(`#${s} is not in this verse`); return; }
+  if (!skipTagConfirms) {
+    const sk = { label: "Don't ask again for tag deletes and merges", checked: skipTagConfirms };
+    const ok = await confirmDlg(
+      `Merge #${s} into #${g}? ${carriers.length} ${carriers.length === 1 ? 'body carries' : 'bodies carry'} #${s} — they will carry #${g} instead, and #${s} disappears (its name is suppressed on “${t.name}”). #${g} keeps its name.`,
+      'Merge tags', { title: `Merge #${s} → #${g}`, skip: sk });
+    if (ok && sk.checked !== skipTagConfirms) { skipTagConfirms = sk.checked; saveUi(); try { syncConfirmTip(); } catch {} }
+    if (!ok) return;
+  }
+  mergeTags(s, g);
+}
 // tags pop-out geometry: null = flex-centered; dragged = fixed at the stored point (clamped on-screen)
 function applyTvpGeom() {
   const box = $('#tagPop'); if (!box) return;
@@ -1628,17 +2250,17 @@ function renderGeneral() {
       [...themes].sort((a, b) => b.weight - a.weight || (a.id < b.id ? -1 : 1))
         .map(th => `<button class="bl-row" data-open="${th.id}">◈ ${esc(th.label)}<span>${esc((th.terms || []).slice(0, 3).join(' · '))}</span></button>`).join('');
   } else if (lensTags) {
-    // tags-verse general state: the lens's tag bodies (regular docs aren't bodies here)
+    // tags-view general state: the lens's tag bodies (regular docs aren't bodies here)
     const recs = tagRecords.get(vault.activeTabId) || [];
     const grounded = recs.reduce((s, r) => s + ((r.members && r.members.length) || 0), 0);
     setKicker('◈ TAGS — NO ACTIVE TAG');
     const sg = $('#docShared');
     if (sg) sg.innerHTML = '';
-    $('#docTitle').textContent = '◈ Tags verse — shared tags as bodies';
+    $('#docTitle').textContent = '◈ Tags view — shared tags as bodies';
     $('#docMeta').textContent = `${recs.length} tags · ${grounded} grounded bodies · click a tag to make it the center`;
     $('#docTags').innerHTML = '';
     $('#docBody').innerHTML = '<span style="color:var(--mut)">One body per tag, webbed by the bodies they share. Click a tag to make it the gravitational center; click empty space to release the center — the canvas middle holds gravity in this state.</span>';
-    $('#docLinks').innerHTML = `<div class="bl-head">TAGS — ${recs.length} <button class="viewall" data-tvexit="1" title="Leave the tags verse">Exit tags verse</button></div>` +
+    $('#docLinks').innerHTML = `<div class="bl-head">TAGS — ${recs.length} <button class="viewall" data-tvexit="1" title="Leave the tags view">Exit tags view</button></div>` +
       [...recs].sort((a, b) => b.members.length - a.members.length || (a.id < b.id ? -1 : 1))
         .map(r => `<button class="bl-row" data-open="${r.id}">◈ ${esc(r.label)}<span>grounds ${r.members.length} ${r.members.length === 1 ? 'body' : 'bodies'}</span></button>`).join('');
   } else {
@@ -1708,11 +2330,17 @@ function renderDoc() {
   $('#docMeta').innerHTML = `${d.words} words · mass ${(m ? (m.trueMass ?? m.mass) : 0).toFixed(1)} <span class="sg-help" data-sghelp tabindex="0">?</span> · ${d.links.length} outgoing refs<div class="sg-help-pop" role="note" data-help-pop="mass"><span class="help-text" data-help-text="mass">${esc(helpTexts.mass)}</span><button class="help-edit-btn" data-help-edit="mass" title="Edit this explanation">✎ edit</button></div>`;
   $('#docTags').innerHTML = d.tags.map(t => {
     const disp = vault.stripAuto(t);
-    return `<button class="tagpill${t.startsWith('auto/') ? ' auto' : ''}" data-tag="${esc(disp)}">#${esc(disp)}</button>`;
+    const low = String(t).toLowerCase();
+    const cls = low.startsWith('auto/') ? ' auto' : (low.startsWith('manual/') ? ' manual' : '');
+    const mark = low.startsWith('manual/') ? '<span class="mmark" title="Manually created tag">M</span>' : '';
+    const tip = low.startsWith('manual/') ? `Manually created tag — click to search` : `#${esc(disp)} — click to search`;
+    return `<button class="tagpill${cls}" data-tag="${esc(disp)}" title="${tip}">#${esc(disp)}${mark}</button>`;
   }).join('') +
+    `<button class="tagpill addtagbtn" data-addtag="${d.id}" title="Declare what this body belongs with: writes a #tag into its text. Bodies sharing it pull together, share weight, match in search, and form one Tags-view node — and unlike auto tags, it always counts. E.g. #thesis_core">+ #tag</button>` +
     `<button class="tagpill notesbtn" data-notes="${d.id}" title="Sticky note for this body (140 characters max)">notes</button>`;
   $('#docBody').innerHTML = renderBody(d.text, d.images);
   hydrateImages($('#docBody'), d.images);
+  try { markManualSpots(d); } catch {} // persistent gold markers on manual-tag spots
   // shared ground -> top hover spillover menu (up to 12 tethers, scrolls)
   const res = edgeInfo.filter(e => e.kind === 'topic' && (e.source === d.id || e.target === d.id)).slice(0, 12);
   const sg = $('#docShared');
@@ -1790,7 +2418,7 @@ function renderThemeDoc(th) {
 }
 
 // reader panel for an active tag body: the tag plus the member bodies grounding it.
-// Member rows reuse data-open, so clicking one leaves the tags verse for that doc.
+// Member rows reuse data-open, so clicking one leaves the tags view for that doc.
 function renderTagDoc(tg) {
   const node = uni ? uni.byId.get(tg.id) : null;
   $('#docTitle').textContent = '◈ ' + tg.label;
@@ -1833,7 +2461,7 @@ function renderTagDoc(tg) {
         `<button class="bl-row" data-open="${r.oid}">◈ ${esc(r.label)}<span>${esc(r.span)}</span></button>`).join('') : '<div class="sg-empty">No shared ground.</div>') + `</div>`;
   }
   const tDocRows = tg.members.map(id => vault.byIdAnywhere(id)).filter(Boolean);
-  $('#docLinks').innerHTML = (tDocRows.length ? `<div class="bl-head">GROUNDED BODIES — ${tDocRows.length} <button class="viewall" data-tvexit="1" title="Leave the tags verse">Exit tags verse</button></div>` : '') +
+  $('#docLinks').innerHTML = (tDocRows.length ? `<div class="bl-head">GROUNDED BODIES — ${tDocRows.length} <button class="viewall" data-tvexit="1" title="Leave the tags view">Exit tags view</button></div>` : '') +
     tDocRows.map(o => `<button class="bl-row" data-open="${o.id}">◉ ${esc(vault.titleOf(o))}<span>${o.words} words</span></button>`).join('');
   const tda = $('#docActions');
   if (tda) tda.hidden = true; // tags are derived — nothing to remove or delete
@@ -1899,6 +2527,15 @@ async function purgeImages() {
     for (const t of (vault.tabs || [])) grab(t.docs);
     for (const c of (loadClosed() || [])) grab(c.docs);
     for (const k of await imgKeys()) if (!used.has(k)) await imgDelete(k);
+    // original files nobody references anymore (copies share the key, the
+    // recently-closed stash counts as referenced — same scan as pictures).
+    try {
+      const usedOrig = new Set();
+      const grabOrig = (docs) => { for (const d of (docs || [])) if (d && d.origKey) usedOrig.add(d.origKey); };
+      for (const t of (vault.tabs || [])) grabOrig(t.docs);
+      for (const c of (loadClosed() || [])) grabOrig(c.docs);
+      for (const k of await origKeys()) if (!usedOrig.has(k)) await origDelete(k);
+    } catch (e) { console.warn('original purge skipped', (e && e.message) || e); }
   } catch (e) { console.warn('image purge skipped', (e && e.message) || e); }
 }
 
@@ -2490,6 +3127,24 @@ async function ingestFiles(files, ctx) {
       }
       const cn = cleanName(f);
       const d = vault.addFile(cn.replace(/\.(markdown)$/i, '.md'), '# ' + cn.replace(/\.[^.]+$/, '') + '\n\n' + fullText, imgMeta);
+      // keep the original bytes (IndexedDB sidecar) so Download returns the
+      // real file. Text import never depends on this — a store failure just
+      // means this body downloads as extracted text (.txt).
+      try {
+        if (f && typeof f.size === 'number' && f.size > 0 && f.size <= 100 * 1024 * 1024) {
+          const okey = 'orig_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+          await origPut({ key: okey, blob: f, name: d.name, type: (f && f.type) || '', at: Date.now() });
+          d.origKey = okey;
+        } else if (f && f.size > 100 * 1024 * 1024) console.warn('original too large to keep (>100MB) — text still imports', d.name);
+      } catch (e) { console.warn('keeping original failed for ' + d.name + ' — text still imports', (e && e.message) || e); }
+      // vault-folder mirror (desktop, linked only): the original as a real
+      // file. Best-effort by design — the internal stores above are the truth.
+      try {
+        vaultFs.mirrorBytes(vaultFs.fileNameFor(d.name), f).then((s) => {
+          if (s === 'failed' || s === 'missing') toast(`Original of “${d.name}” is safe in-app, but the folder mirror missed it`);
+        });
+      } catch {}
+      vaultFs.queueVaultJsonMirror();
       if (ocrRan) d.ocrDone = true; // picture words already in the text — nothing to backfill
       newIds.push(d.id);
       n++;
@@ -2718,8 +3373,33 @@ function boot() {
     e.stopPropagation(); e.preventDefault();
     if (selSet.size) removeIdsFromCanvas([...selSet]);
   });
+  // quick right-click on a doc body: the same focus + menu the native path gave
+  const srcQuickClick = (x, y) => {
+    const r = cv.getBoundingClientRect();
+    const sx = x - r.left, sy = y - r.top;
+    const noteId = (viewNotesAll || viewNotesSun) ? ren.noteHit(sx, sy) : null;
+    const n2 = uni ? ren.pick(uni.nodes, sx, sy) : null;
+    if (noteId && vault.byId(noteId)) openNoteEditor(noteId, x, y);
+    else if (n2 && uni.focus(n2.id)) {
+      claimSun(n2.id);
+      renderDoc();
+      const nd = vault.byId(n2.id);
+      toast((nd ? vault.titleOf(nd) : n2.label) + ' is now the sun');
+    }
+    if (n2 && selSet.size && !selSet.has(n2.id)) { selSet.clear(); hideBoxSel(); }
+    try { openCtx(x, y, n2 ? n2.id : null); } catch (err) { toast('Menu failed: ' + ((err && err.message) || err)); }
+    srcSuppress = true; // swallow the native duplicate on platforms that fire it on release
+    setProbe(probePress + ' → menu');
+  };
   const endDrag = (e) => {
     if (e && e.isPrimary === false) return;
+    if (e && e.button === 2 && srcHold) {
+      const h = srcHold; srcHold = null;
+      try { clearTimeout(h.timer); } catch {}
+      if (h.fired || h.moved) { closeSrcPop(); srcSuppress = true; setProbe(probePress + (h.fired ? ' → preview closed' : ' → pan end')); return; } // release ends the preview (or the pan): no menu, no focus change
+      srcQuickClick(e.clientX, e.clientY);
+      return;
+    }
     if (!uni) {
       dragMode = null; downNode = null; marquee.hidden = true; marqueeDel.hidden = true; cv.style.cursor = 'grab';
       return;
@@ -2763,6 +3443,7 @@ function boot() {
     }
     const quick = performance.now() - downAt < 500;
     if (!moved && quick) {
+      setProbe(probePress + ' → click path (button ' + (e && e.button) + ')');
       const r = cv.getBoundingClientRect();
       const sx = e.clientX - r.left, sy = e.clientY - r.top;
       const n = ren.pick(uni.nodes, sx, sy);
@@ -2797,6 +3478,42 @@ function boot() {
   };
   cv.addEventListener('pointerdown', (e) => {
     if (e.isPrimary === false) return;
+    try {
+      const pr = cv.getBoundingClientRect();
+      const ph = uni ? ren.pick(uni.nodes, e.clientX - pr.left, e.clientY - pr.top) : null;
+      probePress = `press b${e.button}${ph ? ' @' + String(ph.id || '').slice(0, 16) : ' empty'}`;
+    } catch { probePress = `press b${e.button}`; }
+    setProbe(probePress + ' …');
+    if (srcStickyId) closeSrcPop(); // pinned preview: any fresh canvas press dismisses it
+    srcSuppress = false; // stale menu-swallows die on the next press
+    if (e.button === 2 && uni) {
+      // right-hold candidate: any body. Docs get the source preview; theme/tag
+      // bodies (no source text) get their info menu instead — nothing is dead.
+      const r0 = cv.getBoundingClientRect();
+      const hit = ren.pick(uni.nodes, e.clientX - r0.left, e.clientY - r0.top);
+      if (hit && !(selSet.size && !selSet.has(hit.id))) {
+        srcHold = { id: hit.id, x: e.clientX, y: e.clientY, moved: false, fired: false, timer: 0 };
+        srcHold.timer = setTimeout(() => {
+          if (!srcHold) return;
+          // the preview is a DOM pop-out pinned at the press point, so it
+          // works mid-orbit too — the body may drift on underneath, harmlessly.
+          const hd = vault.byId(srcHold.id);
+          if (hd && !lensThematic && !thematicWhole && !lensTags) {
+            srcHold.fired = true;
+            try { openSrcPop(srcHold.id, srcHold.x, srcHold.y); setProbe(probePress + ' → preview open'); }
+            catch (err) { toast('Preview failed: ' + ((err && err.message) || err)); }
+          } else {
+            // theme/tag body (or a lens view): a hold raises their menu instead.
+            // The menu must survive release, so stand the hold down first.
+            const mx = srcHold.x, my = srcHold.y, mid = srcHold.id;
+            try { clearTimeout(srcHold.timer); } catch {}
+            srcHold = null; srcSuppress = true;
+            try { openCtx(mx, my, mid); setProbe(probePress + ' → menu'); }
+            catch (err) { toast('Menu failed: ' + ((err && err.message) || err)); }
+          }
+        }, SRC_HOLD_MS);
+      } else srcHold = null;
+    } else srcHold = null;
     if (e.shiftKey && e.button === 0) {
       // shift+left-drag = marquee box-select (plain drag still pans, body-drag still rotates)
       dragMode = 'select';
@@ -2819,10 +3536,20 @@ function boot() {
     downAt = performance.now(); moved = false;
     lx = downX = e.clientX; ly = downY = e.clientY;
     cv.style.cursor = downNode ? 'pointer' : 'grab';
-    try { cv.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+    // capture the primary button only: capturing a right-button press makes
+    // Firefox fire pointercancel, which wipes the hold record — the release
+    // then falls through to plain left-click handling (right ≡ left symptom).
+    if (e.button === 0) { try { cv.setPointerCapture(e.pointerId); } catch { /* synthetic */ } }
   });
   cv.addEventListener('pointermove', (e) => {
     if (e.isPrimary === false) return;
+    if (srcHold && Math.hypot(e.clientX - srcHold.x, e.clientY - srcHold.y) > 6) {
+      // became a drag, not a hold: stand down (keep the hold record so the
+      // release swallows the menu instead of popping one after a pan)
+      srcHold.moved = true;
+      try { clearTimeout(srcHold.timer); } catch {}
+      if (srcHold.fired) closeSrcPop();
+    }
     if (e.buttons) {
       if (dragMode === 'select') {
         // stretch the box; only counts as a drag past the click threshold
@@ -2873,7 +3600,23 @@ function boot() {
     }
   });
   cv.addEventListener('pointerup', endDrag);
-  cv.addEventListener('pointercancel', () => { if (downNode) downNode._held = false; dragMode = null; downNode = null; marquee.hidden = true; marqueeDel.hidden = true; cv.style.cursor = 'grab'; });
+  cv.addEventListener('pointercancel', () => { if (downNode) downNode._held = false; dragMode = null; downNode = null; marquee.hidden = true; marqueeDel.hidden = true; cv.style.cursor = 'grab'; if (srcHold) { try { clearTimeout(srcHold.timer); } catch {} srcHold = null; } closeSrcPop(); setProbe(probePress + ' → CANCELLED by browser'); });
+  document.addEventListener('pointerup', (e) => {
+    // right-button release outside the canvas (right presses are never
+    // capture-held, so off-canvas right releases land here): mirror the
+    // on-canvas release instead of falling into left-click handling.
+    if (e && e.button === 2 && srcHold) {
+      const h = srcHold; srcHold = null;
+      try { clearTimeout(h.timer); } catch {}
+      if (h.fired || h.moved) { closeSrcPop(); srcSuppress = true; setProbe(probePress + (h.fired ? ' → preview closed' : ' → pan end')); }
+      else srcQuickClick(e.clientX, e.clientY);
+    }
+    // a right-drag released off-canvas never saw endDrag: don't strand it.
+    if (e && e.button === 2 && (dragMode || downNode)) {
+      dragMode = null; if (downNode) downNode._held = false; downNode = null;
+      try { cv.style.cursor = 'grab'; } catch {}
+    }
+  });
   cv.addEventListener('dblclick', () => {
     // double-click never touches the zoom: it just steers the universe center
     // back onto the visible center (a full reset snapped dist to 620 and
@@ -2905,7 +3648,7 @@ function boot() {
       themeRows = themes
         .filter(th => th.label.toLowerCase().includes(q) || th.terms.some(t => t.includes(q) || q.includes(t)))
         .map(th => `<button data-open="${th.id}"><b>◈ ${esc(th.label)}</b><span>theme · grounds ${th.members.length} ${th.members.length === 1 ? 'body' : 'bodies'}</span></button>`).join('');
-    } else if (lensTags) { // tags-verse universe: light up tags grounding the hits
+    } else if (lensTags) { // tags-view universe: light up tags grounding the hits
       const recs = tagRecords.get(vault.activeTabId) || [];
       for (const r of recs) {
         if (r.members.some(id => matchSet.has(id))) matchSet.add(r.id);
@@ -2937,6 +3680,9 @@ function boot() {
     }
     const op = e.target.closest('[data-openproj]');
     if (op) { e.stopPropagation(); toggleOpenProjMenu(); return; }
+    // view-modes strip under the top tabs: Main / Thematic / Tag
+    const vm = e.target.closest('[data-vm]');
+    if (vm) { e.stopPropagation(); goViewMode(vm.dataset.vm); return; }
     const opPick = e.target.closest('[data-openpick]');
     if (opPick) { e.stopPropagation(); hideOpenProjMenu(); switchCanvas(opPick.dataset.openpick); return; }
     const opRe = e.target.closest('[data-reopen]');
@@ -2948,7 +3694,7 @@ function boot() {
       try { renderGeneral(); } catch {}
       return;
     }
-    // tags-verse pop-out controls (the pills inside keep data-tag, so they
+    // tags-view pop-out controls (the pills inside keep data-tag, so they
     // fall through to the search handler below)
     const tvx = e.target.closest('[data-tvclose]');
     if (tvx) { e.stopPropagation(); closeTagPop(); return; }
@@ -2959,6 +3705,18 @@ function boot() {
     if (tvv) { e.stopPropagation(); setTagsVerse(!lensTags); return; }
     const tve = e.target.closest('[data-tvexit]');
     if (tve) { e.stopPropagation(); setTagsVerse(false); return; }
+    // tags-pane tips: the Confirms row toggles the delete/merge confirmations
+    const tcf = e.target.closest('[data-tvconfirms]');
+    if (tcf) {
+      e.stopPropagation();
+      skipTagConfirms = !skipTagConfirms;
+      saveUi();
+      try { syncConfirmTip(); } catch {}
+      toast(skipTagConfirms
+        ? 'Tag confirmations off — deletes and merges run immediately (toggle back anytime in the tags pane tips)'
+        : 'Tag confirmations on — deletes and merges ask first');
+      return;
+    }
     const o = e.target.closest('[data-open]');
     if (o) {
       if (!vault.tab() || !uni) {
@@ -3013,6 +3771,23 @@ function boot() {
     }
     const nb = e.target.closest('[data-notes]');
     if (nb) { openNotePop(nb.dataset.notes); return; }
+    // reader "+ #tag": write an explicit (hand-written, in-prose) tag — the
+    // in-app counterpart to typing #tag in an imported file
+    const ab = e.target.closest('[data-addtag]');
+    if (ab) { e.stopPropagation(); openAddTagEditor(ab.dataset.addtag); return; }
+    // tags pop-out delete: the × inside a pill (must run BEFORE the data-tag
+    // search handler below, since the × lives inside the pill's data-tag button)
+    const td = e.target.closest('[data-tdel]');
+    if (td) { e.stopPropagation(); deleteTagUI(td.dataset.tdel); return; }
+    // tags-pane pills: click opens the tag's origin body (canvas suns it AND
+    // the reader shows it). Drag still merges, × still deletes, and the click
+    // landing right after a merge drop is the drop itself — ignored here.
+    const tp = e.target.closest('[data-tpill]');
+    if (tp) {
+      e.stopPropagation();
+      if (Date.now() - tvpMergeAt > 800) focusTagOrigin(tp.dataset.tpill);
+      return;
+    }
     const t = e.target.closest('[data-tag]');
     if (t) { inp.value = '#' + t.dataset.tag; inp.dispatchEvent(new Event('input')); }
   });
@@ -3020,6 +3795,9 @@ function boot() {
   $('#docBody').addEventListener('click', (e) => {
     const im = e.target && e.target.closest ? e.target.closest('img[data-full]') : null;
     if (!im) return;
+    // an open preview/menu eats this click instead of zooming underneath (or
+    // over) it — click the image again for the zoom once they are dismissed.
+    if (!$('#srcPop').hidden || !$('#ctxMenu').hidden) { closeSrcPop(); try { $('#ctxMenu').hidden = true; } catch {} return; }
     const L = $('#imgLight');
     if (!L) return;
     const big = L.querySelector('img');
@@ -3027,7 +3805,56 @@ function boot() {
     L.hidden = false;
   });
   { const L0 = $('#imgLight'); if (L0 && !L0.dataset.wired) { L0.dataset.wired = '1'; L0.addEventListener('click', () => { L0.hidden = true; }); } }
-  // Esc closes the tags-verse pop-out and the glossary pane (never while typing in a field)
+  // reader text selection: right-click inside the Active body text offers
+  // tagging the selection as a manual tag (gold M). Anywhere else — or with
+  // no selection — the browser keeps its normal menu.
+  $('#docBody').addEventListener('contextmenu', (e) => {
+    const sel = window.getSelection();
+    const raw = sel ? String(sel.toString() || '') : '';
+    if (!sel || sel.isCollapsed || !raw.trim() || !$('#docBody').contains(sel.anchorNode)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    // snap the selection out to whole words so tags never start/end mid-word
+    try {
+      if (sel.anchorNode && sel.anchorNode === sel.focusNode && sel.anchorNode.nodeType === 3) {
+        const t = sel.anchorNode.textContent || '';
+        let s = Math.min(sel.anchorOffset, sel.focusOffset), ex = Math.max(sel.anchorOffset, sel.focusOffset);
+        while (s > 0 && /[a-z0-9]/i.test(t[s - 1])) s--;
+        while (ex < t.length && /[a-z0-9]/i.test(t[ex])) ex++;
+        const nr = document.createRange();
+        nr.setStart(sel.anchorNode, s); nr.setEnd(sel.anchorNode, ex);
+        sel.removeAllRanges(); sel.addRange(nr);
+      }
+    } catch {}
+    const snapped = String(sel.toString() || '');
+    const useRaw = snapped.trim() ? snapped : raw;
+    const snippet = useRaw.trim().replace(/\s+/g, ' ').slice(0, 60);
+    // anchor the creation spot: stripped offset + DOM path of the snapped
+    // selection start, so the later jump lands on THIS block, not just any
+    // block with the same words
+    const root = $('#docBody');
+    let anchor = useRaw.trim().replace(/\s+/g, ' ').slice(0, 200);
+    try {
+      const an = sel.anchorNode;
+      if (an && root.contains(an)) {
+        const path = [];
+        let n = an, ok = true;
+        while (n && n !== root) { const p = n.parentNode; if (!p) { ok = false; break; } path.unshift([...p.childNodes].indexOf(n)); n = p; }
+        if (ok && n === root) {
+          const norm0 = (s) => String(s || '').replace(/\s+/g, '');
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+          let at = 0, tn;
+          while ((tn = walker.nextNode())) {
+            if (tn === an) { at += norm0(tn.textContent.slice(0, sel.anchorOffset)).length; break; }
+            at += norm0(tn.textContent).length;
+          }
+          anchor = { snip: anchor, at, path, off: sel.anchorOffset };
+        }
+      }
+    } catch {}
+    openSelTagMenu(e.clientX, e.clientY, snippet, slugTag(useRaw), anchor);
+  });
+  // Esc closes the tags-view pop-out and the glossary pane (never while typing in a field)
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')) {
       const tp = $('#tagPop');
@@ -3039,6 +3866,53 @@ function boot() {
     if (!vault.tabs.length) { await noProjectPopup(); return; }
     pickFolder();
   };
+  // tags-merge drag and drop: pills are draggable; dropping one pill onto
+  // another merges the dragged tag into the receiving (primary) tag. The drop
+  // target glows while hovered; dropping asks once, then rewrites every body.
+  // Clicks (no drag) focus the tag's origin body (sun + reader).
+  try {
+    const tvpList = document.querySelector('#tagPop .tvp-tags');
+    if (tvpList && !tvpList.dataset.mergeWired) {
+      tvpList.dataset.mergeWired = '1';
+      tvpList.addEventListener('dragstart', (e) => {
+        const p = e.target && e.target.closest ? e.target.closest('[data-tpill]') : null;
+        if (!p) return;
+        tvpDragTag = p.dataset.tpill;
+        try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', tvpDragTag); } catch {}
+        p.classList.add('drag-src');
+      });
+      tvpList.addEventListener('dragend', () => {
+        tvpDragTag = null;
+        tvpList.querySelectorAll('.drag-src, .drop-hi').forEach(el => el.classList.remove('drag-src', 'drop-hi'));
+      });
+      tvpList.addEventListener('dragover', (e) => {
+        const p = e.target && e.target.closest ? e.target.closest('[data-tpill]') : null;
+        if (!p || !tvpDragTag || p.dataset.tpill === tvpDragTag) return;
+        e.preventDefault();
+        e.stopPropagation(); // keep the window file-drop UI out of tag merges
+        try { e.dataTransfer.dropEffect = 'move'; } catch {}
+        tvpList.querySelectorAll('.drop-hi').forEach(el => { if (el !== p) el.classList.remove('drop-hi'); });
+        p.classList.add('drop-hi');
+      });
+      // our drag in progress: don't let it bubble to the window file-intake
+      // handlers (they would paint the canvas drop outline for a tag merge)
+      tvpList.addEventListener('dragenter', (e) => {
+        if (!tvpDragTag) return;
+        e.stopPropagation();
+      });
+      tvpList.addEventListener('drop', (e) => {
+        const p = e.target && e.target.closest ? e.target.closest('[data-tpill]') : null;
+        if (!p || !tvpDragTag) return;
+        e.preventDefault();
+        e.stopPropagation(); // a tag merge is not a file drop: the window
+        // intake handler must not see it (it toasts "Nothing was dropped")
+        const src = tvpDragTag, dst = p.dataset.tpill;
+        tvpDragTag = null;
+        tvpList.querySelectorAll('.drag-src, .drop-hi').forEach(el => el.classList.remove('drag-src', 'drop-hi'));
+        if (src && dst && src !== dst) { tvpMergeAt = Date.now(); mergeTagsUI(src, dst); }
+      });
+    }
+  } catch {}
   $('#fileBtn').onclick = async () => {
     if (!vault.tabs.length) { await noProjectPopup(); return; }
     setLog('Waiting for file selection…'); toast('Choose .docx/.pdf/.md files…'); try { $('#fileInput').click(); } catch (e) { setLog('Picker blocked by the browser — try drag-drop instead'); }
@@ -3056,6 +3930,86 @@ function boot() {
     setLog('Picked folder (' + fs.length + ' files) — scanning…');
     ingestFiles(fs, { where: 'folder-picker' });
   };
+  // vault folder (desktop installers): link a real folder on this computer;
+  // every upload's original is mirrored there as a genuine file. Web builds
+  // and unlinked installs show the row disabled — nothing else changes.
+  async function renderVaultBox() {
+    const st = $('#vaultStatus'), link = $('#vaultLinkBtn'), open = $('#vaultOpenBtn'), un = $('#vaultUnlinkBtn');
+    if (!st || !link) return;
+    if (!vaultFs.isVaultBackendAvailable()) {
+      st.textContent = 'Vault folder: desktop app only';
+      link.hidden = false; link.disabled = true;
+      link.textContent = 'Link folder…';
+      link.title = 'Linking a vault folder is available in the installed desktop app (Windows .exe/.msi, Mac .dmg) — the web build keeps everything in this browser instead.';
+      if (open) open.hidden = true;
+      if (un) un.hidden = true;
+      return;
+    }
+    let chk = { linked: false };
+    try { chk = await vaultFs.checkLinked(); } catch { chk = { linked: false }; }
+    if (!chk.linked) {
+      st.textContent = 'Vault folder: not linked';
+      st.title = 'Link a folder once — every upload’s original is mirrored there as a real file.';
+      link.hidden = false; link.disabled = false; link.textContent = 'Link folder…';
+      link.title = 'Pick a folder on this computer. Every upload’s original is mirrored there as a real file.';
+      if (open) open.hidden = true;
+      if (un) un.hidden = true;
+      return;
+    }
+    const tail = String(chk.dir || '').split('/').pop() || chk.dir;
+    st.textContent = chk.ok ? `Vault folder: ${tail}` : `Vault folder missing: ${tail} (drive unplugged?)`;
+    st.title = chk.dir || '';
+    link.hidden = false; link.disabled = false; link.textContent = 'Change…';
+    link.title = 'Link a different folder (files already mirrored stay where they are)';
+    if (open) open.hidden = false;
+    if (un) un.hidden = false;
+  }
+  const vlb = $('#vaultLinkBtn');
+  if (vlb) vlb.onclick = async () => {
+    if (!vaultFs.isVaultBackendAvailable()) { toast('Vault folders live in the installed desktop app — the web build keeps everything in this browser'); return; }
+    vlb.disabled = true;
+    try {
+      const r = await vaultFs.linkVaultDir();
+      if (r.dir) {
+        renderVaultBox();
+        // first-link migration: drain the internal originals into the folder.
+        const all = vault.tabs.flatMap(t => t.docs || []);
+        const withOrig = all.filter(d => d.origKey);
+        if (!withOrig.length) { vaultFs.queueVaultJsonMirror(); renderVaultBox(); toast('Vault folder linked — new uploads will mirror here'); return; }
+        toast(`Vault folder linked — mirroring ${withOrig.length} original${withOrig.length === 1 ? '' : 's'}…`);
+        let n = 0;
+        for (const d of withOrig) {
+          try {
+            const rec = await origGet(d.origKey);
+            if (rec && rec.blob && rec.blob.size > 0) {
+              const s = await vaultFs.mirrorBytes(vaultFs.fileNameFor(d.name), rec.blob);
+              if (s === 'wrote' || s === 'exists') n++;
+            }
+          } catch {}
+        }
+        vaultFs.queueVaultJsonMirror();
+        renderVaultBox();
+        toast(n === withOrig.length ? `Vault folder ready — ${n} original${n === 1 ? '' : 's'} mirrored` : `Vault folder linked — ${n}/${withOrig.length} mirrored (the rest stay safe in-app)`);
+      } else if (r.error && r.error !== 'desktop-only') {
+        if (r.error === 'not-writable') toast('That folder is not writable — pick another');
+        else if (r.error !== undefined) toast('Could not link that folder');
+      }
+    } finally { vlb.disabled = false; renderVaultBox(); }
+  };
+  const vob = $('#vaultOpenBtn');
+  if (vob) vob.onclick = async () => {
+    const r = await vaultFs.openFolder().catch(() => 'failed');
+    if (r !== 'ok') toast('Could not open the vault folder (unlinked or drive missing?)');
+  };
+  const vub = $('#vaultUnlinkBtn');
+  if (vub) vub.onclick = async () => {
+    if (!await confirmDlg('Stop mirroring to the vault folder? Everything already written stays on disk; the universe is unaffected.', 'Unlink')) return;
+    vaultFs.unlinkVaultDir();
+    renderVaultBox();
+    toast('Vault folder unlinked — mirroring stopped');
+  };
+  renderVaultBox();
+  vaultFs.queueVaultJsonMirror();
   document.addEventListener('keydown', (e) => {
     // global "/" focuses search — but never when typing in a field (help editor, rename prompt inputs, etc.)
     if (e.key === '/' && document.activeElement !== inp && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')) { e.preventDefault(); inp.focus(); }
@@ -3207,18 +4161,37 @@ function boot() {
         return;
       }
       const d = vault.byId(id);
-      if (!d) return;
+      if (!d) {
+        // tag body (tags view): head + a jump to the Tags pane. Grounded
+        // bodies already list in the reader when the tag is focused.
+        const rec = (tagRecords.get(vault.activeTabId) || []).find(r => r.id === id);
+        if (rec) {
+          const head = document.createElement('div');
+          head.className = 'ctx-head';
+          head.textContent = `#${rec.label || id} — ${rec.members.length} ${rec.members.length === 1 ? 'body' : 'bodies'}`;
+          ctx.appendChild(head);
+          ctx.appendChild(ctxItem('☰  Show in Tags pane', false, () => openTagPop()));
+          ctx.hidden = false;
+          const w = Math.min(280, ctx.offsetWidth || 220), h = ctx.offsetHeight || 200;
+          ctx.style.left = Math.min(x, window.innerWidth - w - 8) + 'px';
+          ctx.style.top = Math.min(y, window.innerHeight - h - 8) + 'px';
+        }
+        return;
+      }
       const head = document.createElement('div');
       head.className = 'ctx-head';
       head.textContent = '◉ ' + vault.titleOf(d);
       ctx.appendChild(head);
+      ctx.appendChild(ctxItem('👁  Preview source', false, () => { if (openSrcPop(id, x, y, true)) srcStickyId = id; }));
       ctx.appendChild(ctxItem('☉  Make sun (open)', false, () => focusBody(id)));
       ctx.appendChild(ctxItem('✎  Rename…', false, () => {
         const cur = vault.titleOf(d);
         const next = prompt('Rename body:', cur);
         if (next !== null && next.trim() && next.trim() !== cur) {
+          const oldName = d.name;
           vault.rename(id, next.trim());
           rebuild(activeId);
+          try { const dd = vault.byId(id); if (dd) vaultFs.renameMirrored(oldName, dd.name); } catch {}
           toast(`Renamed to “${vault.titleOf(vault.byId(id))}”`);
         }
       }));
@@ -3227,15 +4200,43 @@ function boot() {
         try { await navigator.clipboard.writeText(d.text); toast('Body text copied'); }
         catch { toast('Copy blocked by the browser'); }
       }));
-      ctx.appendChild(ctxItem('⤓  Download file', false, () => {
-        const blob = new Blob([d.text], { type: 'text/plain' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = d.name;
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-        toast(`Downloading ${d.name}`);
+      // Original bytes first (kept in this browser's originals store at import;
+      // older imports and backup-restored docs have no bytes — they fall back
+      // to the extracted text, honestly suffixed so it opens).
+      const hasOrig = !!(d && d.origKey);
+      ctx.appendChild(ctxItem(hasOrig ? '⤓  Download original' : '⤓  Download text (.txt)', false, async () => {
+        const saveBlob = (blob, fname) => {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = fname;
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+        };
+        if (d.origKey) {
+          try {
+            const rec = await origGet(d.origKey);
+            if (rec && rec.blob && rec.blob.size > 0) {
+              saveBlob(rec.blob, d.name);
+              toast(`Downloading original ${d.name}`);
+              return;
+            }
+          } catch (e) { console.warn('original download missed for ' + d.name, (e && e.message) || e); }
+        }
+        const nm = String(d.name || 'body');
+        const fname = /\.(txt|md|markdown|csv)$/i.test(nm) ? nm : ((nm.replace(/\.[^.]+$/, '').trim() || 'body') + '.txt');
+        saveBlob(new Blob([d.text], { type: 'text/plain;charset=utf-8' }), fname);
+        toast(d.origKey ? `Original not kept for “${nm}” (older import or restored backup) — downloading extracted text as ${fname}` : `Downloading extracted text as ${fname}`);
       }));
+      // desktop vault folder: show the mirrored original in Finder/Explorer.
+      if (vaultFs.isVaultBackendAvailable() && d.origKey) {
+        ctx.appendChild(ctxItem('▸  Reveal original in folder', false, async () => {
+          const r = await vaultFs.revealDocByName(vaultFs.fileNameFor(d.name));
+          if (r === 'ok') toast(`Revealed ${d.name} in its folder`);
+          else if (r === 'not-mirrored') toast(`No folder copy of “${d.name}” yet — new uploads mirror on import`);
+          else if (r === 'missing' || r === 'unlinked') toast('Vault folder is not linked right now');
+          else toast('Could not reveal that file');
+        }));
+      }
       // transfer the local constellation to another canvas (copies, never moves).
       // Solo = just this body; constellation = this body + its shared-ground web
       // (the exact set the SHARED GROUND menu shows — hover the item to preview it).
@@ -3271,7 +4272,7 @@ function boot() {
         // not change, but the center still moves — otherwise the canvas sun and
         // the reader disagree. Then fold newcomers into an existing destination
         // universe (formation holds) or invalidate its edge cache for first visit.
-        const afterCopy = (r, sunIdOrNull) => {
+        const afterCopy = async (r, sunIdOrNull) => {
           if (!r) { toast('Copy failed'); return; }
           if (sunIdOrNull) {
             const src = vault.byId(sunIdOrNull);
@@ -3285,6 +4286,16 @@ function boot() {
           if (r.copied.length) {
             if (unis.has(ot.id)) rebuildTab(ot.id);
             else edgeByTab.delete(ot.id);
+            // copies share the originals' bytes — mirror them under the copy's
+            // own folder name so Reveal works from either canvas (best-effort).
+            for (const c of r.copied) {
+              if (!c.origKey) continue;
+              try {
+                const rec = await origGet(c.origKey);
+                if (rec && rec.blob && rec.blob.size > 0) vaultFs.mirrorBytes(vaultFs.fileNameFor(c.name), rec.blob);
+              } catch {}
+            }
+            vaultFs.queueVaultJsonMirror();
             renderTabs(); toast(`Copied ${r.copied.length} ${r.copied.length === 1 ? 'body' : 'bodies'} to ${ot.name}${r.skipped ? ` (${r.skipped} already there)` : ''}`);
           }
           else {
@@ -3330,12 +4341,172 @@ function boot() {
     ctx.style.left = Math.min(x, window.innerWidth - w - 8) + 'px';
     ctx.style.top = Math.min(y, window.innerHeight - h - 8) + 'px';
   }
+  // ---------- manual tags: right-click a reader text selection to tag it ----------
+  // The tag is stored as `manual/<slug>` on the doc (never parsed from text, so
+  // editing the prose can't remove it). Matching treats it exactly like a
+  // written #tag — tethers, mass, search, tags view — and pills badge it M.
+  function slugTag(sel) {
+    const slug = String(sel || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+    if (slug.length < 2 || !/[a-z]/.test(slug)) return null;
+    return slug;
+  }
+  function addManualTag(id, slug, spot) {
+    const d = vault.byId(id);
+    if (!d || !/^[a-z0-9_\-/]{2,}$/.test(slug || '')) return false;
+    const tags = d.tags || (d.tags = []);
+    const dupe = tags.some(tg => vault.stripAuto(tg) === slug && !String(tg).toLowerCase().startsWith('auto/'));
+    if (dupe) { toast(`#${slug} is already on “${vault.titleOf(d)}”`); return false; }
+    // an auto tag of the same name upgrades into the manual one (no doubles)
+    d.tags = tags.filter(tg => !(String(tg).toLowerCase().startsWith('auto/') && vault.stripAuto(tg) === slug));
+    d.tags.push('manual/' + slug);
+    // remember exactly where it was made: a rich anchor (snippet + stripped
+    // offset + DOM path of the creation range) so the jump lands on this
+    // block even when the same words appear elsewhere in the document
+    const snip = ((spot && typeof spot === 'object') ? spot.snip : spot);
+    const snipClean = String(snip || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    if (snipClean.length >= 2) {
+      const rec = (d.manualTags || (d.manualTags = {}));
+      if (spot && typeof spot === 'object' && Array.isArray(spot.path)) {
+        const anchor = { snip: snipClean };
+        if (isFinite(spot.at)) anchor.at = Math.max(0, Math.round(spot.at));
+        anchor.path = spot.path.slice(0, 12);
+        if (Number.isInteger(spot.off) && spot.off >= 0) anchor.off = spot.off;
+        rec[slug] = anchor;
+      } else rec[slug] = snipClean;
+    }
+    vault.persist();
+    try { rebuild(activeId); } catch {}
+    try { if (!$('#tagPop').hidden) openTagPop(); } catch {}
+    toast(`Tagged as #${slug} M — manual tag (tethers like a written #tag)`);
+    return true;
+  }
+  // explicit tags, written in-app: append ` #slug` to the body text (the same
+  // thing as typing #tag in an imported file), then recount so it tethers,
+  // weighs and searches like any written tag. Suppression only ever hides
+  // the auto/ form, so a written tag always (re)brings its name back.
+  function addExplicitTag(id, slug) {
+    const d = vault.byId(id);
+    if (!d || !/^[a-z0-9_\-/]{2,}$/.test(slug || '')) return false;
+    if (tagUseRe(slug).test(String(d.text || ''))) { toast(`#${slug} is already in “${vault.titleOf(d)}”`); try { renderDoc(); } catch {} return false; }
+    const base = String(d.text || '').replace(/\s+$/, '');
+    d.text = (base ? base + ' ' : '') + '#' + slug;
+    vault.recountDoc(d);
+    vault.persist();
+    try { rebuild(activeId); } catch {}
+    try { if (!$('#tagPop').hidden) openTagPop(); } catch {}
+    toast(`Wrote #${slug} into “${vault.titleOf(d)}” — explicit tag (hand-written, lives in the prose)`);
+    return true;
+  }
+  // inline "+ #tag" editor in the reader's tag row (same pattern as the
+  // manual-tag name editor — native prompt() is blocked in some shells).
+  // Enter commits, Esc restores the pills.
+  function openAddTagEditor(id) {
+    const d = vault.byId(id);
+    const host = $('#docTags');
+    if (!d || !host) return;
+    const btn = host.querySelector('[data-addtag]');
+    if (!btn) return;
+    const inp = document.createElement('input');
+    inp.value = '';
+    inp.maxLength = 40;
+    inp.placeholder = 'type a #tag name…';
+    inp.setAttribute('aria-label', 'New explicit tag name');
+    inp.style.cssText = 'width:130px;box-sizing:border-box;background:rgba(10,14,20,.8);border:1px solid var(--line);color:var(--txt);border-radius:20px;padding:2px 9px;font-size:11px;outline:none;margin:0 4px 4px 0;';
+    btn.replaceWith(inp);
+    inp.focus();
+    const commit = () => {
+      const slug = String(inp.value.trim().toLowerCase()).replace(/\s+/g, '_').replace(/[^a-z0-9_\-/]/g, '');
+      if (!/^[a-z0-9_\-/]{2,}$/.test(slug) || !/[a-z]/.test(slug)) { toast('That name can’t be a tag — use at least 2 letters (a–z, 0–9)'); inp.focus(); return; }
+      addExplicitTag(id, slug);
+    };
+    inp.addEventListener('keydown', (ev) => {
+      ev.stopPropagation();
+      if (ev.key === 'Enter') commit();
+      else if (ev.key === 'Escape') { try { renderDoc(); } catch {} }
+    });
+    inp.addEventListener('click', (ev) => ev.stopPropagation());
+  }
+  function openSelTagMenu(x, y, snippet, slug, spot) {
+    ctx.innerHTML = '';
+    const head = document.createElement('div');
+    head.className = 'ctx-head';
+    head.textContent = `✎ “${snippet}”`;
+    ctx.appendChild(head);
+    if (slug) ctx.appendChild(ctxItem(`＋  Tag as #${slug} (manual M)`, false, () => addManualTag(activeId, slug, spot)));
+    else ctx.appendChild(ctxItem('＋  Tag selection…', false, () => toast('That selection can’t be a tag — it needs at least 2 letters (a–z, 0–9)')));
+    // typed name: the auto slug is only a suggestion — the user can type any
+    // tag name here (inline editor, since native prompt() is blocked in some
+    // shells). The typed text is slugified the same way, so "My Tag!" lands
+    // as manual/my_tag with the same spot anchor, M badge, and tethers.
+    {
+      const nm = document.createElement('button');
+      nm.className = 'ctx-item';
+      nm.textContent = '✎  Name it yourself…';
+      nm.title = 'Type your own tag name instead of the suggested one';
+      nm.onclick = (e) => { e.stopPropagation(); openSelTagNameEditor(x, y, snippet, slug, spot); };
+      ctx.appendChild(nm);
+    }
+    ctx.appendChild(ctxItem('⧉  Copy selection', false, async () => {
+      try { await navigator.clipboard.writeText(snippet); toast('Selection copied'); }
+      catch { toast('Copy blocked by the browser'); }
+    }));
+    ctx.hidden = false;
+    const w = Math.min(280, ctx.offsetWidth || 220), h = ctx.offsetHeight || 200;
+    ctx.style.left = Math.min(x, window.innerWidth - w - 8) + 'px';
+    ctx.style.top = Math.min(y, window.innerHeight - h - 8) + 'px';
+  }
+  // typed-name mode for manual tags: an inline input prefilled with the
+  // suggested slug (or empty when the selection can't auto-slug). Enter/Save
+  // commits through the same addManualTag path; Esc goes back to the menu.
+  function openSelTagNameEditor(x, y, snippet, slug, spot) {
+    ctx.innerHTML = '';
+    const head = document.createElement('div');
+    head.className = 'ctx-head';
+    head.textContent = '✎ Tag name (manual M)';
+    ctx.appendChild(head);
+    const inp = document.createElement('input');
+    inp.value = slug || '';
+    inp.maxLength = 40;
+    inp.placeholder = 'type a tag name…';
+    inp.setAttribute('aria-label', 'Tag name');
+    inp.style.cssText = 'width:100%;box-sizing:border-box;background:rgba(10,14,20,.8);border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:6px 8px;font-size:13px;outline:none;margin:2px 0 6px;';
+    ctx.appendChild(inp);
+    const commit = () => {
+      const typed = slugTag(inp.value.trim());
+      if (!typed) { toast('That name can’t be a tag — use at least 2 letters (a–z, 0–9)'); inp.focus(); return; }
+      if (addManualTag(activeId, typed, spot)) closeCtx();
+    };
+    const save = document.createElement('button');
+    save.className = 'ctx-item';
+    save.textContent = '✓ Save tag';
+    save.onclick = (e) => { e.stopPropagation(); commit(); };
+    ctx.appendChild(save);
+    const back = document.createElement('button');
+    back.className = 'ctx-item';
+    back.textContent = '‹ Back';
+    back.onclick = (e) => { e.stopPropagation(); openSelTagMenu(x, y, snippet, slug, spot); };
+    ctx.appendChild(back);
+    ctx.hidden = false;
+    const w = Math.min(280, ctx.offsetWidth || 220), h = ctx.offsetHeight || 200;
+    ctx.style.left = Math.min(x, window.innerWidth - w - 8) + 'px';
+    ctx.style.top = Math.min(y, window.innerHeight - h - 8) + 'px';
+    inp.focus();
+    try { inp.setSelectionRange(inp.value.length, inp.value.length); } catch {}
+    inp.addEventListener('keydown', (ev) => {
+      ev.stopPropagation();
+      if (ev.key === 'Enter') commit();
+      else if (ev.key === 'Escape') openSelTagMenu(x, y, snippet, slug, spot);
+    });
+    inp.addEventListener('click', (ev) => ev.stopPropagation());
+  }
   const setRot = (on) => {
     rotOn = on;
     $('#rotBtn').textContent = rotOn ? '⏸ Pause' : '▶ Resume';
     saveUi();
   };
   cv.addEventListener('contextmenu', (e) => {
+    if (srcSuppress) { e.preventDefault(); srcSuppress = false; return; }
+    if (srcHold) { e.preventDefault(); return; } // press-time fire on some platforms: the hold path drives the menu
     e.preventDefault();
     const r = cv.getBoundingClientRect();
     const n = uni ? ren.pick(uni.nodes, e.clientX - r.left, e.clientY - r.top) : null;
@@ -3345,7 +4516,7 @@ function boot() {
   document.addEventListener('click', (e) => { if (!ctx.hidden && !ctx.contains(e.target)) closeCtx(); });
   document.addEventListener('click', (e) => { const m = $('#openProjMenu'); if (m && !m.hidden && !m.contains(e.target) && !e.target.closest('[data-openproj]')) m.hidden = true; });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { closeCtx(); hideOpenProjMenu(); selSet.clear(); hideBoxSel(); $('#propsModal').hidden = true; try { $('#imgLight').hidden = true; } catch {} closeHelpEditor(); closeNoteEditor(); closeNotePop(); const w2 = document.querySelector('#docShared'); document.querySelectorAll('.help-open').forEach(w => w.classList.remove('open', 'help-open')) }
+    if (e.key === 'Escape') { closeCtx(); hideOpenProjMenu(); selSet.clear(); hideBoxSel(); closeSrcPop(); $('#propsModal').hidden = true; try { $('#imgLight').hidden = true; } catch {} closeHelpEditor(); closeNoteEditor(); closeNotePop(); const w2 = document.querySelector('#docShared'); document.querySelectorAll('.help-open').forEach(w => w.classList.remove('open', 'help-open')) }
     // box-selection shortcut: Delete/Backspace removes the shift-dragged
     // bodies outright (same confirm as the right-click menu)
     if ((e.key === 'Delete' || e.key === 'Backspace') && selSet.size && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')) {
@@ -3367,6 +4538,17 @@ function boot() {
   // reader-panel removal (same actions as the right-click menu — no right-click needed)
   $('#docRemoveBtn').onclick = () => removeFromCanvas(activeId);
   $('#docDeleteBtn').onclick = () => deleteEverywhere(activeId);
+  // reader-panel source preview: the right-hold pop-out without right-click.
+  // Left-click a body (it becomes the active body), then pin its 120-word
+  // preview here; it stays until dismissed (works on touchscreens too).
+  $('#docSrcBtn').onclick = () => {
+    if (srcStickyId || !$('#srcPop').hidden) { closeSrcPop(); return; }
+    if (!activeId || !vault.byId(activeId)) { toast('Left-click a body first — it becomes the active body'); return; }
+    let x = window.innerWidth / 2, y = Math.max(8, window.innerHeight * 0.25);
+    try { const n = (uni.nodes || []).find(n => n.id === activeId); if (n && n._p) { x = n._p.x; y = n._p.y; } } catch {}
+    if (openSrcPop(activeId, x, y, true)) srcStickyId = activeId;
+  };
+  $('#svpX').onclick = () => closeSrcPop();
   // universe speed controls: Pause freezes physics + camera + glow; log slider = fine slow-mo
   const rotSlider = $('#rotSpeed');
   rotSlider.value = speedToSlider(rotMul);
@@ -3413,6 +4595,58 @@ function boot() {
     toast(lbScale > 0 ? 'Labels on (' + Math.round(lbScale * 100) + '%)' : 'Labels hidden');
   };
   syncLb();
+  // body size: slider scales orbs + triangles, button toggles 100% <-> last size
+  ren.bodyScale = sizeScale;
+  const szSlider = $('#szSize'), szLbl = $('#szMul'), szBtnEl = $('#szBtn');
+  szSlider.value = Math.round(sizeScale * 100);
+  const syncSz = () => { szLbl.textContent = Math.round(sizeScale * 100) + '%'; ren.bodyScale = sizeScale; saveUi(); };
+  szSlider.addEventListener('input', () => {
+    sizeScale = szSlider.value / 100;
+    if (sizeScale !== 1) sizeLast = sizeScale;
+    syncSz();
+  });
+  szBtnEl.onclick = () => {
+    sizeScale = sizeScale !== 1 ? 1 : (sizeLast !== 1 ? sizeLast : 1.5);
+    szSlider.value = Math.round(sizeScale * 100);
+    syncSz();
+    toast(sizeScale !== 1 ? 'Body size ' + Math.round(sizeScale * 100) + '%' : 'Body size 100%');
+  };
+  syncSz();
+  // body rotation around the vertical axis (spheres turn their surface
+  // markings while the light stays fixed; triangles flip edge-on like cards).
+  // Slider = speed, button = on/off; off eases surfaces back to rest. Runs paused.
+  const spSlider = $('#spSpeed'), spLbl = $('#spMul'), spBtnEl = $('#spBtn');
+  spSlider.value = Math.round(spinSpeed);
+  const syncSp = () => {
+    spLbl.textContent = spinOn ? Math.round(spinSpeed) + '%' : 'off';
+    ren.spinTarget = (spinOn && spinSpeed > 0) ? 1 : 0;
+    ren.spinOmega = spinSpeed > 0 ? 4 * Math.pow(spinSpeed / 100, 0.65) : 0; // perceptual curve: low speeds still visibly turn
+    saveUi();
+  };
+  spSlider.addEventListener('input', () => { spinSpeed = +spSlider.value; syncSp(); });
+  spBtnEl.onclick = () => {
+    spinOn = !spinOn;
+    syncSp();
+    toast(spinOn ? 'Rotation on (' + Math.round(spinSpeed) + '%)' : 'Rotation off');
+  };
+  syncSp();
+  // horizontal compress: slider = squish amount (100 = round), button toggles round <-> last
+  ren.compressScale = compressScale;
+  const cpSlider = $('#cpSize'), cpLbl = $('#cpMul'), cpBtnEl = $('#cpBtn');
+  cpSlider.value = Math.round(compressScale * 100);
+  const syncCp = () => { cpLbl.textContent = Math.round(compressScale * 100) + '%'; ren.compressScale = compressScale; saveUi(); };
+  cpSlider.addEventListener('input', () => {
+    compressScale = cpSlider.value / 100;
+    if (compressScale < 1) compressLast = compressScale;
+    syncCp();
+  });
+  cpBtnEl.onclick = () => {
+    compressScale = compressScale < 1 ? 1 : (compressLast < 1 ? compressLast : 0.6);
+    cpSlider.value = Math.round(compressScale * 100);
+    syncCp();
+    toast(compressScale < 1 ? 'Compress ' + Math.round(compressScale * 100) + '%' : 'Bodies round');
+  };
+  syncCp();
   ovBtnEl.onclick = () => {
     ovAlpha = ovAlpha > 0 ? 0 : (ovLast > 0 ? ovLast : 0.6);
     ovSlider.value = Math.round(ovAlpha * 100);
@@ -3780,30 +5014,13 @@ function boot() {
     toast(triOrb ? 'Triangles on — upside-down ▼ in orb colors and sizes' : 'Orbs restored');
   };
   syncTriOrbBtn();
-  // bottom pill "Thematic" button: same docs + same physics, recomposed by themes/tags.
-  // From the general state (nothing selected) it distills the WHOLE visidocsverse;
-  // leaving the lens always drops the whole view.
-  const lensBtn = $('#lensBtn');
-  if (lensBtn) lensBtn.onclick = () => {
-    clearFit(); // the lens swaps the universe: a fitted view is stale
-    if (!vault.tab()) {
-      toast('No open canvas — click + or reopen a canvas before using the Thematic lens.');
-      return;
-    }
-    lensThematic = !lensThematic;
-    if (lensThematic) { thematicWhole = (activeId == null); lensTags = false; } // lenses are mutually exclusive
-    else thematicWhole = false;
-    applyLens();
-    saveUi();
-    if (!lensThematic) toast('Regular view restored');
-    else if (thematicWhole) {
-      const n = wholeThemes.length, m = wholeVisidocsverseDocs().length;
-      toast(n ? `Thematic lens — whole visidocsverse: ${n} theme${n === 1 ? '' : 's'} across ${m} bodies` : 'Thematic lens — no shared concepts in the visidocsverse yet');
-    } else {
-      const n = (thematicThemes.get(vault.activeTabId) || []).length;
-      toast(n ? `Thematic lens — ${n} theme${n === 1 ? '' : 's'} distilled from shared concepts` : 'Thematic lens — no shared concepts in this canvas yet');
-    }
-  };
+  // (Thematic now lives in the Universe view modes row — same docs + same
+  // physics, recomposed by themes/tags. From the general state it distills
+  // the WHOLE visidocsverse; leaving the view always drops the whole view.)
+  // bottom pill "Return" button (gold): step back to the previous view —
+  // the lens, sun, canvas and camera as they were before the last change.
+  const returnBtn = $('#returnBtn');
+  if (returnBtn) returnBtn.onclick = () => { goReturn(); };
   // bottom pill "Fit" button: a TOGGLE. On: snapshot the view, frame the
   // whole formation on the visible screen (recenter + dolly out as needed,
   // never zooms in) and lift any orb that would render as a speck up to a
@@ -4067,12 +5284,16 @@ function boot() {
     renderDevBox();
     return { ...devBuilds };
   }
+  let devHidden = false; // session-only: hide button sets it, ◇ DEV chip clears it
   function renderDevBox() {
     const box = $('#devBox');
     if (!box) return;
     // DEV pane is always visible on web (per owner request); desktop exports
-    // strip this whole pane instead via strip-dev.mjs.
-    box.hidden = false;
+    // strip this whole pane instead via strip-dev.mjs. Hiding lasts only for
+    // the session — the ◇ DEV chip (bottom-left) brings it back.
+    box.hidden = devHidden;
+    const show = $('#devShowBtn');
+    if (show) show.hidden = !devHidden;
     const link = (id, url, fallback) => {
       const a = $(id);
       if (!a) return;
@@ -4120,14 +5341,13 @@ function boot() {
       mainPjs, indexHtml, files,
       // deep-clone doc rows: the backup must be a snapshot, not a live
       // reference — otherwise docs added after "build" leak into the file.
-      tabs: vault.tabs.map(t => ({ id: t.id, name: t.name, docs: (t.docs || []).map(d => ({ ...d, links: [...(d.links || [])], tags: [...(d.tags || [])] })), activeId: t.activeId, main: t.main === true, assoc: [...(t.assoc || [])], color: t.color || null, disassociated: vault.isIso(t) })),
+      tabs: vault.tabs.map(t => ({ id: t.id, name: t.name, docs: (t.docs || []).map(d => ({ ...d, links: [...(d.links || [])], tags: [...(d.tags || [])] })), activeId: t.activeId, main: t.main === true, assoc: [...(t.assoc || [])], color: t.color || null, suppressedTags: [...(t.suppressedTags || [])], disassociated: vault.isIso(t) })),
       activeTabId: vault.activeTabId,
       vault: vault.docs.map(d => ({ ...d, links: [...(d.links || [])], tags: [...(d.tags || [])] })), // legacy compat: active canvas docs
       settings: {
         rotOn, rotMul, speedMul: rotMul, autoDist, simpleOrb, simpleOrb2, triOrb,
         miniX, miniY, miniW, miniH, tvpX, tvpY, glossX, glossY, glossW, glossH, glossOpen,
-        ovAlpha, ovLast, lbScale, lbLast, bgShade,
-        glow: glowScale, glowLast, tether: tetherScale, tetherLast, tetherColor,
+        ovAlpha, ovLast, lbScale, lbLast, sizeScale, sizeLast, spinOn, spinSpeed, compressScale, compressLast, bgShade,
         backdrop, backdropAlpha, backdropLast, paneAlpha, paneLast,
         glazeLeft, glazeDoc, glazeCloud, glazeMini, glazeGloss,
         leftCollapsed, docCollapsed, docWidth, lensThematic, lensTags,
@@ -4322,8 +5542,14 @@ function boot() {
       else if (s.simpleOrb === false && s.simpleOrb2 === false) { simpleOrb = false; simpleOrb2 = false; }
       if (typeof s.ovAlpha === 'number' && s.ovAlpha >= 0 && s.ovAlpha <= 1) ovAlpha = s.ovAlpha;
       if (typeof s.ovLast === 'number' && s.ovLast > 0 && s.ovLast <= 1) ovLast = s.ovLast;
-      if (typeof s.lbScale === 'number' && s.lbScale >= 0 && s.lbScale <= 1.5) lbScale = s.lbScale;
-      if (typeof s.lbLast === 'number' && s.lbLast > 0 && s.lbLast <= 1.5) lbLast = s.lbLast;
+      if (typeof s.lbScale === 'number' && s.lbScale >= 0 && s.lbScale <= 3) lbScale = s.lbScale;
+      if (typeof s.lbLast === 'number' && s.lbLast > 0 && s.lbLast <= 3) lbLast = s.lbLast;
+      if (typeof s.sizeScale === 'number' && s.sizeScale >= 0.05 && s.sizeScale <= 3) sizeScale = s.sizeScale;
+      if (typeof s.sizeLast === 'number' && s.sizeLast >= 0.05 && s.sizeLast <= 3) sizeLast = s.sizeLast;
+      if (s.spinOn === true) spinOn = true; else if (s.spinOn === false) spinOn = false;
+      if (typeof s.spinSpeed === 'number' && s.spinSpeed >= 0 && s.spinSpeed <= 100) spinSpeed = s.spinSpeed;
+      if (typeof s.compressScale === 'number' && s.compressScale >= 0.2 && s.compressScale <= 1) compressScale = s.compressScale;
+      if (typeof s.compressLast === 'number' && s.compressLast >= 0.2 && s.compressLast <= 1) compressLast = s.compressLast;
       if (typeof s.bgShade === 'number' && s.bgShade >= 0 && s.bgShade <= 1) bgShade = s.bgShade;
       if (typeof s.glow === 'number' && s.glow >= 0 && s.glow <= 2) glowScale = s.glow;
       if (typeof s.glowLast === 'number' && s.glowLast > 0 && s.glowLast <= 2) glowLast = s.glowLast;
@@ -4380,12 +5606,15 @@ function boot() {
         });
         // legacy file: replace the active canvas, keep the other canvases
         if (!vault.tabs.length) {
-          vault.tabs = [{ id: 'tab_' + Math.random().toString(36).slice(2, 10), name: 'Universe 1', docs: norm, activeId: norm[0]?.id || null, main: true, assoc: [], color: null }];
+          vault.tabs = [{ id: 'tab_' + Math.random().toString(36).slice(2, 10), name: 'Universe 1', docs: norm, activeId: norm[0]?.id || null, main: true, assoc: [], color: null, suppressedTags: [] }];
           vault.activeTabId = vault.tabs[0].id;
         } else {
           vault.tab().docs = norm;
           vault.tab().activeId = norm[0]?.id || null;
         }
+        // restored rows regenerate auto/* deterministically — re-apply this
+        // canvas's suppression so deleted/merged names stay gone.
+        try { const ltb = vault.tab(); if (ltb) for (const ld of (ltb.docs || [])) vault.applySuppress(ld, ltb); } catch {}
         try { vault.persist(); } catch {}
       }
     } catch (e) {
@@ -4433,6 +5662,9 @@ function boot() {
     try { setRot(rotOn); } catch {}
     try { const el = $('#ovAlpha'); if (el) el.value = Math.round(ovAlpha * 100); const lb = $('#ovMul'); if (lb) lb.textContent = Math.round(ovAlpha * 100) + '%'; if (ren) ren.overlayAlpha = ovAlpha; } catch {}
     try { const el = $('#lbSize'); if (el) el.value = Math.round(lbScale * 100); const lb = $('#lbMul'); if (lb) lb.textContent = lbScale <= 0 ? 'hidden' : Math.round(lbScale * 100) + '%'; if (ren) ren.labelScale = lbScale; } catch {}
+    try { const el = $('#szSize'); if (el) el.value = Math.round(sizeScale * 100); const lb = $('#szMul'); if (lb) lb.textContent = Math.round(sizeScale * 100) + '%'; if (ren) ren.bodyScale = sizeScale; } catch {}
+    try { const el = $('#spSpeed'); if (el) el.value = Math.round(spinSpeed); const lb = $('#spMul'); if (lb) lb.textContent = spinOn ? Math.round(spinSpeed) + '%' : 'off'; if (ren) { ren.spinTarget = (spinOn && spinSpeed > 0) ? 1 : 0; ren.spinOmega = spinSpeed > 0 ? 4 * Math.pow(spinSpeed / 100, 0.65) : 0; } } catch {}
+    try { const el = $('#cpSize'); if (el) el.value = Math.round(compressScale * 100); const lb = $('#cpMul'); if (lb) lb.textContent = Math.round(compressScale * 100) + '%'; if (ren) ren.compressScale = compressScale; } catch {}
     try { const el = $('#bgShade'); if (el) el.value = Math.round(bgShade * 100); const lb = $('#bgMul'); if (lb) lb.textContent = Math.round(bgShade * 100) + '%'; if (ren) ren.bgShade = bgShade; syncHintContrast(); syncPaneContrast(); } catch {}
     try { const el = $('#glSize'); if (el) el.value = Math.round(glowScale * 50); const lb = $('#glMul'); if (lb) lb.textContent = Math.round(glowScale * 100) + '%'; if (ren) ren.glowScale = glowScale; } catch {}
     try { const el = $('#teSize'); if (el) el.value = Math.round(tetherScale * 50); const lb = $('#teMul'); if (lb) lb.textContent = Math.round(tetherScale * 100) + '%'; if (ren) ren.tetherScale = tetherScale; syncIsoBtn(); } catch {}
@@ -4565,6 +5797,7 @@ function boot() {
       }
       d.name = nm;
       seenName.add(nm.toLowerCase());
+      vault.applySuppress(d, tab); // merged-in bodies respect this canvas's deleted/merged names
       tab.docs.push(d);
       newIds.push(d.id);
       added++;
@@ -4698,9 +5931,14 @@ function boot() {
     };
     const devHideBtn = $('#devHideBtn');
     if (devHideBtn) devHideBtn.onclick = () => {
-      try { localStorage.removeItem('visidocsverse.dev'); } catch {}
-      const box = $('#devBox'); if (box) box.hidden = true;
-      toast('Dev pane hidden — reopen with ?dev=1');
+      devHidden = true;
+      try { renderDevBox(); } catch {}
+      toast('Dev pane hidden — click ◇ DEV (bottom-left) to bring it back');
+    };
+    const devShowBtn = $('#devShowBtn');
+    if (devShowBtn) devShowBtn.onclick = () => {
+      devHidden = false;
+      try { renderDevBox(); } catch {}
     };
   } catch {}
   // DEV-ONLY-END
@@ -4743,7 +5981,7 @@ function boot() {
     return r;
   }
   // DEV-ONLY-END
-  window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, loadBackupFromText, mergeBackupFromText, ingestFiles, getDropFiles, readFileAsText, intakeAllowed, cleanName, get devBuilds() { return { ...devBuilds }; }, setDevBuilds, isDev, renderDevBox, saveAllProjects, openExistingProject, reopenClosed, loadClosed, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP };
+    window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, vaultFs, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, loadBackupFromText, mergeBackupFromText, ingestFiles, getDropFiles, readFileAsText, intakeAllowed, cleanName, deleteTag, mergeTags, openTagPop, closeTagPop, get devBuilds() { return { ...devBuilds }; }, setDevBuilds, isDev, renderDevBox, saveAllProjects, openExistingProject, reopenClosed, loadClosed, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP };
   window.addEventListener('resize', () => ren.resize());
 }
 

@@ -107,7 +107,8 @@ function parseDoc(text) {
 // without touching explicit tags. All matching (tethers, mass, search)
 // compares the STRIPPED form, so auto/educational and #educational meet.
 const AUTO_MAX = 6;
-const stripAuto = (t) => String(t || '').toLowerCase().replace(/^auto\//, '');
+const stripAuto = (t) => String(t || '').toLowerCase().replace(/^(auto|manual)\//, '');
+const isManual = (t) => String(t || '').toLowerCase().startsWith('manual/');
 function titleTerms(name) {
   const seen = new Set();
   const out = [];
@@ -150,6 +151,12 @@ function withAutoTags(name, text, tags) {
   const explicit = (tags || []).map(String).map(s => s.trim().toLowerCase()).filter(Boolean).filter(t => !t.startsWith('auto/'));
   return [...explicit, ...autoTagsFor(name, text, explicit)];
 }
+// tag delete/merge support: verse-level tag ops (pop-out pane) suppress the
+// auto-derived form of a removed name, otherwise title words would regenerate
+// the "deleted" pill on the next recount. Explicit #tags are never suppressed —
+// writing #name in any body always brings a tag back.
+const TAG_RE = /^[a-z0-9_\-/]{2,}$/;
+function normTagDisp(s) { return String(s || '').trim().toLowerCase().replace(/^auto\//, ''); }
 
 // Normalize one raw doc row from disk (backup file, localStorage, legacy
 // store): every downstream consumer assumes id/name/text/words/links/tags
@@ -197,8 +204,37 @@ function normalizeDoc(raw, fallbackName) {
     }
     if (imgs.length) doc.images = imgs;
   }
+  // original-file pointer (bytes live in the origstore IndexedDB sidecar):
+  // survives restores so the pointer stays valid in this browser; a byte-miss
+  // (restored backup, older import) downloads as extracted text instead.
+  if (typeof r.origKey === 'string' && r.origKey.trim()) doc.origKey = r.origKey.trim().slice(0, 128);
   // picture-text backfill already ran for this doc (images OCR'd into the text)
   if (r.ocrDone === true) doc.ocrDone = true;
+  // manual-tag spot anchors (slug -> source snippet): survive restores, pruned
+  // to tags actually present so stale anchors never linger
+  if (r.manualTags && typeof r.manualTags === 'object' && !Array.isArray(r.manualTags)) {
+    const mt = {};
+    for (const [k, v] of Object.entries(r.manualTags).slice(0, 200)) {
+      const kk = normTagDisp(k);
+      if (!TAG_RE.test(kk)) continue;
+      if (typeof v === 'string' && v.trim()) mt[kk] = v.slice(0, 300);
+      else if (v && typeof v === 'object' && typeof v.snip === 'string' && v.snip.trim()) {
+        // rich anchor: snippet + stripped offset + DOM path of the creation range
+        const e = { snip: v.snip.slice(0, 300) };
+        if (isFinite(v.at)) e.at = Math.max(0, Math.round(v.at));
+        if (Array.isArray(v.path) && v.path.length <= 12 && v.path.every(n => Number.isInteger(n) && n >= 0 && n < 10000)) e.path = v.path.slice();
+        if (Number.isInteger(v.off) && v.off >= 0) e.off = v.off;
+        mt[kk] = e;
+      }
+    }
+    if (Object.keys(mt).length) doc.manualTags = mt;
+  }
+  if (doc.manualTags) {
+    for (const k of Object.keys(doc.manualTags)) {
+      if (!tags.includes('manual/' + k)) delete doc.manualTags[k];
+    }
+    if (!Object.keys(doc.manualTags).length) delete doc.manualTags;
+  }
   // preserve unknown future fields only when JSON-safe (skip functions/DOM)
   for (const k of ['createdAt', 'updatedAt', 'mtime', 'color']) {
     if (r[k] !== undefined && (typeof r[k] === 'string' || typeof r[k] === 'number')) doc[k] = r[k];
@@ -220,7 +256,43 @@ export const vault = {
 
   // normalize one raw doc row (backup restore, storage repair)
   normalizeDoc,
-  stripAuto, // 'auto/x' -> 'x': pills, search and tethers compare the stripped form
+  stripAuto, // 'auto/x'/'manual/x' -> 'x': pills, search and tethers compare the stripped form
+  isManual, // 'manual/x' -> true: hand-made reader tags, gold-M badged, never parsed from text
+  // per-canvas auto-tag suppression (tag delete/merge in the tags pop-out).
+  // suppressedOf(tab) -> Set of stripped names whose auto/* form stays hidden.
+  // applySuppress(doc, tab?) strips those auto/* entries from one doc (tab
+  // defaults to the doc's owning canvas, else the active one). Explicit #tags
+  // are never suppressed. suppressTag(tab, disp) records a name + persists.
+  suppressedOf(tab) {
+    const tb = (typeof tab === 'string') ? this.tabs.find(t => t.id === tab) : (tab || this.tab());
+    const a = (tb && Array.isArray(tb.suppressedTags)) ? tb.suppressedTags : [];
+    return new Set(a.map(normTagDisp).filter(s => TAG_RE.test(s)));
+  },
+  applySuppress(doc, tab) {
+    if (!doc || !Array.isArray(doc.tags) || !doc.tags.length) return doc;
+    let owner = tab;
+    if (owner === undefined) {
+      try { owner = this.tabs.find(t => (t.docs || []).includes(doc)) || this.tab(); }
+      catch { owner = null; }
+    }
+    const sup = this.suppressedOf(owner);
+    if (!sup.size) return doc;
+    doc.tags = doc.tags.filter(tg => !(String(tg).startsWith('auto/') && sup.has(stripAuto(tg))));
+    return doc;
+  },
+  suppressTag(tab, disp) {
+    const tb = (typeof tab === 'string') ? this.tabs.find(t => t.id === tab) : (tab || this.tab());
+    if (!tb) return false;
+    const d = normTagDisp(disp);
+    if (!TAG_RE.test(d)) return false;
+    if (!Array.isArray(tb.suppressedTags)) tb.suppressedTags = [];
+    if (!tb.suppressedTags.map(normTagDisp).includes(d)) {
+      tb.suppressedTags.push(d);
+      if (tb.suppressedTags.length > 200) tb.suppressedTags = tb.suppressedTags.slice(-200);
+    }
+    this.persist();
+    return true;
+  },
   // normalize raw tab rows (load + backup restore): ids, names, mutual assoc
   // lists. Legacy `disassociated:false` rows join the whole legacy shared
   // pool; legacy isolated rows start alone. Unknown/stale ids are dropped.
@@ -247,7 +319,10 @@ export const vault = {
       // cross-tab duplicate doc ids (same body copied verbatim with the same id
       // instead of a fresh copy id) would collapse twin tracking — mint fresh
       // ids for repeats beyond the first occurrence across the whole file.
-      return { id, name: String(t.name || ('Canvas ' + (ti + 1))).slice(0, 40), docs, _activeRaw: (t.activeId === null) ? null : (typeof t.activeId === 'string' ? t.activeId : undefined), main: t.main === true, assoc: Array.isArray(t.assoc) ? t.assoc.map(String) : null, color: (typeof t.color === 'string' && /^#[0-9a-f]{6}$/i.test(t.color)) ? t.color : null, _iso: t.disassociated === true };
+      // suppressedTags: auto-tag names deleted/merged away on this canvas (kept
+      // through backups/restores so the removed names don't regenerate).
+      const _supp = Array.isArray(t.suppressedTags) ? [...new Set(t.suppressedTags.map(normTagDisp).filter(s => TAG_RE.test(s)))].slice(0, 200) : [];
+      return { id, name: String(t.name || ('Canvas ' + (ti + 1))).slice(0, 40), docs, _activeRaw: (t.activeId === null) ? null : (typeof t.activeId === 'string' ? t.activeId : undefined), main: t.main === true, assoc: Array.isArray(t.assoc) ? t.assoc.map(String) : null, color: (typeof t.color === 'string' && /^#[0-9a-f]{6}$/i.test(t.color)) ? t.color : null, suppressedTags: _supp, _iso: t.disassociated === true };
     });
     // second pass: de-dupe doc ids ACROSS tabs (keep the first, mint the rest)
     {
@@ -275,6 +350,11 @@ export const vault = {
     if (!tabs.some(t => t.main)) tabs[0].main = true; // first/starting tab is the main verse
     this.tabs = tabs;
     this.ensureIsoColors();
+    // enforce per-canvas auto-tag suppression: docs restored from backups (or
+    // older localStorage rows) regenerate auto/* deterministically, which would
+    // resurrect names the user deleted/merged away — strip them again here.
+    for (const t of this.tabs) for (const d of (t.docs || [])) this.applySuppress(d, t);
+    this.persist();
     return tabs;
   },
 
@@ -310,7 +390,7 @@ export const vault = {
     } catch { /* fresh seed */ }
     if (!docs) docs = seedDocs();
     try { docs = docs.map((d, i) => normalizeDoc(d, 'Untitled ' + (i + 1))); } catch { docs = seedDocs(); }
-    this.tabs = [{ id: uid('tab_'), name: 'Universe 1', docs, activeId: docs[0]?.id || null, main: true, assoc: [], color: null }];
+    this.tabs = [{ id: uid('tab_'), name: 'Universe 1', docs, activeId: docs[0]?.id || null, main: true, assoc: [], color: null, suppressedTags: [] }];
     this.activeTabId = this.tabs[0].id;
     this.persist();
   },
@@ -322,7 +402,7 @@ export const vault = {
   // ---------- canvases (top tabs): separate doc sets, copy bodies between them ----------
   createTab(name) {
     const clean = String(name || '').trim().slice(0, 40) || ('Universe ' + (this.tabs.length + 1));
-    const t = { id: uid('tab_'), name: clean, docs: [], activeId: null, main: false, assoc: [], color: null };
+    const t = { id: uid('tab_'), name: clean, docs: [], activeId: null, main: false, assoc: [], color: null, suppressedTags: [] };
     this.tabs.push(t);
     // new canvases join the active tab's association — the shared verse they were built from
     for (const s of this.scopeTabs()) {
@@ -441,6 +521,9 @@ export const vault = {
     for (const d of this.docs.filter(d => ids.includes(d.id))) {
       if (names.has(d.name.toLowerCase())) { skipped++; continue; } // already there
       const c = { id: uid(), name: d.name, text: d.text, words: d.words, links: [...d.links], tags: [...d.tags], origin: d.origin || d.id };
+      if (d.manualTags && Object.keys(d.manualTags).length) c.manualTags = { ...d.manualTags }; // spot anchors travel with the copy
+      if (d.origKey) c.origKey = d.origKey; // copies share the original bytes, like shared picture keys
+      this.applySuppress(c, t); // a copied body never resurrects a name this canvas deleted/merged away
       t.docs.push(c);
       names.add(c.name.toLowerCase());
       copied.push(c);
@@ -491,6 +574,7 @@ export const vault = {
     d.name = n;
     // a dedupe suffix ("Report (2).md") must not leak into the auto tags
     if (n !== clean) d.tags = withAutoTags(n, String(text), p.tags);
+    this.applySuppress(d, this.tab());
     this.docs.push(d);
     this.persist();
     return d;
@@ -503,7 +587,10 @@ export const vault = {
     if (!d) return null;
     const p = parseDoc(String(d.text || ''));
     d.words = p.words; d.links = p.links;
-    d.tags = withAutoTags(d.name, d.text, p.tags);
+    // manual tags live outside the text — carry them through the recount
+    const keepers = (d.tags || []).filter(isManual);
+    d.tags = withAutoTags(d.name, d.text, [...p.tags, ...keepers]);
+    this.applySuppress(d); // owning canvas's suppression (deleted/merged names stay gone)
     return d;
   },
   rename(id, title) {
@@ -513,6 +600,7 @@ export const vault = {
     const ext = (d.name.match(/\.[^.]+$/) || [''])[0];
     d.name = clean + ext;
     d.tags = withAutoTags(d.name, d.text, d.tags); // old auto/* dropped, new title words join
+    this.applySuppress(d, this.tab());
     this.persist();
     return d;
   },

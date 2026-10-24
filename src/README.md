@@ -48,15 +48,56 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   (scanned PDFs, picture-only Office docs) import on their OCR words alone;
   docs whose pictures predate OCR get one background backfill pass on load.
 - Every import auto-focuses as the sun; failures toast the real reason (6s).
+- Originals are kept: each upload's full bytes are filed in the
+  `visidocsverse-orig` IndexedDB sidecar (this browser only, >100MB files
+  skipped), so the body's menu downloads the genuine original file. Link a
+  vault folder (next section) to also mirror them as real files on disk. Bodies
+  imported before this, or arrived via backup restore, have no bytes — their
+  menu downloads the extracted text as `.txt` instead (plain-text names keep
+  their extension; `.pdf`/`.docx`/… fall back to `Name.txt` so it opens).
 - Names are trimmed (`"report.docx "` works), extensionless-but-typed files are
   accepted by MIME, and skips are named in the toast (`"archive.zip" .zip …`).
 - Folder button + drag-drop recurse into subfolders (File System Access when
   available, `webkitdirectory`/DataTransfer entries otherwise, 60-file cap).
 
+## Vault folder (desktop app only)
+- The left panel's Vault folder row links one real folder on the computer
+  (Link / Change / Unlink + Open folder). Every upload's original is mirrored
+  there as a genuine file under `originals/`, and `vault.json` (the full
+  text+metadata payload) follows on the same beat — so each body exists twice:
+  once alive in the universe, once as a file to browse, copy, or sync.
+- One way only: the app writes, never reads back. Unplugged drives, renames
+  in Finder/Explorer, or mid-sync cloud folders can never break the running
+  universe; a missed write toasts once and retries on the next beat. Files
+  over 25MB stay app-internal only (still downloadable in-app).
+- Bodies imported before linking mirror on link (one migration pass);
+  renames rename the file, deletes delete it (copies share bytes under their
+  own names), unlinking stops the mirroring and leaves everything on disk.
+- The body's right-click menu gains "Reveal original in folder" (highlights
+  the file in Finder/Explorer). The web build shows the row as "desktop app
+  only" and is otherwise untouched. Glossary: "vault folder".
+
 ## Labels
-- Left panel Labels row: slider 0–150% for file-name size under bodies
+- Left panel Labels row: slider 0–300% for file-name size under bodies
   (far left = hidden), button toggles show/hide (restores last nonzero).
   Persisted in `visidocsverse.ui` as lbScale/lbLast, applied as ren.labelScale.
+
+## Body size, rotation + compress
+- Three body-geometry rows under Labels (all apply to orbs and ▼ triangles):
+  Size (🔵) slider 5–300% scales bodies (picking follows the scale),
+  button toggles 100% and the last size; Rotation (🔄) spins bodies around
+  the vertical axis — orbs stay round like spheres (surface bands and texture
+  drift around while the light stays fixed; limb shading keeps them ball-like)
+  and triangles flip edge-on like cards — slider sets speed, button toggles
+  (off eases surfaces back to rest, and spin keeps running while the universe
+  is paused — it has its own clock); the glow stays a round ambiance, and the
+  speed slider uses a perceptual curve (low speeds still visibly turn);
+  Compress (↔) squishes bodies along the horizontal axis, slider 20–100%
+  (100 = round), button toggles round and the last squish. Size and spin
+  compose (spin × squish). Persisted in `visidocsverse.ui` (sizeScale/sizeLast,
+  spinOn/spinSpeed, compressScale/compressLast), applied as ren.bodyScale /
+  ren.spinTarget+spinOmega / ren.compressScale, and included in cloud backups
+  / master files.
 
 ## Background shade
 - Left panel Shade row (under Labels): slider 0–100% for canvas background
@@ -96,7 +137,7 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   between bodies — bodies themselves always stay put. It drives the same
   setting as the left-panel Tether row, so both stay in sync. (The hint pill
   hides on narrow phone screens, so this shortcut is desktop-wide only.)
-- ◉ Distribute button next to Thematic: auto-distribute pins every body in a
+- ◉ Distribute button next to Tethers: auto-distribute pins every body in a
   fit-to-canvas orb (sun at the center, other bodies on mass-ranked fibonacci
   shells, scaled to an ellipse matching the viewport) and freezes orbital
   motion — pan/zoom/orbit still work, but bodies hold still with zero drift.
@@ -155,27 +196,28 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   stays off. Double-clicking empty space only recenters pan (never touches the
   zoom, fitted or not); the full camera reset lives in the right-click menu.
 
-## Thematic lens (bottom pill)
-- ◉ Thematic button next to Tethers: the universe holds THEME BODIES ONLY —
-  no doc bodies. Co-related concepts (terms that travel together across the
-  shared-vocabulary web) are distilled into first-class theme bodies labeled
-  with their concepts (e.g. "self-efficacy · alignment").
-- Each theme's mass follows its thematic weight, so heavier themes pull harder
-  and anchor their clusters under the same orbital mechanics and slider
-  settings. Themes web together through shared grounded docs (every theme gets
-  ≥1 tether — nothing drifts off); explicit [[ref]] tethers are left out so
-  citation structure can't warp the map.
-- Theme hygiene: a concept must evidence in ≥3 docs (≥2 on small canvases) to
-  seed or join a theme, so one-off citation surnames never become labels; a
-  term present in the full text of more than ~30% of the corpus ("teacher",
-  "report", "canvas" …) is treated as boilerplate wallpaper and can neither
-  seed nor join either. The lens opens pre-settled — clusters arrive webbed
-  even when the universe is paused or at slow-motion.
+## Thematic view (Universe view modes row → Thematic)
+- The Thematic entry redraws the canvas: the universe drops its document bodies and
+  shows THEME BODIES ONLY — the ideas the files share, distilled into
+  first-class bodies labeled with their concepts (e.g. "self-efficacy ·
+  alignment").
+- Themes are earned, not given: a concept must evidence across several bodies
+  to seed or join one (so one-off citation surnames never become labels), and
+  terms smeared across the whole corpus ("teacher", "report", "canvas" …) are
+  treated as boilerplate wallpaper and excluded — what you see is the genuine
+  common ground. Each theme's mass follows its thematic weight, so heavier
+  ideas pull harder and anchor their clusters; themes web together through the
+  grounded documents they share (every theme gets ≥1 tether — nothing drifts
+  off), while explicit [[ref]] links are left out so citation structure can't
+  warp the map. The view opens pre-settled — clusters arrive webbed even while
+  paused or in slow motion.
 - Clicking a theme shows its concepts + grounded member bodies; clicking a
-  member drills down — the lens exits and the doc opens as sun in the regular
-  view. Search in the lens lights up the themes grounding the hits. Toggling
-  off restores the regular universe exactly as it was (formation included).
-  The lens persists across canvas switches, in `visidocsverse.ui`, and in cloud
+  member drills down — the view exits and the doc opens as sun in the Main
+  view. Search in the view lights up the themes grounding the hits; with
+  nothing selected, Thematic distills the whole visidocsverse at once (shared
+  canvases only, copies counted once — members can jump canvases). Toggling
+  off restores the Main view exactly as it was (formation included).
+  The view persists across canvas switches, in `visidocsverse.ui`, and in cloud
   backups / master files.
 - "All thematic tags" in the general-state reader (beside View all bodies)
   opens every tag in the verse as its original pill on a near-transparent
@@ -184,27 +226,29 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   grain, centered bold title, dark-outlined pills) + dark font on a white
   canvas, dark smoked glass + white font on a black canvas (maximum
   contrast either way); pills feed search as
-  usual; click out or Esc closes; drag the header to move the card
-  anywhere (double-click re-centers; position persists). Its "◈ Show tags verse" button enters the  TAGS VERSE — a separate lens built from the docs' own tags (explicit +
-  auto/, prefix-blind), NOT from text concepts: one body per tag, webbed by
-  shared member docs, tag mass = grounding-body count. Tag bodies drill down
-  the same way (tag → grounded members → doc exits to regular view), with
-  their own general/active reader, search light-up, and an "Exit tags verse"
-  option; mutually exclusive with the Thematic lens; persists the same way.
-  Entering from the pop-out closes it. Tag-specific seating tuning: only pairs
-  sharing ≥2 docs web directly in big verses (loners re-home onto their single
+  usual (hover one for its × delete, drag one onto another to merge — thin
+  tips at the foot of the card explain both); click out or Esc closes; drag the header to move the card
+  anywhere (double-click re-centers; position persists). Its "◈ Show tags view" button enters the Tags view — a separate lens built from the documents' own labels (explicit #tags plus auto-derived ones, prefix-blind), NOT from text concepts: one body per tag, webbed wherever two tags share member documents, tag mass = grounding-body count, so the map shows how your labeling connects the corpus. Tag bodies drill down the same way (tag → grounded members → member opens as sun in the Main view), with their own general/active reader, search light-up, and an "Exit tags view" option; mutually exclusive with the Thematic view; persists the same way.
+  Entering from the pop-out closes it. Seating is tuned for dense label meshes: only pairs
+  sharing ≥2 docs web directly in big views (loners re-home onto their single
   best partner instead of chaining to the anchor), weak short springs
-  (0.005/80) so the dense tag mesh can't rope into a ball, rank-tier shells
+  (0.005/80) so the mesh can't rope into a ball, rank-tier shells
   (heaviest tags innermost, one-doc tags across three roomy outer lanes), and
-  a teleport-free glide into those tiers so the verse inherits calm orbital
+  a teleport-free glide into those tiers so the view inherits calm orbital
   motion instead of a settle slingshot.
+- Universe view modes: the discrete row under the top tabs — Main | Thematic | Tag.
+  Main shows every document body as itself; Thematic redraws the canvas around
+  the ideas the documents share; Tag redraws it around the labels on the
+  documents. The live view is highlighted gold. See the glossary's Main (Universe) view, thematic
+  view, tags view, and Universe view modes entries.
 - Glossary of Terms: a centered full-width strip at the foot of the bottom
   pill (same frosted glass) opens a draggable, resizable minimap-style glass
-  pane docked bottom-right — 23 A–Z in-app definitions (verse, sun, body,
+  pane docked bottom-right — 25+ A–Z in-app definitions (verse, sun, body,
   mass, backlinks, shared ground, center of gravity, system energy, rim,
-  orbital mechanics, general/active view, thematic tag, both verses) plus a
-  side-by-side comparison of the Thematic Tags Verse vs the general Thematic
-  Verse. Geometry, visibility, and the glass dot persist like the verse map.
+  orbital mechanics, general/active view, thematic tag, delete tag, merge
+  tags, Main view, thematic view, tags view, view modes) plus a
+  side-by-side comparison of the tags view vs the thematic view.
+  Geometry, visibility, and the glass dot persist like the verse map.
 - General state: off-click into empty space releases the sun (◌ GENERAL STATE
   — CENTER GRAVITY) — no active body, the canvas center holds gravity, and the
   reader shows a live overview (counts + largest bodies as drill-down rows).
@@ -219,7 +263,7 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   highlight, restoring the full non-faded view.
 - Whole visidocsverse: pressing Thematic with nothing selected distills EVERY
   shared canvas at once (copies deduped by lineage; isolated verses stay out)
-  into one theme map (◉ Thematic ⋃, kicker ◈ THEMATIC — WHOLE VISIDOCSVERSE).
+  into one theme map (kicker ◈ THEMATIC — WHOLE VISIDOCSVERSE).
   Member rows can ground bodies from other canvases — clicking one jumps to
   that canvas and opens the doc as sun.
 
@@ -277,6 +321,27 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
 
 ## Tags (explicit + auto)
 - Explicit `#tags` in the text work as before (shared tag = tether + mass).
+- Manual tags: select any block of text in the Active body reader, right-click
+  it, and choose Tag — the selection becomes a `manual/<slug>` tag on that
+  body (whole-word snapped, `a–z 0–9 _` only), badged with a gold M on its
+  pills in the reader and the tags pop-out. The menu's suggested name is only
+  a starting point: “Name it yourself…” opens an inline field (prefilled with
+  the suggestion) where any name can be typed — it is slugified the same way
+  and lands as a manual tag with the same spot anchor and gold M. Manual tags match, tether, weigh,
+  and search exactly like written #tags, but they live outside the body text:
+  recounts, renames, and text edits never touch them. Deleting the tag (tags
+  view × / delete) or merging it drops the manual entry directly; a merge
+  whose source lived only as a manual tag carries the manual-ness onto the
+  target name. Glossary: "Tags (manually created)". Highlighting wraps each
+  text run of the spot separately, so marks and the jump flash survive
+  selections crossing #tags, [[links]], bold, or paragraph breaks.
+- Explicit tags (hand-written into the prose): the + #tag button in the
+  reader's tag row writes one in-app — type any name (same slug rules, Enter
+  to commit, Esc to cancel) and it is appended to the body's text, then
+  recounted so it tethers, weighs, and searches like any written tag. The
+  in-app counterpart to typing #tag in an imported file; suppression only ever
+  hides the auto/ form, so a written tag always (re)brings its name back.
+  Glossary: "explicit tag".
 - Auto tags: every doc also derives `auto/*` tags from its filename/title words
   (STOP words and pure numbers skipped; long titles keep the longest/most
   distinctive words first, capped at 6) plus, for one- or two-word titles,
@@ -289,6 +354,31 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   auto tag carried by more than `max(4, 40%)` of the corpus ("evidence" on
   16/18 files) tethers nothing and weighs nothing, while small shared auto
   tags ("screenshot" on 4) tether normally. Explicit tags always count.
+- Delete + merge (tags pop-out only — the "All thematic tags" glass card):
+  hover a pill and click its × to delete the tag from every body on the
+  canvas (confirmed once; explicit uses are stripped from body texts and the
+  auto form is suppressed so title words can't resurrect it — writing #tag
+  in any body brings it back); drag one pill onto another to merge the
+  dragged tag into the receiving tag (the drop target keeps its name, the
+  moved tag disappears). Both dialogs offer “Don't ask again for tag deletes
+  and merges” (persisted on this machine; the Confirms row in the tags pane
+  tips shows the state and toggles it back on). Thin static tips at the foot
+  of the card explain both; the glossary defines "delete tag" and "merge tags".
+  Clicking a pill (no drag) opens the tag's origin body — the first body
+  carrying it, preferring explicitly-written tags over auto derivations —
+  as the canvas sun AND in the Active body reader, so verse and reader agree. Manual
+  tags jump further: the reader scrolls to the exact creation spot (snippet
+  anchor stored on the doc, whitespace-blind match, gold flash that nests
+  inside the persistent marker). Every manual-tag spot stays visibly marked
+  in the reader (subtle gold .spot-mark, re-applied on each render, removed
+  with the tag). Anchors persist through backups/copies/restores and move with merges;
+  deleting the tag drops its anchor. Anchors are rich (snippet + stripped
+  offset + DOM path of the creation range): the jump verifies the path first,
+  else takes the occurrence nearest the recorded offset — repeated boilerplate
+  can't misroute it. Tags made before this upgrade keep plain-string anchors
+  (first occurrence); re-tagging gives them exact-block jumps. Both ops are
+  per-canvas (copies elsewhere keep their tags), ride cloud backups / master
+  files (`tabs[].suppressedTags`), and apply to merged/copied arrivals too.
 
 ## Verse associations (link canvases)
 - The top bar is labeled Active VisiDocsVerse Projects; the first/starting tab is
@@ -324,6 +414,27 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
 - Top of the pane is a SHARED GROUND hover menu (topic-tethered bodies +
   shared terms, up to 12); hover the label to open, tap it on touch, Esc or a
   selection closes it. Explicit [[links]] stay inline below as before.
+
+## View source (right-hold preview)
+- Press and HOLD right mouse on a body to preview the first 120 words of its
+  source in a glass pop-out (same frost recipe as the tags pane); release to
+  dismiss. A plain quick right-click keeps the existing context menu.
+- Smart excerpt: Abstract for papers, Foreword/Preface/Prologue/Introduction
+  for books, opening lines otherwise; picture-only bodies show a thumbnail.
+- Works mid-orbit too: the pop-out is pinned at the press point, so a running
+  universe doesn't smear it (the body may drift on underneath, harmlessly).
+  Never in the Thematic lens (theme bodies have no source text).
+- No right-click? No problem: left-click a body (it becomes the active body),
+  then hit 👁 Preview source in the Active-body reader pane — the same 120-word
+  pop-out, pinned until you click 👁 again, ✕, Esc, or the canvas. Touchscreens too.
+- From the quick right-click menu: its first item is 👁 Preview source, which
+  pins the same pop-out (handy when the hold-preview vanishes the moment you
+  try to click into it — pin it via the menu or the reader instead).
+- Overlays never stack: opening the preview dismisses the image zoom + any
+  menu, and clicking a reader image while the preview/menu is up dismisses
+  them instead of zooming (click the image again for the zoom once clear).
+- While shown, the body flashes in the reader's general-view body list (which
+  auto-expands past the 6 largest if needed) — when the reader pane is open.
 
 ## "?" explicators (editable in the editor, locked on desktop)
 - All four helpers are editable: SHARED GROUND (? in the reader pane),

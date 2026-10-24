@@ -21,9 +21,12 @@ Product: **VisiDocsVerse** · Gumroad permalink `ltsmdc` (`https://gumroad.com/l
 ```sh
 cd src/tools/desktop
 pnpm install
-# Rust plugins (the exact commands you listed):
+# Rust plugins (re-run all of these on a fresh scaffold):
 cargo add tauri-plugin-store
 cargo add tauri-plugin-http
+cargo add tauri-plugin-fs      # vault-folder mirror (originals on disk)
+cargo add tauri-plugin-dialog  # vault-folder picker
+cargo add tauri-plugin-opener  # reveal-in-Finder/Explorer + open folder
 # JS bindings (already in package.json, but harmless to re-run):
 pnpm add @tauri-apps/plugin-store @tauri-apps/plugin-http
 ```
@@ -95,7 +98,29 @@ Artifacts land in `src-tauri/target/<triple>/release/bundle/{dmg,nsis,msi}/`.
 - Windows: sign the `.exe`/`.msi` with an EV/code-signing cert or SmartScreen
   will warn.
 
-## 6. Licensing notes (Option A, already implemented in `src/license.js`)
+## 6. Vault-folder smoke test (on the built installer, before signing)
+
+The frontend reaches the shell only through `window.__TAURI__.core.invoke`
+(see `src/vault-fs.js`), so a wrong command/permission name fails LOUDLY here
+and nowhere else. Open a terminal on the test machine if a step fails — the
+shell prints the exact unknown-permission or denied-scope error:
+
+1. `pnpm tauri dev` (or the built app): left panel shows the Vault folder row
+   as "not linked" (web preview shows "desktop app only" — expected there).
+2. Link folder… → native folder picker appears → pick an empty folder.
+   Status becomes "Vault folder: <name>"; the folder gains `originals/`.
+3. Drop in a `.md` + a `.pdf`: both bodies appear AND both files land in
+   `originals/` byte-identical (diff them). `vault.json` appears ≤10s later.
+4. Right-click a body → menu shows "Reveal original in folder" → Finder /
+   Explorer opens with the file highlighted.
+5. Rename the body → the folder file renames too. Remove the body → the
+   folder file disappears. Link a second canvas copy → both names mirrored.
+6. Unlink → row back to "not linked"; files stay on disk; universe untouched.
+7. If any step reports denied/unknown: compare
+   `src-tauri/capabilities/default.json` identifiers against the installed
+   plugins (`cargo add` pulls current v2 names; correct and rebuild).
+
+## 7. Licensing notes (Option A, already implemented in `src/license.js`)
 
 - First launch shows the Activate modal; the key is verified once against
   `POST https://api.gumroad.com/v2/licenses/verify`

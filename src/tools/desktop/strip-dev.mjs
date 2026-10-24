@@ -53,11 +53,11 @@ function stripRanges(text, startRe, endRe, label) {
   // once the pane is gone, and per-selector surgery risks mangling shared
   // rules like `#leftPanel, #docPanel, #devBox`. The cbLast/devNote/devEdit
   // rules below are removed because those lines belong to no shared rule.)
-  if (/id="devBox"|pushBtn|loadInput|mergeInput|devWin|cbStatus/.test(html))
+  if (/id="devBox"|devShowBtn|pushBtn|loadInput|mergeInput|devWin|cbStatus/.test(html))
     throw new Error('index.html: leftover DEV pane markup after strip');
   // dead CSS: rules that only styled the removed pane's elements
   const cssLines = html.split('\n');
-  const keptLines = cssLines.filter(l => !/#(cbLast|devNote|devEdit)\b/.test(l));
+  const keptLines = cssLines.filter(l => !/#(cbLast|devNote|devEdit|devShowBtn)\b/.test(l));
   const cssRemoved = cssLines.length - keptLines.length;
   html = keptLines.join('\n');
   writeFileSync(p, html);

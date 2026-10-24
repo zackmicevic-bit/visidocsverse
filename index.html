@@ -6,7 +6,8 @@
   #uniCv { position:absolute; inset:0; cursor:grab; }
   .glass { background:var(--glass); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); border:1px solid var(--line); border-radius:14px; box-shadow:0 18px 50px rgba(0,0,0,.5); }
   #leftPanel { position:absolute; top:16px; left:16px; width:264px; padding:14px 15px; z-index:10; }
-  #leftPanel h1 { margin:0; font-size:17px; letter-spacing:.14em; }
+  #leftPanel h1 { margin:0; font-size:17px; letter-spacing:.14em; display:flex; align-items:center; gap:4px; }
+  #titleLogo { height:24px; width:auto; flex:0 0 auto; }
   #leftPanel h1 span { color:var(--sun); }
   #leftPanel h1 .visi { color:var(--sun); font-weight:300; }
   #leftPanel h1 .pipe { margin:0 1px; color:var(--sun); }
@@ -50,6 +51,8 @@
   #docBody { font-size:13.5px; line-height:1.75; color:#c4cfdf; white-space:pre-wrap; }
   #docBody .wl { color:#9cc2ff; border-bottom:1px dotted #9cc2ff; cursor:pointer; }
   #docBody .tag { color:#8fd0a8; cursor:pointer; }
+  .spot-flash { background:rgba(255,210,75,.45); border-radius:3px; box-shadow:0 0 0 2px rgba(255,210,75,.3); }
+  .spot-mark { background:rgba(255,210,75,.26); border-radius:3px; box-shadow:0 0 0 1px rgba(255,210,75,.35); }
   /* reader picture gallery (Word/PPT/PDF embeds live below the prose) */
   #docBody .imggal { display:grid; gap:10px; margin:12px 0 4px; }
   #docBody .imggal figure { margin:0; background:rgba(255,255,255,.03); border:1px solid var(--line); border-radius:8px; padding:8px; }
@@ -61,7 +64,9 @@
   #imgLight[hidden] { display:none; }
   #imgLight img { max-width:92vw; max-height:92vh; border-radius:8px; }
   .tagpill { display:inline-block; background:rgba(143,208,168,.12); border:1px solid rgba(143,208,168,.35); color:#9fe0b8; border-radius:20px; padding:2px 9px; font-size:11px; margin:0 4px 4px 0; cursor:pointer; }
+  .tagpill.demo { cursor:default; }
   .tagpill.notesbtn { background:rgba(233,195,60,.16); border-color:rgba(233,195,60,.55); color:#f2d24b; font-weight:700; }
+  .tagpill .mmark { color:#ffd24b; font-weight:800; margin-left:5px; font-size:10.5px; }
   .notefilter { display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--mut); margin:0 0 10px; }
   .notefilter label { display:flex; align-items:center; gap:4px; cursor:pointer; }
   .notefilter input { accent-color:#e9c33c; }
@@ -79,13 +84,13 @@
   #noteEdit h4 { margin:0 0 6px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #noteEdit textarea { width:100%; box-sizing:border-box; min-height:64px; font:inherit; font-size:12.5px; resize:vertical; color:#000; background:#fff; }
   .tagpill.auto { background:rgba(122,162,255,.12); border-color:rgba(122,162,255,.4); color:#a8c1ff; }
-  /* tags-verse pop-out: true frosted-glass card over the live canvas, click out / Esc to close.
+  /* tags-view pop-out: true frosted-glass card over the live canvas, click out / Esc to close.
      Frosted milk-white + dark font on a white canvas, dark smoked glass + white font on a black canvas.
      Frost recipe (matches the reference): milky translucent gradient, heavy backdrop blur +
      saturate/brightness lift, hairline bright edge, top-edge highlight, faint etched grain, soft deep shadow. */
-  #tagPop { position:fixed; inset:0; z-index:210; display:flex; align-items:center; justify-content:center; padding:4vmin; box-sizing:border-box; }
+  #tagPop { position:fixed; inset:0; z-index:210; display:flex; align-items:center; justify-content:center; padding:4vmin; box-sizing:border-box; pointer-events:none; cursor:default; }
   #tagPop[hidden] { display:none; }
-  .tvp-card { width:min(600px,92vw); max-height:82vh; display:flex; flex-direction:column; border-radius:10px; padding:26px 30px 22px; box-sizing:border-box; position:relative; overflow:hidden; }
+  .tvp-card { width:min(600px,92vw); max-height:82vh; display:flex; flex-direction:column; border-radius:10px; padding:26px 30px 22px; box-sizing:border-box; position:relative; overflow:hidden; pointer-events:auto; cursor:default; }
   .tvp-frost { background:linear-gradient(155deg, rgba(255,255,255,.58), rgba(255,255,255,.34) 42%, rgba(250,252,255,.46) 72%, rgba(255,255,255,.60)); -webkit-backdrop-filter:blur(26px) saturate(1.6) brightness(1.07); backdrop-filter:blur(26px) saturate(1.6) brightness(1.07); border:1px solid rgba(255,255,255,.8); box-shadow:0 30px 80px rgba(30,45,75,.30), 0 2px 14px rgba(30,45,75,.14), inset 0 1px 0 rgba(255,255,255,.95), inset 0 0 28px rgba(255,255,255,.22); color:#0d1117; }
   .tvp-frost::before { content:''; position:absolute; inset:0; pointer-events:none; opacity:.055; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E"); }
   .tvp-clear { background:linear-gradient(155deg, rgba(22,30,46,.62), rgba(10,14,22,.40) 45%, rgba(16,24,40,.52)); -webkit-backdrop-filter:blur(24px) saturate(1.3) brightness(.96); backdrop-filter:blur(24px) saturate(1.3) brightness(.96); border:1px solid rgba(220,232,255,.38); box-shadow:0 30px 80px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.28), inset 0 0 28px rgba(140,175,230,.08); color:#f2f6ff; }
@@ -93,7 +98,7 @@
   .tvp-head { display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom:14px; position:relative; cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none; }
   .tvp-head:active { cursor:grabbing; }
   .tvp-head .tvp-title { font-size:17px; font-weight:800; letter-spacing:.1em; color:inherit; text-align:center; }
-  .tvp-head .tvp-x { position:absolute; right:-6px; top:-8px; background:none; border:none; cursor:pointer; font-size:15px; line-height:1; color:inherit; opacity:.6; padding:6px; }
+  .tvp-head .tvp-x { position:absolute; right:-6px; top:-8px; background:none; border:none; cursor:default; font-size:15px; line-height:1; color:inherit; opacity:.6; padding:6px; }
   .tvp-head .tvp-x:hover { opacity:1; }
   .tvp-tags { overflow:auto; line-height:2.1; margin-bottom:16px; min-height:40px; scrollbar-width:thin; text-align:center; position:relative; }
   .tvp-tags .tagpill { font-size:12px; }
@@ -103,7 +108,40 @@
   .tvp-frost .tagpill.auto { background:rgba(255,255,255,.34); border-color:rgba(30,60,140,.6); color:#1b2f6b; }
   .tvp-frost .tagpill.auto:hover { background:rgba(255,255,255,.8); }
   .tvp-empty { font-size:12.5px; letter-spacing:0; opacity:.75; }
+  /* tag delete + merge affordances: × per pill (shows on hover), dashed-gold
+     drop target while dragging, dimmed drag source, thin static tips at the foot */
+  .tvp-tags .tagpill, .tvp-tags .tagpill:active { cursor:default; }
+  .tvp-tags .tagpill .tvp-x { display:inline-block; margin-left:7px; padding:0 4px; border-radius:6px; font-size:11px; font-weight:700; opacity:0; cursor:default; }
+  .tvp-tags .tagpill:hover .tvp-x, .tvp-tags .tagpill:focus-within .tvp-x { opacity:.75; }
+  .tvp-tags .tagpill .tvp-x:hover { opacity:1; background:rgba(255,120,120,.28); }
+  .tvp-frost .tagpill .tvp-x:hover { background:rgba(176,0,0,.14); }
+  .tvp-tags .tagpill.drop-hi { outline:2px dashed var(--sun); outline-offset:2px; transform:scale(1.08); }
+  .tvp-tags .tagpill.drag-src { opacity:.35; }
+  .tvp-tips { margin:12px auto 0; max-width:520px; font-size:10.5px; font-weight:300; line-height:1.65; letter-spacing:.02em; text-align:left; display:grid; grid-template-columns:auto 1fr; gap:4px 8px; align-self:center; }
+  .tvp-tips .tvp-term { color:var(--sun); font-weight:600; white-space:nowrap; }
+  .tvp-frost .tvp-tips .tvp-term { color:#8a6a1f; }
+  .tvp-tips .tvp-exp { opacity:.65; }
   .tvp-go { align-self:center; background:rgba(255,255,255,.3); border:1px solid currentColor; color:inherit; border-radius:20px; padding:8px 22px; font-size:12px; font-weight:700; letter-spacing:.08em; cursor:pointer; opacity:.95; white-space:nowrap; position:relative; }
+  /* view-source preview: transient glass card, same frost recipe as the tags pane */
+  #srcPop { position:fixed; inset:0; z-index:215; pointer-events:none; }
+  #srcPop[hidden] { display:none; }
+  .svp-card { position:absolute; width:min(360px,92vw); max-height:70vh; pointer-events:auto; }
+  .svp-head { display:flex; align-items:center; gap:8px; margin-bottom:8px; position:relative; padding-right:20px; }
+  .svp-head .svp-x { position:absolute; right:-6px; top:-8px; background:none; border:none; cursor:default; font-size:15px; line-height:1; color:inherit; opacity:.6; padding:6px; }
+  .svp-head .svp-x:hover { opacity:1; }
+  .svp-kicker { font-size:10px; letter-spacing:.14em; color:var(--sun); font-weight:700; }
+  .tvp-frost .svp-kicker { color:#8a6a1f; }
+  .svp-sec { font-size:10px; font-weight:700; letter-spacing:.08em; border:1px solid currentColor; border-radius:12px; padding:1px 8px; opacity:.85; white-space:nowrap; }
+  .svp-rel { margin-left:auto; font-size:10px; color:var(--mut); white-space:nowrap; }
+  .svp-title { font-size:15px; font-weight:700; margin:0 0 8px; overflow-wrap:anywhere; }
+  .svp-body { font-size:12.5px; line-height:1.65; overflow:auto; min-height:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .svp-body img { display:block; max-width:100%; max-height:240px; border-radius:8px; }
+  .svp-cap { font-size:11px; color:var(--mut); margin-top:6px; }
+  .svp-cap[hidden] { display:none; }
+  .svp-foot { margin-top:10px; font-size:10.5px; color:var(--mut); }
+  /* general-view row flash while its body is previewed */
+  .bl-row.src-hi { border-color:var(--sun); box-shadow:0 0 0 1px var(--sun), 0 0 14px rgba(255,206,107,.45); background:rgba(255,206,107,.12); }
+  body.light-panes .bl-row.src-hi { border-color:#8a6a1f; box-shadow:0 0 0 1px #8a6a1f, 0 0 14px rgba(138,106,31,.4); background:rgba(233,195,60,.22); }
   .tvp-go:hover { opacity:1; background:rgba(255,255,255,.55); }
   .tvp-clear .tvp-go { background:rgba(140,175,230,.08); }
   .tvp-clear .tvp-go:hover { background:rgba(140,175,230,.22); }
@@ -122,6 +160,12 @@
   #glossBody { display:block; flex:1 1 auto; min-height:0; overflow:auto; padding:2px 14px 14px; font-size:12.5px; line-height:1.6; color:var(--txt); scrollbar-width:thin; }
   .g-term { margin:9px 0; }
   .g-word { color:var(--acc); font-weight:700; }
+  .g-comp { margin:10px 0; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .g-comp table { width:100%; border-collapse:collapse; font-size:11.5px; line-height:1.5; }
+  .g-comp th { text-align:left; font-size:10.5px; letter-spacing:.06em; color:var(--acc); padding:7px 9px; background:rgba(95,157,255,.12); border-bottom:1px solid var(--line); }
+  .g-comp td { padding:7px 9px; border-bottom:1px solid rgba(120,150,200,.1); vertical-align:top; }
+  .g-comp tr:last-child td { border-bottom:none; }
+  .g-comp td.gf { font-weight:700; color:var(--sun); white-space:nowrap; }
   .g-vs { margin:14px 0 4px; border:1px solid rgba(140,170,220,.35); border-radius:10px; padding:10px 12px; background:rgba(95,157,255,.07); }
   .g-vs-head { font-size:10.5px; letter-spacing:.12em; color:var(--acc); font-weight:700; margin-bottom:6px; }
   .g-vs-row { margin:5px 0; }
@@ -175,8 +219,8 @@
   #helpEditText { width:100%; min-height:130px; background:rgba(10,14,20,.8); border:1px solid var(--line); color:var(--txt); border-radius:9px; padding:10px 12px; font-size:13px; line-height:1.6; font-family:inherit; resize:vertical; }
   #helpEditText:focus { outline:none; border-color:var(--acc); }
   #helpEditHint { font-size:11px; color:var(--mut); margin-top:8px; line-height:1.5; }
-  #hintBar { position:absolute; bottom:14px; left:50%; transform:translateX(-50%); font-size:11.5px; color:#aebdd6; background:rgba(10,15,24,.85); border:1px solid rgba(140,170,220,.38); padding:6px 14px 5px; border-radius:14px; z-index:10; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); box-shadow:0 8px 28px rgba(0,0,0,.5); display:flex; flex-direction:column; align-items:center; gap:1px; max-width:94vw; }
-  #hintBar .hb-btns { display:flex; align-items:center; gap:6px; }
+  #hintBar { position:absolute; bottom:14px; left:50%; transform:translateX(-50%); font-size:11.5px; color:#aebdd6; background:rgba(10,15,24,.85); border:1px solid rgba(140,170,220,.38); padding:6px 14px 5px; border-radius:14px; z-index:10; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); box-shadow:0 8px 28px rgba(0,0,0,.5); display:flex; flex-direction:column; align-items:center; gap:1px; }
+  #hintBar .hb-btns { display:flex; align-items:center; justify-content:center; gap:6px; }
   #hintBar .hb-sep { color:var(--mut); opacity:.55; font-size:11px; user-select:none; -webkit-user-select:none; }
   #hintBar .hb-sep.thick { opacity:1; font-size:14px; font-weight:900; }
   #hintBar .hb-tips { font-size:10.5px; display:flex; flex-direction:column; align-items:center; gap:0; }
@@ -184,15 +228,18 @@
   .tt-w { color:#e6edfa; } .tt-g { color:var(--sun); } .tt-sep { color:var(--mut); margin:0 5px; }
   body.light-canvas .tt-w { color:#233044; }
   body.light-canvas .tt-g { color:#8a6a1f; }
-  /* VisiDocsVerse badge: pinned tight to the pill's left, always exactly pill-tall */
-  #pillLogo { position:absolute; right:calc(100% + 6px); top:-1px; height:calc(100% + 2px); width:auto; border-radius:12px; pointer-events:none; user-select:none; -webkit-user-select:none; }
-  #isoBtn, #lensBtn, #autoBtn, #fitBtn, #simpleOrbBtn, #simpleOrb2Btn, #triOrbBtn { background:rgba(95,157,255,.22); color:#e6edfa; border:1px solid rgba(140,170,220,.45); border-radius:12px; padding:2px 10px; font-size:11px; cursor:pointer; white-space:nowrap; }
-  #isoBtn:hover, #lensBtn:hover, #autoBtn:hover, #fitBtn:hover, #simpleOrbBtn:hover, #simpleOrb2Btn:hover, #triOrbBtn:hover { background:rgba(95,157,255,.38); }
-  #isoBtn.on, #lensBtn.on, #autoBtn.on, #fitBtn.on, #simpleOrbBtn.on, #simpleOrb2Btn.on, #triOrbBtn.on { background:rgba(95,157,255,.55); color:#fff; border-color:#ff5b5b; box-shadow:0 0 8px rgba(255,91,91,.45); }
+  /* (bottom-pill logo retired — the emblem now sits in the top title) */
+  #isoBtn, #autoBtn, #fitBtn, #simpleOrbBtn, #simpleOrb2Btn, #triOrbBtn { background:rgba(95,157,255,.22); color:#e6edfa; border:1px solid rgba(140,170,220,.45); border-radius:12px; padding:2px 10px; font-size:11px; cursor:pointer; white-space:nowrap; }
+  #isoBtn:hover, #autoBtn:hover, #fitBtn:hover, #simpleOrbBtn:hover, #simpleOrb2Btn:hover, #triOrbBtn:hover { background:rgba(95,157,255,.38); }
+  #isoBtn.on, #autoBtn.on, #fitBtn.on, #simpleOrbBtn.on, #simpleOrb2Btn.on, #triOrbBtn.on { background:rgba(95,157,255,.55); color:#fff; border-color:#ff5b5b; box-shadow:0 0 8px rgba(255,91,91,.45); }
+  #returnBtn { background:rgba(255,190,80,.20); color:#ffd98a; border:1px solid rgba(255,200,100,.55); border-radius:12px; padding:2px 10px; font-size:11px; cursor:pointer; white-space:nowrap; }
+  #returnBtn:hover { background:rgba(255,190,80,.38); color:#ffe9b8; }
   body.light-canvas #hintBar { color:#233044; background:rgba(255,255,255,.93); border-color:rgba(30,45,75,.28); box-shadow:0 8px 28px rgba(30,45,75,.2); }
-  body.light-canvas #isoBtn, body.light-canvas #lensBtn, body.light-canvas #autoBtn, body.light-canvas #fitBtn, body.light-canvas #simpleOrbBtn, body.light-canvas #simpleOrb2Btn, body.light-canvas #triOrbBtn { background:rgba(35,80,180,.12); color:#1a2a4a; border-color:rgba(35,80,180,.4); }
-  body.light-canvas #isoBtn:hover, body.light-canvas #lensBtn:hover, body.light-canvas #autoBtn:hover, body.light-canvas #fitBtn:hover, body.light-canvas #simpleOrbBtn:hover, body.light-canvas #simpleOrb2Btn:hover, body.light-canvas #triOrbBtn:hover { background:rgba(35,80,180,.24); }
-  body.light-canvas #isoBtn.on, body.light-canvas #lensBtn.on, body.light-canvas #autoBtn.on, body.light-canvas #fitBtn.on, body.light-canvas #simpleOrbBtn.on, body.light-canvas #simpleOrb2Btn.on, body.light-canvas #triOrbBtn.on { background:rgba(35,80,180,.88); color:#fff; border-color:#ff5b5b; box-shadow:0 0 8px rgba(255,91,91,.45); }
+  body.light-canvas #isoBtn, body.light-canvas #autoBtn, body.light-canvas #fitBtn, body.light-canvas #simpleOrbBtn, body.light-canvas #simpleOrb2Btn, body.light-canvas #triOrbBtn { background:rgba(35,80,180,.12); color:#1a2a4a; border-color:rgba(35,80,180,.4); }
+  body.light-canvas #isoBtn:hover, body.light-canvas #autoBtn:hover, body.light-canvas #fitBtn:hover, body.light-canvas #simpleOrbBtn:hover, body.light-canvas #simpleOrb2Btn:hover, body.light-canvas #triOrbBtn:hover { background:rgba(35,80,180,.24); }
+  body.light-canvas #isoBtn.on, body.light-canvas #autoBtn.on, body.light-canvas #fitBtn.on, body.light-canvas #simpleOrbBtn.on, body.light-canvas #simpleOrb2Btn.on, body.light-canvas #triOrbBtn.on { background:rgba(35,80,180,.88); color:#fff; border-color:#ff5b5b; box-shadow:0 0 8px rgba(255,91,91,.45); }
+  body.light-canvas #returnBtn { background:rgba(150,100,10,.16); color:#7a5200; border-color:rgba(150,100,10,.5); }
+  body.light-canvas #returnBtn:hover { background:rgba(150,100,10,.30); }
   body.dropping #app { outline:2px dashed var(--acc); outline-offset:-10px; }
   body.dropping #hintBar { color:var(--txt); border-color:var(--acc); }
   #toastEl { position:fixed; bottom:78px; left:50%; transform:translateX(-50%) translateY(10px); background:#1c2940; border:1px solid var(--line); color:#fff; font-size:13px; padding:9px 16px; border-radius:10px; opacity:0; transition:.25s; z-index:50; pointer-events:none; }
@@ -255,7 +302,8 @@
   }
   .glassDot:hover { transform:scale(1.18); }
   .glassDot:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
-  #leftPanel .glassDot, #docPanel .glassDot { top:11px; right:40px; }
+  #leftPanel .glassDot { top:38px; right:11px; }
+  #docPanel .glassDot { top:11px; right:40px; }
   #devBox .glassDot { top:10px; right:10px; }
   /* dimmed dot = glass currently off for that pane */
   #leftPanel.noglass .glassDot, #docPanel.noglass .glassDot, #devBox.noglass .glassDot, #miniMap.noglass .glassDot, #glossPane.noglass .glassDot {
@@ -343,9 +391,16 @@
   #tabBar .tabadd { color:var(--sun); font-weight:700; font-size:14px; }
   #tabBar .tabx { margin-left:7px; color:var(--mut); font-size:12px; padding:0 3px; border-radius:5px; }
   #tabBar .tabx:hover { color:#ff9d9d; background:rgba(255,120,120,.18); }
+  /* universe view modes: discrete text row under the tabs */
+  #tabBar .viewmodes { display:flex; align-items:center; justify-content:center; gap:7px; padding:3px 4px 1px; font-size:11px; color:var(--mut); letter-spacing:.04em; white-space:nowrap; }
+  #tabBar .vm-label { opacity:.7; }
+  #tabBar .vm { background:none; border:none; padding:1px 2px; font:inherit; font-size:11px; letter-spacing:.04em; color:var(--mut); cursor:pointer; }
+  #tabBar .vm:hover { color:#fff; text-decoration:underline; }
+  #tabBar .vm.on { color:var(--sun); font-weight:700; }
+  #tabBar .vm-sep { opacity:.35; }
   .collapseBtn { position:absolute; top:8px; right:8px; z-index:5; width:24px; height:24px; padding:0; line-height:1; font-size:12px; background:rgba(95,157,255,.12); color:var(--txt); border:1px solid var(--line); border-radius:7px; cursor:pointer; }
   .collapseBtn:hover { background:rgba(95,157,255,.28); }
-  #leftPanel h1 { padding-right:64px; }
+  #leftPanel h1 { padding-right:34px; }
   #docPanel .kicker { padding-right:64px; }
   #devBox .cb-head { padding-right:34px; }
   #leftPanel.collapsed, #docPanel.collapsed { padding:6px 8px; width:auto !important; min-width:0; }
@@ -356,10 +411,15 @@
   #propsModal .pr { display:flex; justify-content:space-between; gap:12px; font-size:13px; padding:5px 0; border-bottom:1px solid var(--line); }
   #propsModal .pr span:first-child { color:var(--mut); }
   #propsModal .pr span:last-child { text-align:right; overflow-wrap:anywhere; }
-  #confirmModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:90; width:min(380px,92vw); padding:18px 20px; }
+  #confirmModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:300; width:min(380px,92vw); padding:18px 20px; }
   #confirmModal h3 { margin:0 0 8px; font-size:16px; overflow-wrap:anywhere; }
   #confirmMsg { font-size:13px; line-height:1.6; color:var(--txt); overflow-wrap:anywhere; }
   #confirmModal .rowbtns { margin-top:14px; }
+  #confirmSkip { display:flex; align-items:center; gap:7px; margin-top:12px; font-size:12px; color:var(--mut); cursor:pointer; }
+  #confirmSkip[hidden] { display:none; }
+  #confirmSkip input { accent-color:var(--acc); }
+  .tvp-link { background:none; border:none; padding:0; margin:0; font:inherit; color:var(--sun); border-bottom:1px dotted var(--sun); cursor:pointer; }
+  .tvp-frost .tvp-link { color:#8a6a1f; border-color:#8a6a1f; }
   #pickModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:90; width:min(420px,94vw); max-height:84vh; display:flex; flex-direction:column; padding:18px 20px; }
   #pickModal[hidden] { display:none; }
   #pickModal h3 { margin:0 0 4px; font-size:16px; overflow-wrap:anywhere; }
@@ -375,13 +435,16 @@
   .btn:disabled { opacity:.45; cursor:default; }
   #docActions { margin:10px 0 2px; }
   #docActions[hidden] { display:none; }
-  #devBox { position:absolute; left:16px; bottom:16px; width:300px; padding:12px 14px; z-index:10; }
+  #devBox { position:absolute; left:16px; bottom:16px; width:264px; padding:12px 14px; z-index:10; }
   #devBox .cb-head { font-size:11px; letter-spacing:.12em; color:var(--acc); display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
   #devBox .cb-head span:last-child { color:var(--mut); letter-spacing:0; font-size:10.5px; }
   #devBox .rowbtns { margin-top:8px; }
   #cbLast { font-size:11px; color:var(--mut); margin-top:8px; line-height:1.6; overflow-wrap:anywhere; }
   #cbLast a { color:#9cc2ff; }
   #devBox[hidden] { display:none; }
+  #devShowBtn { position:absolute; left:16px; bottom:16px; z-index:10; padding:8px 12px; border-radius:10px; cursor:pointer; font-size:11px; letter-spacing:.12em; color:var(--acc); border:1px solid var(--line); background:rgba(20,26,32,calc(.72 * var(--paneAlpha, 1))); }
+  #devShowBtn:hover { border-color:var(--acc); }
+  #devShowBtn[hidden] { display:none; }
   #devBox .cb-head { font-size:11px; letter-spacing:.12em; color:var(--acc); display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
   #devBox .cb-head button { background:none; border:0; color:var(--mut); text-decoration:underline; cursor:pointer; font-size:10.5px; padding:0; }
   #devBox .cb-head button:hover { color:#ff9d9d; }
@@ -404,16 +467,25 @@
   <div id="leftPanel" class="glass">
     <button class="collapseBtn" data-collapse="leftPanel" title="Collapse panel">▲</button>
     <button class="glassDot" data-glaze="leftPanel" aria-label="Toggle the frosted-glass background of this pane"><span class="glassTip">Polished-glass finish — click to switch this pane to a flat background, click again to bring the glass back. Text and controls always stay on top.</span></button>
-    <h1><span class="visi">VISI</span><span class="pipe">|</span><span>DOCSVERSE</span></h1>
+    <h1><img id="titleLogo" src="src/logo.png" alt="VisiDocsVerse logo" draggable="false"><span class="visi">VISI</span><span class="pipe">|</span><span>DOCSVERSE</span></h1>
     <div class="sub">living document universe</div>
     <div class="notefilter" title="Which sticky-note squares to show next to body labels"><span>View notes:</span><label>All <input type="checkbox" id="notesViewAll" checked></label><span>/</span><label>Active body <input type="checkbox" id="notesViewSun" checked></label></div>
-    <input id="searchInput" placeholder="Search bodies… (/ to focus)" autocomplete="off">
+    <input id="searchInput" placeholder="Search... (press / to focus)" autocomplete="off">
     <div id="searchPop"></div>
     <div id="statsEl"><b id="stBodies">–</b> bodies · <b id="stLinks">–</b> tethers<br>system energy <b id="stKe">–</b> <span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="energy"><span class="help-text" data-help-text="energy">Total motion in the document universe. High "system energy" numbers mean bodies are flying fast — especially if more files ('bodies') are being added — and it settles as correlational orbits stabilize.</span><button class="help-edit-btn" data-help-edit="energy" title="Edit this explanation">✎ edit</button></div></span> · rim <b id="stRim">–</b>ly <span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="rim"><span class="help-text" data-help-text="rim">The edge of the visualized document universe. Files ('bodies') drifting past it are loners with no links — a single reference can pull them back in and connect them.</span><button class="help-edit-btn" data-help-edit="rim" title="Edit this explanation">✎ edit</button></div></span></div>
     <div id="intakeLog" title="Last import result" style="font-size:11px;color:var(--mut);margin-top:8px;line-height:1.5;overflow-wrap:anywhere;"></div>
+    <div id="probeLine" title="Diagnostic: exactly what your browser delivered for the last canvas press (type + button). Right-click a body and read this line." style="font-size:11px;color:var(--mut);margin-top:4px;line-height:1.5;overflow-wrap:anywhere;">input probe: —</div>
     <div class="rowbtns">
       <button class="btn" id="folderBtn" title="Select a local folder (.md/.txt/.csv/.pdf/.docx/.xlsx/.pptx)">⤓ Folder</button>
       <button class="btn" id="fileBtn" title="Import files">⤓ Files</button>
+    </div>
+    <div id="vaultBox" style="margin-top:8px;font-size:11px;color:var(--mut);line-height:1.5;" title="Desktop app only: keep a real folder of your originals on this computer. The universe keeps running from its fast internal stores; the folder is a durable mirror.">
+      <span id="vaultStatus">Vault folder: not linked</span>
+      <div class="rowbtns" style="margin-top:4px;">
+        <button class="btn" id="vaultLinkBtn" title="Desktop app only: pick a folder on this computer. Every upload's original is mirrored there as a real file.">Link folder…</button>
+        <button class="btn" id="vaultOpenBtn" hidden title="Open the linked vault folder">Open folder</button>
+        <button class="btn" id="vaultUnlinkBtn" hidden title="Stop mirroring to disk (everything already written stays)">Unlink</button>
+      </div>
     </div>
     <div class="sec-sep"></div>
     <div class="sec-label">Personalization</div>
@@ -429,8 +501,23 @@
     </div>
     <div class="rotrow" title="File-name labels under bodies — slider sets size, far left hides them, button toggles">
       <button class="btn" id="lbBtn">&#127991; Labels</button>
-      <input type="range" id="lbSize" min="0" max="150" step="1" value="100" title="Label size (0 = hidden)">
+      <input type="range" id="lbSize" min="0" max="300" step="1" value="100" title="Label size (0 = hidden, up to 300)">
       <span id="lbMul">100%</span>
+    </div>
+    <div class="rotrow" title="Body size — slider scales orbs and triangles, button toggles 100% and your last size">
+      <button class="btn" id="szBtn">&#128309; Size</button>
+      <input type="range" id="szSize" min="5" max="300" step="1" value="100" title="Body size (100 = current, 5 to 300)">
+      <span id="szMul">100%</span>
+    </div>
+    <div class="rotrow" title="Body rotation — spin around the vertical axis (orbs and triangles), slider sets speed, button toggles">
+      <button class="btn" id="spBtn">&#128260; Rotation</button>
+      <input type="range" id="spSpeed" min="0" max="100" step="1" value="40" title="Rotation speed (0 = stopped)">
+      <span id="spMul">off</span>
+    </div>
+    <div class="rotrow" title="Compress — squish bodies along the horizontal axis, slider sets the amount, button toggles">
+      <button class="btn" id="cpBtn">&#8596; Compress</button>
+      <input type="range" id="cpSize" min="20" max="100" step="1" value="100" title="Horizontal squish (100 = round)">
+      <span id="cpMul">100%</span>
     </div>
     <div class="rotrow" title="Canvas background shade — far left white, far right black (button flips extremes)">
       <button class="btn" id="bgBtn">&#9681; Shade</button>
@@ -495,6 +582,7 @@
     <div class="rowbtns" id="docActions">
       <button class="btn" id="docRemoveBtn" title="Remove the active body from this canvas only (copies on other canvases survive)">✕ Remove from canvas</button>
       <button class="btn danger" id="docDeleteBtn" title="Delete the active body from every canvas (cannot be undone)">✕ Delete everywhere</button>
+      <button class="btn" id="docSrcBtn" title="Preview the first 120 words of this body's source (same preview as right-hold — no right-click needed)">👁 Preview source</button>
     </div>
     <div id="docShared"></div>
     <h2 id="docTitle"></h2>
@@ -505,15 +593,15 @@
     <div id="notePop" class="glass" hidden></div>
   </div>
   <div id="docResize" title="Drag to resize the reader pane — double-click to reset">‹</div>
-  <div id="hintBar"><img id="pillLogo" src="src/logo.png" alt="VisiDocsVerse logo" draggable="false"><div class="hb-btns"><button id="fitBtn" title="Fit: recenter and zoom out until every body is on screen (never zooms in), enlarging any orb below readable size">○ Fit</button><span class="hb-sep">|</span><button id="autoBtn" title="Auto-distribute: pin bodies in a fit-to-canvas orb (orbital motion overridden while on)">◉ Distribute</button><span class="hb-sep">|</span><button id="isoBtn" title="Show/hide the tether lines between bodies (bodies always stay)">◉ Tethers</button><span class="hb-sep">|</span><button id="simpleOrbBtn" title="Plain Body: flat white discs with a thin black outline (photo + glow overlays off)">○ Plain Body</button><span class="hb-sep">|</span><button id="simpleOrb2Btn" title="Plain Body 2: original blue orbs with the photo overlays stripped">○ Plain Body 2</button><span class="hb-sep">|</span><button id="triOrbBtn" title="Triangles: upside-down triangles instead of orbs (same colors, same sizes)">○ Orb to ▼</button><span class="hb-sep thick">|</span><button id="lensBtn" title="Thematic lens: recompose the universe from shared themes + tags only (same physics, same bodies)">◉ Thematic</button><span class="hw right"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="thematic"><span class="help-text" data-help-text="thematic">Thematic lens: rebuilds the universe from shared themes + tags only — one body per theme, sized by its weight. Click a member to drill down; toggle Thematic off to restore the full universe.</span><button class="help-edit-btn" data-help-edit="thematic" title="Edit this explanation">✎ edit</button></div></span></div><div class="hb-tips"><div class="hb-tiprow"><span class="tt-w">drag empty space to pan</span><span class="tt-sep">·</span><span class="tt-g">drag a body to rotate</span><span class="tt-sep">·</span><span class="tt-w">distribute: alt-drag a body to move it</span><span class="tt-sep">·</span><span class="tt-g">wheel to zoom</span><span class="tt-sep">·</span><span class="tt-w">alt+↑/↓ zooms</span></div><div class="hb-tiprow"><span class="tt-g">click a body for sun</span><span class="tt-sep">·</span><span class="tt-w">click empty space to release</span><span class="tt-sep">·</span><span class="tt-g">double click empty space to (re)center</span><span class="tt-sep">·</span><span class="tt-w">shift-drag to box-select</span><span class="tt-sep">—</span><span class="tt-w">Del deletes selection</span><span class="tt-sep">·</span><span class="tt-g">right-click to delete</span></div></div><button id="glossBar" title="Open the Glossary of Terms">Glossary of Terms</button></div>
+  <div id="hintBar"><div class="hb-btns"><button id="fitBtn" title="Fit: recenter and zoom out until every body is on screen (never zooms in), enlarging any orb below readable size">○ Fit</button><span class="hb-sep">|</span><button id="autoBtn" title="Auto-distribute: pin bodies in a fit-to-canvas orb (orbital motion overridden while on)">◉ Distribute</button><span class="hb-sep">|</span><button id="isoBtn" title="Show/hide the tether lines between bodies (bodies always stay)">◉ Tethers</button><span class="hb-sep">|</span><button id="simpleOrbBtn" title="Plain Body: flat white discs with a thin black outline (photo + glow overlays off)">○ Plain Body</button><span class="hb-sep">|</span><button id="simpleOrb2Btn" title="Plain Body 2: original blue orbs with the photo overlays stripped">○ Plain Body 2</button><span class="hb-sep">|</span><button id="triOrbBtn" title="Triangles: upside-down triangles instead of orbs (same colors, same sizes)">○ Orb to ▼</button><span class="hb-sep thick">|</span><button id="returnBtn" title="Return to the previous view — the lens, sun, canvas and camera as they were before the last change">↩ Return</button></div><div class="hb-tips"><div class="hb-tiprow"><span class="tt-w">drag empty space to pan</span><span class="tt-sep">·</span><span class="tt-g">drag a body to rotate</span><span class="tt-sep">·</span><span class="tt-w">distribute: alt-drag a body to move it</span><span class="tt-sep">·</span><span class="tt-g">wheel to zoom</span><span class="tt-sep">·</span><span class="tt-w">alt+↑/↓ zooms</span></div><div class="hb-tiprow"><span class="tt-g">click a body for sun</span><span class="tt-sep">·</span><span class="tt-w">click empty space to release</span><span class="tt-sep">·</span><span class="tt-g">double click empty space to (re)center</span><span class="tt-sep">·</span><span class="tt-w">shift-drag to box-select</span><span class="tt-sep">—</span><span class="tt-w">Del deletes selection</span><span class="tt-sep">·</span><span class="tt-g">right-click to delete</span></div><div class="hb-tiprow"><span class="tt-g">right-hold a body to preview its document</span><span class="tt-sep">·</span><span class="tt-w">quick right-click opens its menu</span><span class="tt-sep">·</span><span class="tt-w">release to close, or pin it with 👁 Preview source</span></div></div><button id="glossBar" title="Open the Glossary of Terms">Glossary of Terms</button></div>
   <!-- verse minimap: live top-down dot map, shown only in Distribute mode -->
   <div id="miniMap" class="glass" hidden><button class="glassDot" data-glaze="miniMap" aria-label="Toggle the frosted-glass background of this pane"><span class="glassTip">Polished-glass finish — click to switch this pane to a flat background, click again to bring the glass back. Text and controls always stay on top.</span></button><div id="miniMapHead"><span>◈ VERSE MAP</span><span id="miniMapCount"></span></div><canvas id="miniMapCv"></canvas><div id="miniMapResize" title="Drag to resize the map">⤡</div></div>
   <!-- glossary of terms: draggable + resizable glass pane, docked bottom-right like the verse map -->
-  <div id="glossPane" class="glass" hidden><button class="glassDot" data-glaze="glossPane" aria-label="Toggle the frosted-glass background of this pane"><span class="glassTip">Polished-glass finish — click to switch this pane to a flat background, click again to bring the glass back. Text and controls always stay on top.</span></button><div id="glossHead"><span>◈ GLOSSARY OF TERMS</span><button id="glossClose" title="Close the glossary">✕</button></div><div id="glossBody"><div class="g-term"><span class="g-word">/to focus</span> — the keyboard shortcut for the search field: pressing / anywhere outside a text field jumps the cursor straight into Search bodies.</div><div class="g-term"><span class="g-word">active body</span> — the document currently in focus. It is shown in the Active-body reader pane and glows as the sun at the center of its canvas. There is at most one per canvas; clicking empty space releases it back to the general view.</div><div class="g-term"><span class="g-word">active project</span> — the project canvas (tab) currently on screen, named in the top bar. Each project keeps its own documents, formation, sun, and lens; + starts a new empty one.</div><div class="g-term"><span class="g-word">associate project</span> — linking verses together: right-click any tab for its associations menu and tick another verse (links are always mutual). Associated projects share an accent color, and uploads, copies, deletes, and twin lockstep span the whole group.</div><div class="g-term"><span class="g-word">Autosaved (project)</span> — every change is stored automatically inside the app (the top bar stamps the time: "autosaved …"), and projects reopen on their own next launch. This is separate from "save project", which downloads a backup file to your computer.</div><div class="g-term"><span class="g-word">backlinks</span> — the documents on this canvas that reference a file by its title. Every general-view row reports them (“N backlink(s)”), and title-links are also what pull a body into something's orbit.</div><div class="g-term"><span class="g-word">body</span> — one file, drawn as one orb (or one ▼ triangle with Orb to ▼ on). A body carries its file's words, mass, tags, and note; click one to make it the sun.</div><div class="g-term"><span class="g-word">center of gravity</span> — whatever the universe orbits around. With a focused document it is the sun; with no active body (general view) the canvas center itself pulls with sun-strength gravity so the formation holds together.</div><div class="g-term"><span class="g-word">disassociate project</span> — unlinking a verse: untick its last link and it goes isolated (◌ dashed grey tab with its own identity color). Uploads land only in that tab, copies neither leave nor enter, deletes span only it, and its formation evolves independently.</div><div class="g-term"><span class="g-word">general view</span> — the canvas with no active body: the center holds gravity and the reader lists the LARGEST BODIES (plus View all bodies), each with word count, mass, and backlinks. The All thematic tags button lives here.</div><div class="g-term"><span class="g-word">mass</span> — a file's gravitational pull: bigger, more comprehensive files weigh more and tug harder on everything around them. Shown in the meta line and Properties; a newly focused sun temporarily borrows mass 600 for stability while its real vault mass is kept safe and restored afterwards.</div><div class="g-term"><span class="g-word">Open Existing Project</span> — the top-bar button that reopens projects held in the in-app autosave: pick one by name, open all at once, or pull one back from Recently closed. It never touches files on your computer — those come from the save-project backup.</div><div class="g-term"><span class="g-word">orbital mechanics</span> — the physics layer: sun gravity, peer springs between linked bodies, shell tethers by link depth, and gentle braking — no blanket drag, so genuine orbits survive. New bodies and suns start at circular-orbit speed instead of teleporting; linkless comets drift outward toward the rim cap.</div><div class="g-term"><span class="g-word">rim</span> — the edge of the visualized universe. The left-panel rim number is simply how far the farthest body has drifted; bodies out past it are loners with no links, and a single new reference can pull them back in.</div><div class="g-term"><span class="g-word">search bodies</span> — the search field in the left panel. Type to spotlight every matching body while the rest fade, with a jump-to list underneath; tag pills feed it a #tag, and clearing the box — or one click on empty canvas — restores the full view.</div><div class="g-term"><span class="g-word">shared ground</span> — files holding the same (or very similar) conversation. Distinctive themes are compared across files; files sharing them are tethered together, and the reader's Shared Ground section lists them for the focused document.</div><div class="g-term"><span class="g-word">sun</span> — the document in focus, sitting at the center and pulling everything else around it. Click any body to make it the sun; click empty space to release it — the same click also clears any tag highlight, restoring the full non-faded view.</div><div class="g-term"><span class="g-word">system energy</span> — the total motion of all bodies, shown as a single left-panel number. High readings mean bodies are flying fast — typically right after files are added — and it settles down as stable orbits form.</div><div class="g-term"><span class="g-word">thematic tag</span> — a #hashtag grouping: hand-written in a file, or auto-derived from its title, pictures' text, and top terms (blue auto/ pills). Matching is prefix-blind (#evidence is the same tag as auto/evidence), and tags shared across files tether bodies together and weave the tags verse.</div><div class="g-term"><span class="g-word">thematic tags verse</span> — a lens that rebuilds the canvas from shared tags only: one body per tag, webbed by the member documents the tags share. Big verses require a tag on at least two bodies and seat loners beside their best partner; enter it from All thematic tags → ◈ Show tags verse. How it differs from the general thematic verse is spelled out in the comparison below.</div><div class="g-term"><span class="g-word">thematic verse (general)</span> — the bottom-pill Thematic lens: the canvas rebuilt from its shared material — distilled text themes (one body per theme, sized by weight), webbed by shared topics and tags. Click a theme to drill into its grounded members; toggling Thematic off restores the regular verse exactly. How it differs from the tags verse is spelled out in the comparison below.</div><div class="g-term"><span class="g-word">verse</span> — short for universe: one project canvas — a grouping of documents with its own formation, sun, and lens. The whole-visidocsverse thematic map is the one view that spans every verse at once.</div><div class="g-term"><span class="g-word">View notes: Active body notes and All notes</span> — the left-pane View notes: filter for the yellow sticky-note squares beside body labels. All puts a solid square on every body that has a (140-character) note; Active body shows the focused body's square — solid if it has a note, a hollow frame if not. Click a square to open the floating note editor; the reader shows the same note as a pop-out.</div><div class="g-vs"><div class="g-vs-head">The two verses, side by side</div><div class="g-vs-row"><b>Built from</b> — general: themes distilled from the files' text, webbed by shared topics and tags; tags verse: tags only (hand-written plus auto-derived).</div><div class="g-vs-row"><b>Bodies are</b> — general: one body per theme, sized by weight; tags verse: one body per tag, sized by its grounded-body count.</div><div class="g-vs-row"><b>Links mean</b> — general: shared topics and terms between themes; tags verse: shared member documents between tags.</div><div class="g-vs-row"><b>Enter via</b> — general: the Thematic button in the bottom pill; tags verse: general view → All thematic tags → ◈ Show tags verse.</div><div class="g-vs-row"><b>Both</b> run the same orbital physics, are mutually exclusive with each other, and switching either off restores the regular verse exactly.</div></div></div><div id="glossResize" title="Drag to resize the pane">⤡</div></div>
+  <div id="glossPane" class="glass" hidden><button class="glassDot" data-glaze="glossPane" aria-label="Toggle the frosted-glass background of this pane"><span class="glassTip">Polished-glass finish — click to switch this pane to a flat background, click again to bring the glass back. Text and controls always stay on top.</span></button><div id="glossHead"><span>◈ GLOSSARY OF TERMS</span><button id="glossClose" title="Close the glossary">✕</button></div><div id="glossBody"><div class="g-term"><span class="g-word">/to focus</span> — the keyboard shortcut for the search field: pressing / anywhere outside a text field jumps the cursor straight into Search.</div><div class="g-term"><span class="g-word">active body</span> — the document currently in focus. It is shown in the Active-body reader pane and glows as the sun at the center of its canvas. There is at most one per canvas; clicking empty space releases it back to the general view.</div><div class="g-term"><span class="g-word">active project</span> — the project canvas (tab) currently on screen, named in the top bar. Each project keeps its own documents, formation, sun, and lens; + starts a new empty one.</div><div class="g-term"><span class="g-word">associate project</span> — linking verses together: right-click any tab for its associations menu and tick another verse (links are always mutual). Associated projects share an accent color, and uploads, copies, deletes, and twin lockstep span the whole group.</div><div class="g-term"><span class="g-word">Autosaved (project)</span> — every change is stored automatically inside the app (the top bar stamps the time: "autosaved …"), and projects reopen on their own next launch. This is separate from "save project", which downloads a backup file to your computer.</div><div class="g-term"><span class="g-word">backlinks</span> — the documents on this canvas that reference a file by its title. Every general-view row reports them (“N backlink(s)”), and title-links are also what pull a body into something's orbit.</div><div class="g-term"><span class="g-word">body</span> — one file, drawn as one orb (or one ▼ triangle with Orb to ▼ on). A body carries its file's words, mass, tags, and note; click one to make it the sun.</div><div class="g-term"><span class="g-word">center of gravity</span> — whatever the universe orbits around. With a focused document it is the sun; with no active body (general view) the canvas center itself pulls with sun-strength gravity so the formation holds together.</div><div class="g-term"><span class="g-word">delete tag</span> — erase a tag from the whole canvas: open All thematic tags, hover the pill and click its ×, then confirm — every body's #tag is stripped from its text and auto-derived copies of that name are suppressed so title words can't grow it back. Explicitly writing #tag in any body brings it back. Deletes affect the current canvas only. Tick “Don't ask again” to skip future confirmations; the Confirms row in the tags pane tips turns them back on.</div><div class="g-term"><span class="g-word">disassociate project</span> — unlinking a verse: untick its last link and it goes isolated (◌ dashed grey tab with its own identity color). Uploads land only in that tab, copies neither leave nor enter, deletes span only it, and its formation evolves independently.</div><div class="g-term"><span class="g-word">explicit tag</span> — a #hashtag typed directly into a document’s text: a plain green pill with no badge. Its purpose is grouping — it declares “these documents belong together” in your own words: bodies sharing it pull together with a tether, share weight, light up jointly in search, and appear as one node in the Tags view (e.g. #thesis_core on three bodies groups those three). It lives in the prose itself, so editing the words can add or remove it — unlike a manual tag, which is pinned to one passage from the menu (green pill + gold M). Both are yours and always count (blue auto tags only repeat title words and are ignored when too common); writing #name in any body (re)creates the tag everywhere, including resurrecting a deleted one. Use the + #tag button in the reader's tag row to write one in-app (appended to the body's text).</div><div class="g-term"><span class="g-word">general view</span> — the canvas with no active body: the center holds gravity and the reader lists the LARGEST BODIES (plus View all bodies), each with word count, mass, and backlinks. The All thematic tags button lives here.</div><div class="g-term"><span class="g-word">Main (Universe) view</span> — the regular canvas universe: one body per document, orbiting the focused sun — or the canvas center when no body is active (general view). This is the default view and the one both lenses rebuild; leaving the Thematic or Tags view, or picking Main in the Universe view modes row, always returns here with the formation untouched.</div><div class="g-term"><span class="g-word">mass</span> — a file's gravitational pull: bigger, more comprehensive files weigh more and tug harder on everything around them. Shown in the meta line and Properties; a newly focused sun temporarily borrows mass 600 for stability while its real vault mass is kept safe and restored afterwards.</div><div class="g-term"><span class="g-word">merge tags</span> — fold one tag into another: in All thematic tags, drag a pill and drop it onto another pill, then confirm — every body carrying the dragged tag is rewritten to the receiving tag, the dragged name disappears, and its auto-derived form is suppressed. Simple hierarchy: the receiving tag is the primary and keeps its name; the moved tag does not retain its name. Merges affect the current canvas only. Tick “Don't ask again” to skip future confirmations; the Confirms row in the tags pane tips turns them back on.</div><div class="g-term"><span class="g-word">Tags (manually created)</span> — tags you make by selecting a block of text in the Active body reader, right-clicking it, and choosing Tag: the selection becomes a tag on that body, badged with a gold M on its pills. Manual tags tether, weigh, and search exactly like written #tags, but they live outside the body text — editing or deleting the words won't remove them. Remove one from the Tags pane × or by deleting its tag in the tags view.</div><div class="g-term"><span class="g-word">Open Existing Project</span> — the top-bar button that reopens projects held in the in-app autosave: pick one by name, open all at once, or pull one back from Recently closed. It never touches files on your computer — those come from the save-project backup.</div><div class="g-term"><span class="g-word">orbital mechanics</span> — the physics layer: sun gravity, peer springs between linked bodies, shell tethers by link depth, and gentle braking — no blanket drag, so genuine orbits survive. New bodies and suns start at circular-orbit speed instead of teleporting; linkless comets drift outward toward the rim cap.</div><div class="g-term"><span class="g-word">rim</span> — the edge of the visualized universe. The left-panel rim number is simply how far the farthest body has drifted; bodies out past it are loners with no links, and a single new reference can pull them back in.</div><div class="g-term"><span class="g-word">search bodies</span> — the search field in the left panel. Type to spotlight every matching body while the rest fade, with a jump-to list underneath; tag pills feed it a #tag, and clearing the box — or one click on empty canvas — restores the full view.</div><div class="g-term"><span class="g-word">shared ground</span> — files holding the same (or very similar) conversation. Distinctive themes are compared across files; files sharing them are tethered together, and the reader's Shared Ground section lists them for the focused document.</div><div class="g-term"><span class="g-word">sun</span> — the document in focus, sitting at the center and pulling everything else around it. Click any body to make it the sun; click empty space to release it — the same click also clears any tag highlight, restoring the full non-faded view.</div><div class="g-term"><span class="g-word">system energy</span> — the total motion of all bodies, shown as a single left-panel number. High readings mean bodies are flying fast — typically right after files are added — and it settles down as stable orbits form.</div><div class="g-term"><span class="g-word">thematic tag</span> — a #hashtag grouping: hand-written in a file, or auto-derived from its title, pictures' text, and top terms (blue auto/ pills). Matching is prefix-blind (#evidence is the same tag as auto/evidence), and tags shared across files tether bodies together and weave the tags view. A tag typed into the prose is an explicit tag; one applied from the menu is a manual tag.</div><div class="g-term"><span class="g-word">tags view</span> — the canvas redrawn around the labels on its documents instead of the documents themselves: one body per tag — hand-written #tags, blue ones derived from titles, gold-M ones tagged by hand — webbed wherever two tags share member documents and sized by grounded-body count. Tags grounding a single body settle beside their best partner, so the shape of the map is the shape of your labeling: shared tags pull their documents’ neighborhoods together. Click a tag to see its grounded members, click a member to open it as the sun — which returns you to the Main view. Picking Main (or toggling Tag off) restores the regular canvas exactly; the two rebuilds are mutually exclusive. How it differs from the thematic view is spelled out in the comparison below.</div><div class="g-comp"><table><tr><th>Feature</th><th>Tags view</th><th>Thematic view</th></tr><tr><td class="gf">Primary Focus</td><td>Labels on the documents</td><td>Ideas shared across the documents</td></tr><tr><td class="gf">Node Representation</td><td>One body per label, grounded by its member documents</td><td>One body per shared idea, sized by thematic weight</td></tr><tr><td class="gf">Isolated Nodes</td><td>Loners seated beside their best partner</td><td>Ideas merged into unified theme clusters</td></tr><tr><td class="gf">Interaction</td><td>Trace how labels connect the corpus; drill into tags and members</td><td>Drill into themes and grounded files; toggle off to restore the Main view</td></tr></table></div><div class="g-term"><span class="g-word">thematic view</span> — the canvas redrawn around the ideas its documents share instead of the documents themselves: terms that travel together across files are distilled into theme bodies — one body per theme, sized by its thematic weight — webbed by the grounded documents they share, under the same orbital physics. One-off words never qualify (a concept must evidence across several bodies; corpus-wide boilerplate is excluded), so what you see is the genuine common ground. With no active body it distills every shared canvas at once. Click a theme to see its concepts and grounded members, click a member to open it as the sun — which returns you to the Main view. Picking Main (or toggling Thematic off) restores the regular canvas exactly. How it differs from the tags view is spelled out in the comparison above.</div><div class="g-term"><span class="g-word">Universe view modes</span> — the discrete row under the top tabs: Main | Thematic | Tag. Three ways to see the same canvas — Main shows every document body, Thematic rebuilds it from distilled text themes, Tags rebuilds it from shared tags. The two rebuilds are mutually exclusive lenses; picking Main (or toggling the live one off) restores the regular canvas exactly.</div><div class="g-term"><span class="g-word">verse</span> — short for universe: one project canvas — a grouping of documents with its own formation, sun, and lens. The whole-visidocsverse thematic map is the one view that spans every verse at once.</div><div class="g-term"><span class="g-word">View notes: Active body notes and All notes</span> — the left-pane View notes: filter for the yellow sticky-note squares beside body labels. All puts a solid square on every body that has a (140-character) note; Active body shows the focused body's square — solid if it has a note, a hollow frame if not. Click a square to open the floating note editor; the reader shows the same note as a pop-out.</div><div class="g-term"><span class="g-word">vault folder</span> — a real folder on your computer (desktop app only) that mirrors every upload's original file, so your documents exist twice: once alive in the universe, once as genuine files you can browse, copy, or sync. Link it from the Vault folder row in the left panel; the universe keeps running from its fast internal stores either way, and revealing a body (right-click menu) highlights its file. Unlinking stops the mirroring — everything already written stays on disk.</div><div class="g-vs"><div class="g-vs-head">The two views, side by side</div><div class="g-vs-row"><b>Built from</b> — thematic view: ideas the files share, distilled into theme bodies; tags view: the labels on the files, one body per tag.</div><div class="g-vs-row"><b>Bodies are</b> — thematic view: one body per shared idea, sized by thematic weight; tags view: one body per label, sized by grounded-body count.</div><div class="g-vs-row"><b>Links mean</b> — thematic view: the grounded documents the themes share; tags view: the member documents the tags share.</div><div class="g-vs-row"><b>Enter via</b> — thematic view: the Universe view modes row; tags view: the Universe view modes row, or Main view → All thematic tags → ◈ Show tags view.</div><div class="g-vs-row"><b>Both</b> run the same orbital physics, are mutually exclusive with each other, and switching either off (or picking Main) restores the Main view exactly.</div></div></div><div id="glossResize" title="Drag to resize the pane">⤡</div></div>
   <div id="devBox" class="glass" hidden>
     <!-- DEV-ONLY-START -->
     <button class="glassDot" data-glaze="devBox" aria-label="Toggle the frosted-glass background of this pane"><span class="glassTip">Polished-glass finish — click to switch this pane to a flat background, click again to bring the glass back. Text and controls always stay on top.</span></button>
-    <div class="cb-head"><span>◇ DEV</span><button id="devHideBtn" title="Hide the dev pane on this machine (reopen with ?dev=1)">hide</button></div>
+    <div class="cb-head"><span>◇ DEV</span><button id="devHideBtn" title="Hide the dev pane (click ◇ DEV bottom-left to bring it back)">hide</button></div>
     <div class="cb-head"><span>☁ CLOUD BACKUP</span><span id="cbStatus">no pushes yet</span></div>
     <div class="rowbtns">
       <button class="btn" id="pushBtn" title="Upload a full snapshot (code + documents + settings) to the cloud">⤒ Push backup</button>
@@ -542,6 +630,9 @@
     </div>
     <!-- DEV-ONLY-END -->
   </div>
+  <!-- DEV-ONLY-START -->
+  <button id="devShowBtn" hidden title="Show the dev pane">◇ DEV</button>
+  <!-- DEV-ONLY-END -->
 </div>
 <div id="toastEl"></div>
 <div id="ctxMenu" class="glass" hidden></div>
@@ -559,6 +650,7 @@
   <h3 id="confirmTitle">Are you sure?</h3>
   <div id="confirmMsg"></div>
   <div class="rowbtns"><button class="btn danger" id="confirmOk">Confirm</button><button class="btn" id="confirmCancel">Cancel</button></div>
+  <label id="confirmSkip" hidden><input type="checkbox" id="confirmSkipBox"> <span id="confirmSkipLabel">Don't ask again</span></label>
 </div>
 <div id="pickModal" class="glass" hidden>
   <h3 id="pickTitle">Copy constellation</h3>
@@ -581,7 +673,8 @@
 </div>
 <!-- reader picture lightbox: click a gallery image to zoom, click out / Esc to close -->
 <div id="imgLight" hidden><img alt="image"></div>
-<!-- tags-verse pop-out: every tag in the verse as pills on a glass card, click out / Esc to close -->
-<div id="tagPop" hidden><div class="tvp-card tvp-clear"><div class="tvp-head" title="Drag to move — double-click re-centers"><span class="tvp-title">ALL THEMATIC TAGS</span><button class="tvp-x" data-tvclose="1" title="Close">✕</button></div><div class="tvp-tags"></div><button class="tvp-go" id="tagVerseBtn" data-tvverse="1">◈ Show tags verse</button></div></div>
+<!-- tags-view pop-out: every tag in the verse as pills on a glass card, click out / Esc to close -->
+<div id="tagPop" hidden><div class="tvp-card tvp-clear"><div class="tvp-head" title="Drag to move — double-click re-centers"><span class="tvp-title">ALL THEMATIC TAGS</span><button class="tvp-x" data-tvclose="1" title="Close">✕</button></div><div class="tvp-tags"></div><button class="tvp-go" id="tagVerseBtn" data-tvverse="1">◈ Show tags view</button><div class="tvp-tips"><span class="tvp-term">Colors:</span><span class="tvp-exp"><span class="tagpill demo">#explicit</span> hand-written in body text · <span class="tagpill auto demo">#auto</span> derived from titles · <span class="tagpill manual demo">#manual<span class="mmark">M</span></span> you tagged by hand (gold M)</span><span class="tvp-term">Merge:</span><span class="tvp-exp">drag one tag onto another — the tag you drop onto keeps its name, the dragged tag joins it and disappears.</span><span class="tvp-term">Delete:</span><span class="tvp-exp">hover a tag and click its × to remove it from every body on this canvas. Merges and deletes affect this canvas only; deleted names stay suppressed until you write #tag in a body again.</span><span class="tvp-term">Confirms:</span><span class="tvp-exp"><span id="tvpConfirmTxt">tag delete/merge confirmations are on</span> — <button class="tvp-link" data-tvconfirms="1" id="tvpConfirmBtn">click to stop asking</button>.</span></div></div></div>
+<div id="srcPop" hidden><div class="tvp-card tvp-clear svp-card"><div class="svp-head"><span class="svp-kicker">VIEW SOURCE</span><span class="svp-sec" id="svpSec">Opening</span><span class="svp-rel" id="svpRel">release to close</span><button class="svp-x" id="svpX" title="Close">✕</button></div><h3 class="svp-title" id="svpTitle"></h3><div class="svp-body" id="svpBody"></div><div class="svp-cap" id="svpCap" hidden></div><div class="svp-foot" id="svpFoot"></div></div></div>
 
 <script type="module" src="src/app.js"></script>

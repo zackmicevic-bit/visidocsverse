@@ -56,6 +56,12 @@ export class Renderer {
     this.backdrop = null; // canvas photo texture (HTMLImageElement, cover-fit, behind everything)
     this.backdropAlpha = 0.55; // photo texture opacity (0 = off)
     this.glowScale = 1; // halo radius multiplier (0 = no glow, 1 = current, 2 = double)
+    this.bodyScale = 1; // orb/triangle size multiplier (slider 5-300%, button toggles 100% <-> last)
+    this.compressScale = 1; // horizontal squish multiplier (1 = round, lower = narrower)
+    this.spinAngle = 0; // body-rotation phase (advanced by scaled time in draw, so pause/slow-mo obey)
+    this.spinBlend = 0; // eased 0..1 toward spinTarget (off settles bodies back to round)
+    this.spinTarget = 0; // 1 = spinning, 0 = settling to round
+    this.spinOmega = 0; // spin angular velocity, rad/s (from the Rotation speed slider)
     this.simpleOrb = false; // plain white discs + thin black outline (no gradients, halos, or photo overlays)
     this.stripOverlays = false; // "Plain Body 2": original blue orbs, photo textures skipped (glow stays)
     this.triOrb = false; // triangle mode: upside-down triangles instead of discs (same fill, same size)
@@ -180,10 +186,11 @@ export class Renderer {
   }
   pick(nodes, sx, sy) {
     let best = null, bd = 1e9;
+    const bs = (this.bodyScale == null ? 1 : this.bodyScale);
     for (const n of nodes) {
       const p = n._p;
       if (!p) continue;
-      const tol = Math.max(16, (n.radius || 6) * (n._fitBoost || 1) * p.s + 8);
+      const tol = Math.max(16, (n.radius || 6) * (n._fitBoost || 1) * p.s * bs + 8);
       const d = Math.hypot(n._p.x - sx, n._p.y - sy);
       if (d < tol && d < bd) { bd = d; best = n; }
     }
@@ -240,6 +247,16 @@ export class Renderer {
       ctx.restore();
     }
     const t = opts.now ?? performance.now() / 1000;
+    // body rotation: runs on the real clock so bodies keep spinning while the
+    // universe is paused or at slow-motion (the old scaled-time clock froze
+    // spin whenever virtT froze, so Rotation looked dead unless running).
+    const realT = performance.now() / 1000;
+    const ldt = Math.max(0, Math.min(0.1, realT - (this._lastSpinT ?? realT)));
+    this._lastSpinT = realT;
+    const spinTgt = (this.spinTarget == null ? 0 : this.spinTarget);
+    const spinBl = (this.spinBlend == null ? 0 : this.spinBlend);
+    this.spinBlend = spinBl + (spinTgt - spinBl) * Math.min(1, ldt * 4);
+    if (this.spinBlend > 0.001) this.spinAngle = (this.spinAngle || 0) + (this.spinOmega || 0) * ldt;
     this.starfield(ctx, W, H, t);
     const match = opts.match; // Set of ids matching search (dims the rest)
     this._noteRects = new Map(); // screen-space sticky-note squares, rebuilt every frame for hit-testing
@@ -283,9 +300,24 @@ export class Renderer {
       if (p.x < -80 || p.y < -60 || p.x > W + 80 || p.y > H + 60) continue;
       const dim = match && !match.has(n.id);
       ctx.globalAlpha = dim ? 0.15 : 1;
-      const rad = Math.max(2, n.radius * (n._fitBoost || 1) * p.s * 1.6);
+      const bs = (this.bodyScale == null ? 1 : this.bodyScale);
+      const rad = Math.max(2, n.radius * (n._fitBoost || 1) * p.s * 1.6 * bs);
       const pulse = 1 + 0.08 * Math.sin(t * 2 + (n.phase || 0));
-      // outer halo (glow slider scales its radius, far left removes it)
+      // horizontal body geometry: static compress squish; spheres rotate by
+      // surface motion (triangles flip like cards around the vertical axis)
+      const bl = (this.spinBlend == null ? 0 : this.spinBlend);
+      const spinPh = (this.spinAngle || 0) + (n.phase || 0);
+      const drift = Math.sin(spinPh) * bl; // surface sweep, 0 when off (light stays fixed)
+      const flip = (1 - bl) + bl * Math.cos(spinPh); // card-flip factor, 1 when off
+      // silhouette: spheres stay round (their markings do the turning);
+      // triangles are flat cards, so they flip edge-on and back
+      const compress = (this.compressScale == null ? 1 : this.compressScale);
+      let sxSil = this.triOrb ? compress * flip : compress;
+      // keep an edge-on sliver so a flipping triangle never fully vanishes
+      if (this.triOrb && bl > 0.001 && Math.abs(sxSil) < 0.12) sxSil = (sxSil < 0 ? -1 : 1) * 0.12;
+      const R = rad * pulse;
+      // outer halo (glow slider scales its radius, far left removes it) — round
+      // ambiance, never squished, so the glow doesn't fight the sphere
       const gl = (this.glowScale == null ? 1 : this.glowScale);
       if (gl > 0.01 && !this.simpleOrb) {
         const halo = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, Math.max(1, rad * 4 * gl));
@@ -295,16 +327,22 @@ export class Renderer {
         ctx.fillStyle = halo;
         ctx.beginPath(); ctx.arc(p.x, p.y, rad * 4 * pulse * gl, 0, 7); ctx.fill();
       }
-      // body — disc, or an upside-down triangle in triangle mode (same screen
-      // size, same fill as the disc it replaces: gradient gold/blue, or flat
-      // white with a black outline under Plain Body)
-      const body = ctx.createRadialGradient(p.x - rad * 0.3, p.y - rad * 0.3, 0, p.x, p.y, rad);
+      ctx.save(); // body-geometry frame: disc/triangle, photo overlay, rings —
+      ctx.translate(p.x, p.y); // silhouettes follow Compress (and triangles flip),
+      ctx.scale(sxSil || 0.0001, 1); // labels stay outside it
+      ctx.translate(-p.x, -p.y); // draw in body-centered coords so motion pivots on the anchor
+      // body — a shaded sphere (fixed upper-left light + dark limb), or an
+      // upside-down triangle in triangle mode (same screen size, same fill as
+      // the disc it replaces: gradient gold/blue, or flat white with a black
+      // outline under Plain Body). Spheres keep their light fixed while surface
+      // markings drift — that dissociation is what reads as 3D rotation.
+      const hlx = this.triOrb ? p.x - rad * 0.3 + drift * rad * 0.45 : p.x - rad * 0.3;
+      const body = ctx.createRadialGradient(hlx, p.y - rad * 0.3, 0, p.x, p.y, rad);
       if (n.isActive) {
         body.addColorStop(0, '#fff6dd'); body.addColorStop(0.5, '#ffce6b'); body.addColorStop(1, '#b36a00');
       } else {
         body.addColorStop(0, '#dcecff'); body.addColorStop(0.5, '#5f9dff'); body.addColorStop(1, '#173a7a');
       }
-      const R = rad * pulse;
       const triPath = (x, y, r) => {
         ctx.beginPath();
         for (let k = 0; k < 3; k++) {
@@ -340,13 +378,52 @@ export class Renderer {
           ctx.clip();
           ctx.globalAlpha *= this.overlayAlpha * (n.isActive ? 0.45 : 1); // sun keeps its gold signal
           ctx.translate(p.x, p.y);
-          ctx.rotate((h2 % 360) * Math.PI / 180);
+          ctx.rotate((h2 % 360) * Math.PI / 180); // static per-body tilt
           if (h2 % 2) ctx.scale(-1, 1);
-          const d = rad * pulse * 2 * Math.SQRT2; // cover the disc at any spin
+          if (!this.triOrb) {
+            // globe sweep: the photo slides behind the fixed round window,
+            // drawn oversized below so the drift never exposes an edge
+            ctx.translate(drift * R * 0.35, 0);
+          }
+          const d = this.triOrb ? rad * pulse * 2 * Math.SQRT2 : R * 3.2; // discs: oversized cover for the sweep
           ctx.drawImage(im, -d / 2, -d / 2, d, d);
           ctx.restore();
         }
       }
+      if (!this.triOrb) {
+        // spherical falloff over the texture: dark limbs, lit center — the ball
+        // reads round even where the photo is bright to the edge
+        if (!this.simpleOrb) {
+          const limb = ctx.createRadialGradient(p.x, p.y, R * 0.45, p.x, p.y, R);
+          limb.addColorStop(0, 'rgba(8,12,24,0)');
+          limb.addColorStop(1, 'rgba(8,12,24,0.52)');
+          ctx.fillStyle = limb;
+          ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, 7); ctx.fill();
+        }
+        // drifting surface bands: markings rounding the sphere (limb-faded so
+        // they slow and dissolve at the edges, like a globe)
+        if (bl > 0.01) {
+          ctx.save();
+          ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, 7); ctx.clip();
+          const bandW = R * 0.34;
+          for (let k = -1; k <= 1; k++) {
+            const off = Math.sin(spinPh + k * 2.094) * R * 0.75;
+            const limbFade = Math.pow(Math.max(0, Math.cos(Math.min(1, Math.abs(off) / R) * Math.PI / 2)), 1.5);
+            const dark = (k !== 0) !== !!this.simpleOrb; // marble contrast: dark flanks on color orbs, dark bands on white ones
+            const rgb = dark ? '8,15,35' : (this.simpleOrb ? '20,30,50' : '255,255,255');
+            const peak = (dark ? 0.17 : 0.20) * bl * limbFade;
+            if (peak < 0.01) continue;
+            const g = ctx.createLinearGradient(p.x + off - bandW, 0, p.x + off + bandW, 0);
+            g.addColorStop(0, `rgba(${rgb},0)`);
+            g.addColorStop(0.5, `rgba(${rgb},${peak.toFixed(3)})`);
+            g.addColorStop(1, `rgba(${rgb},0)`);
+            ctx.fillStyle = g;
+            ctx.fillRect(p.x + off - bandW, p.y - R, bandW * 2, R * 2);
+          }
+          ctx.restore();
+        }
+      }
+      // (triangles flip like cards; the flip itself is the motion cue)
       if (n === this.hover || n.isActive) {
         const ring = mixHex('#1e2d50', '#ffffff', sh);
         ctx.strokeStyle = `rgba(${ring[0]},${ring[1]},${ring[2]},0.85)`; ctx.lineWidth = 1.3;
@@ -358,6 +435,7 @@ export class Renderer {
         ctx.strokeStyle = `rgba(${sel[0]},${sel[1]},${sel[2]},0.95)`; ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.arc(p.x, p.y, rad * pulse + 7, 0, 7); ctx.stroke();
       }
+      ctx.restore(); // end body-geometry frame
       // depth-sorted typography: nearer = larger/brighter (slider scales, 0 hides)
       const lsc = (this.labelScale == null ? 1 : this.labelScale);
       if (lsc > 0.01) {
