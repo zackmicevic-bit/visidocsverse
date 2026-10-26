@@ -1,4 +1,4 @@
-// VisiDocsVerse original-file sidecar: binary store for uploaded originals.
+// VisiDocsverse original-file sidecar: binary store for uploaded originals.
 // Vault docs live in localStorage (small text JSON, ~5MB quota), so original
 // BYTES must never go there — a single PDF would evict the whole workspace.
 // Files live here in IndexedDB (large quota, File/Blob structured-clone safe);

@@ -52,14 +52,15 @@ function stripRanges(text, startRe, endRe, label) {
   // (Dead #devBox CSS selectors intentionally remain: they match no element
   // once the pane is gone, and per-selector surgery risks mangling shared
   // rules like `#leftPanel, #docPanel, #devBox`. The cbLast/devNote/devEdit
-  // rules below are removed because those lines belong to no shared rule.)
-  if (/id="devBox"|devShowBtn|pushBtn|loadInput|mergeInput|devWin|cbStatus/.test(html))
-    throw new Error('index.html: leftover DEV pane markup after strip');
-  // dead CSS: rules that only styled the removed pane's elements
+  // rules below are removed because those lines belong to no shared rule.
+  // dead CSS first: rules that only styled the removed pane's elements (they
+  // would otherwise trip the markup check below — e.g. #devShowBtn).
   const cssLines = html.split('\n');
   const keptLines = cssLines.filter(l => !/#(cbLast|devNote|devEdit|devShowBtn)\b/.test(l));
   const cssRemoved = cssLines.length - keptLines.length;
   html = keptLines.join('\n');
+  if (/id="devBox"|devShowBtn|pushBtn|loadInput|mergeInput|devWin|cbStatus/.test(html))
+    throw new Error('index.html: leftover DEV pane markup after strip');
   writeFileSync(p, html);
   console.log(`index.html: removed ${pairs} DEV range(s), ${removed} chars + ${cssRemoved} dead CSS lines`);
 }
@@ -86,7 +87,10 @@ function stripRanges(text, startRe, endRe, label) {
   }
   if (/DEV-ONLY/.test(js)) throw new Error('src/app.js: leftover DEV-ONLY marker after strip');
   for (const name of ['pushBackup', 'renderDevBox', 'setDevBuilds', 'renderCloudBox', 'isDev(', 'loadBackupFromText', 'mergeBackupFromText', 'devBuilds', 'backupHist']) {
-    if (new RegExp(`\\b${name}\\b`).test(js))
+    // escape regex chars; keep the trailing boundary only for names ending
+    // in a word char (so 'isDev(' still matches its calls, e.g. 'isDev()').
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`\\b${esc}${/\w$/.test(name) ? '\\b' : ''}`).test(js))
       throw new Error(`src/app.js: leftover reference to stripped dev code: ${name}`);
   }
   writeFileSync(p, js);

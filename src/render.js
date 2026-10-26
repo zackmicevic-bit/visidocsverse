@@ -1,4 +1,4 @@
-// VisiDocsVerse renderer: projects the 3D universe onto a 2D canvas with a
+// VisiDocsverse renderer: projects the 3D universe onto a 2D canvas with a
 // perspective orbit-camera. Depth-sorted (painter's algorithm), additive-feel
 // glows, neon tethers, z-scaled typography, screen-space picking.
 // lerp between two #rrggbb colors; t=0 -> a, t=1 -> b. Returns [r,g,b].
@@ -92,6 +92,7 @@ export class Renderer {
     this.tetherScale = 1; // tether thickness multiplier (0 = hidden, 1 = current, 2 = double)
     this.tetherColor = '#82aaff'; // tether tint (user palette; shared-ground links auto-contrast off it)
     this.selSet = null; // marquee-selected body ids (Set, owned by app.js) — ring highlight
+    this.hotSet = null; // extra gold bodies (Set, owned by app.js) — Tags view lights every grounding tag
     this.resize();
   }
   resize() {
@@ -294,6 +295,7 @@ export class Renderer {
     // move bodies, so the gilded orb is "what you're viewing", set from app
     // state each frame (falls back to the physical sun when nothing applies)
     const sel = (this.selId && u.byId.has(this.selId)) ? this.selId : null;
+    const hs = (this.hotSet instanceof Set) ? this.hotSet : null; // Tags view: all tags grounding the shown doc
     // neon tethers first (under the bodies)
     ctx.lineCap = 'round';
     const tc = rgbHex(this.tetherColor); // user-picked tint
@@ -306,8 +308,13 @@ export class Renderer {
     for (const e of u.edges) {
       const a = u.byId.get(e.source)?._p, b = u.byId.get(e.target)?._p;
       if (!a || !b) continue;
-      const hot = e.source === u.sunId || e.target === u.sunId;
-      const sunTopic = hot && e.kind === 'topic'; // shared-ground tether of the active body
+      // hot tethers belong to whatever is being viewed: the reader's
+      // selection when there is one (clicks select without crowning a
+      // physical sun, and lenses often have no sun at all), else the sun —
+      // plus every extra-gold body in hotSet (all grounding tags).
+      const hotId = sel || u.sunId;
+      const hot = e.source === hotId || e.target === hotId || (hs && (hs.has(e.source) || hs.has(e.target)));
+      const sunTopic = hot && e.kind === 'topic'; // shared-ground tether of the viewed body
       const dim = match && !(match.has(e.source) && match.has(e.target));
       ctx.globalAlpha = dim ? 0.06 : hot ? 0.9 : 0.55;
       // neon tethers: tight halo pass + bright core pass (slider scales both, far left skips them)
@@ -326,7 +333,7 @@ export class Renderer {
     }
     for (const n of order) {
       const p = n._p;
-      const hot = sel ? (n.id === sel) : !!n.isActive;
+      const hot = (sel ? (n.id === sel) : !!n.isActive) || (hs && hs.has(n.id));
       if (p.x < -80 || p.y < -60 || p.x > W + 80 || p.y > H + 60) continue;
       const dim = match && !match.has(n.id);
       ctx.globalAlpha = dim ? 0.15 : 1;

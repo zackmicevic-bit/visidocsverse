@@ -20,12 +20,28 @@
   #leftPanel .sub { font-size:11px; color:var(--mut); margin:2px 0 12px; letter-spacing:.04em; }
   #searchInput { width:100%; background:rgba(10,14,20,.7); border:1px solid var(--line); color:var(--txt); border-radius:9px; padding:8px 10px; font-size:13px; outline:none; }
   #searchInput:focus { border-color:var(--acc); }
+  .searchwrap { display:flex; align-items:center; gap:6px; }
+  .searchwrap #searchInput { flex:1 1 auto; min-width:0; width:auto; }
+  .searchwrap .sg-help { flex:0 0 auto; }
   #searchPop { margin-top:6px; display:flex; flex-direction:column; gap:3px; max-height:220px; overflow:auto; }
   #searchPop button { background:none; border:0; color:var(--txt); text-align:left; font-size:12.5px; padding:6px 8px; border-radius:7px; cursor:pointer; }
   #searchPop button:hover { background:rgba(95,157,255,.15); }
   #searchPop button span { color:var(--mut); font-size:11px; display:block; }
   #statsEl { display:none; } /* retired: the stats now live in the top pill's statrow */
   .rowbtns { display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; }
+  /* intake grid: Folder + Files share two equal columns, Open spans both
+     (= exactly their combined width) while the ? keeps its own corner */
+  .rowbtns.projgrid { display:grid; grid-template-columns:1fr 1fr auto; gap:8px 6px; align-items:center; }
+  .rowbtns.projgrid #folderBtn, .rowbtns.projgrid #fileBtn { min-width:0; }
+  .rowbtns.projgrid #openProjBtn { grid-column:1 / 3; width:100%; }
+  /* 3D tilt toggle for the left pane: 30° counter-clockwise (seen from
+     above) about the pane's own vertical middle; transition glides it */
+  #leftPanel { transition:transform .45s ease; transform-origin:50% 50%; }
+  #leftPanel.tilted { transform:perspective(1100px) rotateY(30deg); }
+  /* pane-tilt toggle: rides the Personalization header row, right end */
+  .sec-label.pers-label { display:flex; align-items:center; justify-content:space-between; }
+  .sec-label.pers-label #paneTiltBtn { padding:2px 9px; font-size:13px; line-height:1.3; }
+  .sec-label.pers-label #paneTiltBtn[aria-pressed="true"] { background:rgba(95,157,255,.35); }
   .btn { background:rgba(95,157,255,.12); color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer; }
   .btn:hover { background:rgba(95,157,255,.25); }
   /* beat the UA `button:not([disabled]){color:inherit}` rule (0,1,1) so themed
@@ -50,10 +66,26 @@
   body.light-canvas #docResize { background:rgba(255,255,255,.93); color:#5a6b8c; border-color:rgba(30,45,75,.28); }
   /* fatter invisible hit zone around the arrow (clicks still land on #docResize) */
   #docResize::after { content:''; position:absolute; top:-8px; bottom:-8px; left:-20px; right:-6px; cursor:ew-resize; }
+  /* reader-pane 3D tilt: 30° clockwise (seen from above) about the pane's own
+     vertical middle; rides above the stretch arrow with a clear gap */
+  #docPanel { transition:transform .45s ease; transform-origin:50% 50%; }
+  #docPanel.tiltedR { transform:perspective(1100px) rotateY(-30deg); }
+  /* tilted reader: drop the top-right corner controls a bit lower, clear of
+     the foreshortened top edge; they glide back on untilt (class-driven) */
+  #docPanel .collapseBtn, #docPanel .glassDot { transition:top .45s ease; }
+  #docPanel.tiltedR .collapseBtn { top:16px; }
+  #docPanel.tiltedR .glassDot { top:19px; }
+  #docTiltBtn { position:absolute; z-index:22; width:22px; height:26px; display:flex; align-items:center; justify-content:center; font-size:13px; color:var(--mut); background:rgba(16,22,32,.85); border:1px solid var(--line); border-radius:8px; cursor:pointer; user-select:none; -webkit-user-select:none; opacity:.75; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
+  #docTiltBtn:hover { opacity:1; color:#9cc2ff; border-color:#9cc2ff; }
+  body.light-canvas #docTiltBtn { background:rgba(255,255,255,.93); color:#5a6b8c; border-color:rgba(30,45,75,.28); }
+  #docTiltBtn[aria-pressed="true"] { color:#9cc2ff; border-color:#9cc2ff; opacity:1; }
   #docPanel .kicker { font-size:10px; letter-spacing:.14em; color:var(--sun); }
   #docPanel h2 { margin:4px 0 6px; font-size:19px; }
   #docMeta { font-size:11px; color:var(--mut); margin-bottom:10px; }
-  #docBody { font-size:13.5px; line-height:1.75; color:#c4cfdf; white-space:pre-wrap; }
+  #docBody { font-size:13.5px; line-height:1.75; color:#c4cfdf; white-space:pre-wrap; transition:box-shadow .18s ease, background-color .18s ease; }
+  #docBody.tag-drop-hi { box-shadow:0 0 0 2px rgba(255,210,75,.85), 0 0 22px rgba(255,210,75,.35); border-radius:8px; background:rgba(255,210,75,.07); }
+  #docBody.tag-drop-armed { box-shadow:0 0 0 2px rgba(140,170,220,.55), 0 0 14px rgba(140,170,220,.2); border-radius:8px; }
+  #docBody.tag-drop-need { box-shadow:0 0 0 2px rgba(255,110,110,.7), 0 0 14px rgba(255,110,110,.25); border-radius:8px; }
   #docBody .wl { color:#9cc2ff; border-bottom:1px dotted #9cc2ff; cursor:pointer; }
   #docBody .tag { color:#8fd0a8; cursor:pointer; }
   .spot-flash { background:rgba(255,210,75,.45); border-radius:3px; box-shadow:0 0 0 2px rgba(255,210,75,.3); }
@@ -97,8 +129,10 @@
   #imgLight img { max-width:92vw; max-height:92vh; border-radius:8px; }
   .tagpill { display:inline-block; background:rgba(143,208,168,.12); border:1px solid rgba(143,208,168,.35); color:#9fe0b8; border-radius:20px; padding:2px 9px; font-size:11px; margin:0 4px 4px 0; cursor:pointer; }
   .tagpill.demo { cursor:default; }
+  .tags-cap { display:inline-block; font-size:10px; letter-spacing:.14em; color:var(--mut); font-weight:700; margin:0 6px 4px 0; vertical-align:middle; }
   .tagpill.notesbtn { background:rgba(233,195,60,.16); border-color:rgba(233,195,60,.55); color:#f2d24b; font-weight:700; }
   .tagpill.notesbtn.note-zero { background:rgba(150,150,150,.12); border-color:rgba(150,150,150,.4); color:#9a9a9a; }
+  .tagpill.notesbtn .bl-note-ic { vertical-align:-2.5px; margin-right:5px; }
   .tagpill .mmark { color:#ffd24b; font-weight:800; margin-left:5px; font-size:10.5px; }
   .notefilter { display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--mut); margin:0 0 10px; }
   .notefilter label { display:flex; align-items:center; gap:4px; cursor:pointer; }
@@ -123,7 +157,7 @@
      saturate/brightness lift, hairline bright edge, top-edge highlight, faint etched grain, soft deep shadow. */
   #tagPop { position:fixed; inset:0; z-index:210; display:flex; align-items:center; justify-content:center; padding:4vmin; box-sizing:border-box; pointer-events:none; cursor:default; }
   #tagPop[hidden] { display:none; }
-  .tvp-card { width:min(600px,92vw); max-height:82vh; display:flex; flex-direction:column; border-radius:10px; padding:26px 30px 22px; box-sizing:border-box; position:relative; overflow:hidden; pointer-events:auto; cursor:default; }
+  .tvp-card { width:min(600px,92vw); max-height:94vh; display:flex; flex-direction:column; border-radius:10px; padding:26px 30px 22px; box-sizing:border-box; position:relative; overflow:hidden; pointer-events:auto; cursor:default; }
   .tvp-frost { background:linear-gradient(155deg, rgba(255,255,255,.58), rgba(255,255,255,.34) 42%, rgba(250,252,255,.46) 72%, rgba(255,255,255,.60)); -webkit-backdrop-filter:blur(26px) saturate(1.6) brightness(1.07); backdrop-filter:blur(26px) saturate(1.6) brightness(1.07); border:1px solid rgba(255,255,255,.8); box-shadow:0 30px 80px rgba(30,45,75,.30), 0 2px 14px rgba(30,45,75,.14), inset 0 1px 0 rgba(255,255,255,.95), inset 0 0 28px rgba(255,255,255,.22); color:#0d1117; }
   .tvp-frost::before { content:''; position:absolute; inset:0; pointer-events:none; opacity:.055; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E"); }
   .tvp-clear { background:linear-gradient(155deg, rgba(22,30,46,.62), rgba(10,14,22,.40) 45%, rgba(16,24,40,.52)); -webkit-backdrop-filter:blur(24px) saturate(1.3) brightness(.96); backdrop-filter:blur(24px) saturate(1.3) brightness(.96); border:1px solid rgba(220,232,255,.38); box-shadow:0 30px 80px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.28), inset 0 0 28px rgba(140,175,230,.08); color:#f2f6ff; }
@@ -133,7 +167,9 @@
   .tvp-head .tvp-title { font-size:17px; font-weight:800; letter-spacing:.1em; color:inherit; text-align:center; }
   .tvp-head .tvp-x { position:absolute; right:-6px; top:-8px; background:none; border:none; cursor:default; font-size:15px; line-height:1; color:inherit; opacity:.6; padding:6px; }
   .tvp-head .tvp-x:hover { opacity:1; }
-  .tvp-tags { overflow:auto; line-height:2.1; margin-bottom:16px; min-height:40px; scrollbar-width:thin; text-align:center; position:relative; }
+  #tvpGrip { position:absolute; right:8px; bottom:6px; z-index:5; cursor:nwse-resize; font-size:15px; line-height:1; opacity:.55; padding:6px 4px 2px 8px; touch-action:none; user-select:none; -webkit-user-select:none; }
+  #tvpGrip:hover { opacity:1; }
+  .tvp-tags { overflow:auto; line-height:2.1; margin-bottom:16px; flex:1 1 auto; min-height:0; scrollbar-width:thin; text-align:center; position:relative; }
   .tvp-tags .tagpill { font-size:12px; }
   /* frosted-light pills: thin dark outline + dark text like the reference's boxed guide rows */
   .tvp-frost .tagpill { background:rgba(255,255,255,.42); border:1px solid rgba(15,22,34,.62); color:#101725; }
@@ -148,12 +184,28 @@
   .tvp-tags .tagpill:hover .tvp-x, .tvp-tags .tagpill:focus-within .tvp-x { opacity:.75; }
   .tvp-tags .tagpill .tvp-x:hover { opacity:1; background:rgba(255,120,120,.28); }
   .tvp-frost .tagpill .tvp-x:hover { background:rgba(176,0,0,.14); }
+  .tvp-frost .tagpill .tvp-x { color:#000; }
+  body.light-canvas .tvp-tags .tagpill .tvp-x { color:#000; }
+  body.light-canvas .tvp-head .tvp-x { color:#000; }
   .tvp-tags .tagpill.drop-hi { outline:2px dashed var(--sun); outline-offset:2px; transform:scale(1.08); }
   .tvp-tags .tagpill.drag-src { opacity:.35; }
-  .tvp-tips { margin:12px auto 0; max-width:520px; font-size:10.5px; font-weight:300; line-height:1.65; letter-spacing:.02em; text-align:left; display:grid; grid-template-columns:auto 1fr; gap:4px 8px; align-self:center; }
+  .tvp-tips { margin:12px auto 0; max-width:520px; font-size:10.5px; font-weight:300; line-height:1.65; letter-spacing:.02em; text-align:left; display:grid; grid-template-columns:auto 1fr; gap:4px 8px; align-self:center; overflow-y:auto; min-height:0; flex:0 1 auto; }
   .tvp-tips .tvp-term { color:var(--sun); font-weight:600; white-space:nowrap; }
   .tvp-frost .tvp-tips .tvp-term { color:#8a6a1f; }
   .tvp-tips .tvp-exp { opacity:.65; }
+  .tvp-tips .tvp-confirms { display:block; margin:4px auto 0; }
+  /* tagging guide: dev-editable glass pane opened from the tags card */
+  #tagGuidePane { position:fixed; inset:0; z-index:220; display:flex; align-items:center; justify-content:center; padding:4vmin; box-sizing:border-box; pointer-events:none; }
+  #tagGuidePane[hidden] { display:none; }
+  #tagGuideBtn { margin-top:12px; white-space:normal; text-align:center; line-height:1.5; }
+  .tgp-head { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .tgp-head .help-edit-btn { margin-top:0; flex:0 0 auto; }
+  .tgp-title { font-size:14px; font-weight:800; letter-spacing:.06em; color:inherit; }
+  .tgp-x { margin-left:auto; background:none; border:none; cursor:pointer; font-size:15px; line-height:1; color:inherit; opacity:.6; padding:6px; flex:0 0 auto; }
+  .tgp-x:hover { opacity:1; }
+  .tgp-body { overflow:auto; min-height:0; font-size:12.5px; line-height:1.65; }
+  .tgp-body p { margin:0 0 10px; }
+  .tgp-body p:last-child { margin-bottom:0; }
   .tvp-go { align-self:center; background:rgba(255,255,255,.3); border:1px solid currentColor; color:inherit; border-radius:20px; padding:8px 22px; font-size:12px; font-weight:700; letter-spacing:.08em; cursor:pointer; opacity:.95; white-space:nowrap; position:relative; }
   /* view-source preview: transient glass card, same frost recipe as the tags pane */
   #srcPop { position:fixed; inset:0; z-index:215; pointer-events:none; }
@@ -186,6 +238,28 @@
   #glossTab.open { color:#ffd24b; border-color:rgba(255,210,75,.6); }
   body.light-canvas #glossTab { background:rgba(255,255,255,.92); color:#4a6a9c; }
   body.light-canvas #glossTab.open { color:#9a6200; border-color:rgba(154,98,0,.55); }
+  /* pinned glossary terms: one slim book tab per pin, stacked under the
+     glossary tab on the left panel's right border; each opens the same
+     pinned-term pane parked beside the panel */
+  .g-pin { float:right; margin:0 0 4px 8px; background:rgba(95,157,255,.10); color:var(--mut); border:1px solid var(--line); border-radius:7px; padding:1px 8px; font-size:10px; letter-spacing:.04em; cursor:pointer; white-space:nowrap; }
+  .g-pin:hover { color:#9cc2ff; border-color:#9cc2ff; }
+  .g-pin.on { color:#ffd24b; border-color:rgba(255,210,75,.6); }
+  .pinTab { position:absolute; width:25px; display:flex; align-items:center; justify-content:center; padding:6px 0; background:rgba(20,26,32,.88); border:1px solid rgba(140,170,220,.35); border-radius:0 9px 9px 0; color:var(--acc); cursor:pointer; z-index:26; box-shadow:3px 3px 12px rgba(0,0,0,.45); } /* app-level (not a panel child): the panel's backdrop-filter stacking context would trap them under the docked glossary pane */
+  .pinTab span { display:block; writing-mode:vertical-rl; transform:rotate(180deg); font-size:9px; letter-spacing:.12em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-height:100%; }
+  .pinTab:hover { color:#9cc2ff; border-color:#9cc2ff; }
+  .pinTab.open { color:#ffd24b; border-color:rgba(255,210,75,.6); }
+  body.light-canvas .pinTab { background:rgba(255,255,255,.92); color:#4a6a9c; }
+  body.light-canvas .pinTab.open { color:#9a6200; border-color:rgba(154,98,0,.55); }
+  #pinPane { position:absolute; z-index:24; width:320px; display:flex; flex-direction:column; border-radius:14px; overflow:hidden; }
+  #pinPane[hidden] { display:none; }
+  #pinHead { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 10px 6px 12px; font-size:10.5px; letter-spacing:.12em; color:var(--sun); flex:0 0 auto; }
+  #pinTitle { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #pinBtns { display:flex; align-items:center; gap:6px; flex:0 0 auto; }
+  #pinUnpin { background:none; border:1px solid var(--line); color:var(--mut); border-radius:6px; font-size:10px; letter-spacing:.04em; padding:1px 8px; cursor:pointer; white-space:nowrap; }
+  #pinUnpin:hover { color:#ff9d9d; border-color:rgba(255,120,120,.5); }
+  #pinClose { background:none; border:none; color:inherit; cursor:default; font-size:13px; line-height:1; opacity:.7; padding:0 0 0 4px; }
+  #pinClose:hover { opacity:1; }
+  #pinBody { display:block; flex:1 1 auto; min-height:0; overflow:auto; padding:2px 14px 14px; font-size:12.5px; line-height:1.6; color:var(--txt); }
   #glossPane { position:absolute; z-index:23; display:flex; flex-direction:column; border-radius:14px; overflow:hidden; }
   #glossPane[hidden] { display:none; }
   #glossHead { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 10px 6px 12px; font-size:10.5px; letter-spacing:.12em; color:var(--acc); cursor:grab; user-select:none; -webkit-user-select:none; touch-action:none; flex:0 0 auto; }
@@ -253,17 +327,58 @@
   .bl-row:hover { background:rgba(95,157,255,.18); }
   .bl-row span { display:block; color:#8fd0a8; font-size:11px; margin-top:2px; }
   .bl-row .rest-dot { display:inline; color:#ffc357; }
-  /* split inventory rows: dot box (canvas) + title box (pane), one tight unit */
+  /* split inventory rows: document rows get an eye-preview + reserved-slot
+     stack on the left, theme/tag rows a dot box (canvas) + title box (pane) */
   .bl-wrap { display:flex; align-items:stretch; gap:3px; margin:5px 0; }
-  .bl-wrap .bl-row { margin:0; flex:1 1 auto; min-width:0; width:auto; }
+  .bl-wrap .bl-col { flex:1 1 auto; min-width:0; width:auto; display:flex; flex-direction:column; gap:3px; }
+  .bl-wrap .bl-row { margin:0; width:100%; }
+  /* view-jump side cluster: MAIN / THEMATIC / TAGS for the shown document,
+     docked left of the reader like the side find bar (stacked below it). */
+  #gotoSide { position:absolute; z-index:22; display:flex; flex-direction:column; gap:6px; width:210px; background:rgba(10,15,24,.88); border:1px solid rgba(140,170,220,.38); border-radius:14px; padding:8px 10px; box-shadow:0 8px 28px rgba(0,0,0,.5); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
+  #gotoSide[hidden] { display:none; }
+  #gotoSideCap { font-size:10px; letter-spacing:.14em; color:var(--mut); }
+  #gotoSideRow { display:flex; gap:4px; }
+  #gotoSideRow button { flex:1 1 0; min-width:0; font-size:10px; letter-spacing:.06em; line-height:1.5; color:var(--mut); background:rgba(95,157,255,.08); border:1px solid var(--line); border-radius:10px; padding:2px 4px; cursor:pointer; white-space:nowrap; }
+  #gotoSideRow button:hover { color:#eef2fa; background:rgba(95,157,255,.22); border-color:rgba(155,190,240,.55); }
+  #gotoSideRow button.picked { border-color:#ff3b3b; box-shadow:0 0 8px rgba(255,59,59,.5); color:#fff; }
+  body.light-canvas #gotoSide { color:#000; background:rgba(255,255,255,.93); border-color:rgba(30,45,75,.28); box-shadow:0 8px 28px rgba(30,45,75,.2); }
+  body.light-canvas #gotoSideCap { color:#000; }
+  body.light-canvas #gotoSideRow button { color:#000; background:rgba(35,80,180,.10); border-color:rgba(30,45,75,.35); }
+  body.light-canvas #gotoSideRow button:hover { color:#000; background:rgba(35,80,180,.22); border-color:rgba(35,80,180,.65); }
+  body.light-canvas #gotoSideRow button.picked { color:#000; }
   .bl-dot { flex:0 0 auto; width:34px; background:rgba(95,157,255,.08); border:1px solid var(--line); color:var(--txt); border-radius:8px; padding:7px 0; cursor:pointer; font-size:12.5px; line-height:1.2; display:flex; align-items:center; justify-content:center; }
   .bl-dot:hover { background:rgba(95,157,255,.18); }
   .bl-dot .rest-dot { display:inline; color:#ffc357; }
   .bl-dot.dot-on { border-color:#ff3b3b; box-shadow:0 0 8px rgba(255,59,59,.5); }
+  /* document-row side stack: 👁 previews the doc, lower box is a reserved slot */
+  .bl-side { flex:0 0 auto; width:34px; display:flex; flex-direction:column; gap:3px; }
+  .bl-eye, .bl-slot { flex:1 1 0; min-height:0; background:rgba(95,157,255,.08); border:1px solid var(--line); color:var(--txt); border-radius:8px; padding:2px 0; cursor:pointer; font-size:12px; line-height:1.2; display:flex; align-items:center; justify-content:center; }
+  .bl-eye:hover { background:rgba(95,157,255,.18); }
+  .bl-eye.eye-on { border-color:var(--sun); box-shadow:0 0 8px rgba(255,206,107,.5); }
+  .bl-slot { border-style:dashed; opacity:.85; cursor:pointer; font-size:10px; line-height:1.1; padding:1px 0; }
   .bl-note { flex:0 0 auto; width:30px; background:rgba(233,195,60,.10); border:1px solid rgba(233,195,60,.45); color:#f2d24b; border-radius:8px; padding:7px 0; cursor:pointer; font-size:12.5px; line-height:1.2; display:flex; align-items:center; justify-content:center; }
   .bl-note:hover { background:rgba(233,195,60,.25); }
   .bl-note svg { display:block; }
   .bl-note.note-open { border-color:#ff3b3b; box-shadow:0 0 8px rgba(255,59,59,.5); }
+  /* empty note box: outline sticky for docs with no notes yet (same behavior) */
+  .bl-note.empty { border-color:rgba(140,160,190,.4); background:rgba(140,160,190,.06); }
+  .bl-note.empty:hover { background:rgba(140,160,190,.16); }
+  body.light-panes .bl-note.empty { border-color:rgba(120,140,165,.5); background:rgba(120,140,165,.08); }
+  /* inventory × : small remove box over the title box's bottom-right corner */
+  .bl-wrap { position:relative; }
+  .bl-x { position:absolute; right:5px; bottom:5px; z-index:2; font-size:12px; line-height:1; color:var(--mut); background:rgba(10,15,24,.65); border:1px solid transparent; border-radius:6px; padding:1px 6px; cursor:pointer; }
+  .bl-x:hover { color:#ff9d9d; background:rgba(255,91,91,.15); border-color:rgba(255,120,120,.5); }
+  .bl-wrap:has(.bl-note) .bl-x { right:38px; } /* clear the 30px note box + gap */
+  .bl-wrap:has(.bl-x) .bl-row { padding-right:28px; } /* title never runs under the × */
+  /* original-file-type badge: standardized label over the title box's top-right corner (above the ×) */
+  .bl-ft { position:absolute; right:5px; top:5px; z-index:2; font-size:9px; font-weight:700; letter-spacing:.4px; line-height:1.5; padding:1px 5px; border:1px solid; border-radius:4px; pointer-events:none; }
+  .bl-wrap:has(.bl-note) .bl-ft { right:38px; } /* clear the 30px note box + gap, same as the × */
+  .bl-wrap:has(.bl-ft) .bl-row { padding-right:52px; } /* title never runs under the badge (or the × below it) */
+  .ft-pdf { color:#ff8f8f; border-color:rgba(255,107,107,.55); background:rgba(255,107,107,.12); }
+  .ft-word { color:#8fb8ff; border-color:rgba(120,165,255,.55); background:rgba(120,165,255,.12); }
+  .ft-txt { color:#a9b6c6; border-color:rgba(160,175,195,.5); background:rgba(160,175,195,.10); }
+  .ft-ppt { color:#ffb27a; border-color:rgba(255,170,100,.55); background:rgba(255,170,100,.12); }
+  .ft-xls { color:#8fd0a8; border-color:rgba(110,200,145,.55); background:rgba(110,200,145,.12); }
   body.light-panes .bl-head .viewall, body.light-panes .bl-row .rest-dot, body.light-panes .bl-dot .rest-dot { color:#9a6200; }
   body.light-panes .bl-note { color:#8a6a1f; border-color:rgba(138,106,31,.55); background:rgba(233,195,60,.18); }
   /* reader pane scrollbar: wide easy-grab thumb for long body lists */
@@ -291,32 +406,39 @@
   .hw { position:relative; display:inline-block; }
   #docMeta { position:relative; }
   #docMeta > .sg-help-pop { left:0; right:0; width:auto; }
+  #docLinks .bl-head { position:relative; }
+  #docLinks .bl-head .hw { position:static; }
+  #docLinks .bl-head .sg-help-pop { left:0; right:0; width:auto; }
   #docMeta .sg-help:hover ~ .sg-help-pop, #docMeta .sg-help:focus ~ .sg-help-pop, #docMeta.help-open .sg-help-pop { visibility:visible; opacity:1; transform:none; transition-delay:0s; }
   .hw.right .sg-help-pop { left:auto; right:-6px; }
   #hintBar .hw { vertical-align:1px; }
   #hintBar .sg-help-pop { top:auto; bottom:100%; margin-top:0; margin-bottom:8px; transform:translateY(4px); text-align:left; white-space:normal; }
   #hintBar .sg-help-pop::before { top:auto; bottom:-10px; }
-  .sg-help-pop .help-text { display:block; }
+  .sg-help-pop .help-text { display:block; white-space:pre-line; }
   .help-edit-btn { display:none; margin-top:8px; background:rgba(95,157,255,.12); color:var(--txt); border:1px solid var(--line); border-radius:7px; padding:3px 9px; font-size:11.5px; cursor:pointer; }
   .help-edit-btn:hover { background:rgba(95,157,255,.28); }
   body.help-can-edit .help-edit-btn { display:inline-block; }
-  #helpEditModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:80; width:min(420px,92vw); padding:18px 20px; }
+  .hb-tiprow .help-text { display:contents; }
+  .hb-tiprow .help-edit-btn { margin:0 0 0 6px; padding:1px 7px; font-size:10px; align-self:center; }
+  #helpEditModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:230; width:min(420px,92vw); padding:18px 20px; }
   #helpEditModal h3 { margin:0 0 10px; font-size:15px; }
   #helpEditText { width:100%; min-height:130px; background:rgba(10,14,20,.8); border:1px solid var(--line); color:var(--txt); border-radius:9px; padding:10px 12px; font-size:13px; line-height:1.6; font-family:inherit; resize:vertical; }
   #helpEditText:focus { outline:none; border-color:var(--acc); }
   #helpEditHint { font-size:11px; color:var(--mut); margin-top:8px; line-height:1.5; }
-  #hintBar { position:absolute; bottom:14px; left:50%; transform:translateX(-50%); font-size:11.5px; color:#aebdd6; background:rgba(10,15,24,.85); border:1px solid rgba(140,170,220,.38); padding:6px 14px 5px; border-radius:14px; z-index:25; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); box-shadow:0 8px 28px rgba(0,0,0,.5); display:flex; flex-direction:column; align-items:center; gap:1px; }
-  #hintBar .hb-btns { display:flex; align-items:center; justify-content:center; gap:6px; }
+  #hintBar { position:absolute; bottom:14px; left:50%; transform:translateX(-50%); width:max-content; max-width:96vw; font-size:11.5px; color:#aebdd6; background:rgba(10,15,24,.85); border:1px solid rgba(140,170,220,.38); padding:6px 30px 5px 14px; border-radius:14px; z-index:25; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); box-shadow:0 8px 28px rgba(0,0,0,.5); display:flex; flex-direction:column; align-items:center; gap:1px; }
+  #hintBar .hb-btns { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:6px; row-gap:4px; max-width:100%; }
   #hintBar .hb-return { position:absolute; bottom:100%; right:12px; margin:0 0 4px; z-index:26; } /* Return rides as a tab outside + atop the pill, right side, tightly packed */
+  #hintBar .hb-tips-tab { position:absolute; bottom:100%; left:12px; margin:0 0 4px; z-index:26; } /* Tips rides as a tab outside + atop the pill, left side, mirroring Return */
   #hintBar .hb-sep { color:var(--mut); opacity:.55; font-size:11px; user-select:none; -webkit-user-select:none; }
   #hintBar .hb-sep.thick { opacity:1; font-size:14px; font-weight:900; }
-  #hintBar .hb-tips { font-size:10.5px; display:flex; flex-direction:column; align-items:center; gap:0; }
+  #hintBar .hb-tips { font-size:10.5px; display:flex; flex-direction:column; align-items:stretch; gap:0; max-width:100%; width:100%; margin-top:7px; }
   #hintBar.notips .hb-tips { display:none; } /* tips collapsed: buttons row stays */
-  .hb-tiprow { display:flex; justify-content:center; align-items:baseline; white-space:nowrap; line-height:1.5; }
+  .hb-tiprow { display:flex; justify-content:flex-start; align-items:baseline; flex-wrap:wrap; white-space:normal; text-align:left; line-height:1.5; }
   .tt-w { color:#e6edfa; } .tt-g { color:var(--sun); } .tt-sep { color:var(--mut); margin:0 5px; }
   body.light-canvas .tt-w { color:#233044; }
   body.light-canvas .tt-g { color:#8a6a1f; }
   /* (bottom-pill logo retired — the emblem now sits in the top title) */
+  #lbPillBtn svg { height:1.1em; width:auto; vertical-align:-0.2em; margin:0 1px; }
   #isoBtn, #autoBtn, #fitBtn, #simpleOrbBtn, #simpleOrb2Btn, #triOrbBtn, #tipsBtn, #hvBtn, #lbPillBtn { background:rgba(95,157,255,.22); color:#e6edfa; border:1px solid rgba(140,170,220,.45); border-radius:12px; padding:2px 10px; font-size:11px; cursor:pointer; white-space:nowrap; }
   #isoBtn:hover, #autoBtn:hover, #fitBtn:hover, #simpleOrbBtn:hover, #simpleOrb2Btn:hover, #triOrbBtn:hover, #tipsBtn:hover, #hvBtn:hover, #lbPillBtn:hover { background:rgba(95,157,255,.38); }
   #tipsBtn.open { border-color:#ff5b5b; box-shadow:0 0 8px rgba(255,91,91,.45); } /* tips shown: red border while non-collapsed */
@@ -330,13 +452,55 @@
   body.light-canvas #isoBtn.on, body.light-canvas #autoBtn.on, body.light-canvas #fitBtn.on, body.light-canvas #simpleOrbBtn.on, body.light-canvas #simpleOrb2Btn.on, body.light-canvas #triOrbBtn.on, body.light-canvas #hvBtn.on, body.light-canvas #lbPillBtn.on { background:rgba(35,80,180,.88); color:#fff; border-color:#ff5b5b; box-shadow:0 0 8px rgba(255,91,91,.45); }
   body.light-canvas #returnBtn { background:rgba(150,100,10,.16); color:#7a5200; border-color:rgba(150,100,10,.5); box-shadow:0 4px 14px rgba(30,45,75,.25); }
   body.light-canvas #returnBtn:hover { background:rgba(150,100,10,.30); }
+  /* top pill in light mode: same white-glass treatment as the bottom pill */
+  body.light-canvas #tabBar { color:#233044; }
+  body.light-canvas #tabBar.glass {
+    background:
+      linear-gradient(115deg, rgba(255,255,255,.05), rgba(255,255,255,.01) 30%, rgba(255,255,255,0) 48%, rgba(255,255,255,.02) 74%, rgba(255,255,255,.04)),
+      linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0) 26%),
+      rgba(255,255,255,.93);
+    border-color:rgba(30,45,75,.28);
+    box-shadow:0 18px 50px rgba(30,45,75,.2), inset 0 1px 0 rgba(255,255,255,.28);
+  }
+  body.light-canvas #tabBar.noglass {
+    background:rgba(255,255,255,.93);
+    border-color:rgba(30,45,75,.28);
+    box-shadow:0 18px 50px rgba(30,45,75,.2);
+  }
+  body.light-canvas #tabBar .tabbar-label { color:#5a6b8c; }
+  body.light-canvas #tabBar .tab { background:rgba(35,80,180,.12); border-color:rgba(35,80,180,.4); color:#1a2a4a; }
+  body.light-canvas #tabBar .tab:hover { color:#0a1430; background:rgba(35,80,180,.24); border-color:rgba(35,80,180,.7); }
+  body.light-canvas #tabBar .tab.active { color:#fff; background:rgba(200,40,40,.78); border-color:rgba(200,40,40,.9); }
+  body.light-canvas #tabBar .tab.iso { color:#5a6b8c; border-color:rgba(120,140,165,.55); }
+  body.light-canvas #tabBar .tab.iso:hover { color:#1a2a4a; background:rgba(120,140,165,.14); }
+  body.light-canvas #tabBar .tab.iso.active { color:#fff; background:rgba(200,40,40,.78); border-color:rgba(200,40,40,.9); }
+  body.light-canvas #tabBar .tab.iso.tinted { color:#1a2a4a; }
+  body.light-canvas #tabBar .tab.iso.tinted.active { color:#fff; background:rgba(200,40,40,.78); }
+  body.light-canvas #tabBar .tabadd { color:#8a6a1f; }
+  body.light-canvas #tabBar .tabadd-out { color:#7a5c14; } /* standalone "+": deeper bronze for light canvas */
+  body.light-canvas #tabBar .tabx { color:#5a6b8c; }
+  body.light-canvas #tabBar .tabsave { color:#5a6b8c; }
+  body.light-canvas #tabBar .ugroup { border-color:rgba(35,80,180,.5); }
+  body.light-canvas #tabBar .ugroup.live { border-color:rgba(200,40,40,.8); box-shadow:0 0 10px rgba(200,40,40,.3); }
+  body.light-canvas #tabBar .vm { color:#5a6b8c; }
+  body.light-canvas #tabBar .vm:hover { color:#0a1430; }
+  body.light-canvas #tabBar .vm.on { color:#8a6a1f; }
+  body.light-canvas #tabBar .vm-label { color:#8a6a1f; }
+  body.light-canvas #tabBar .vm.vmpill, body.light-canvas #tabBar .vm.taginv { color:#8a6a1f; border-color:rgba(154,98,0,.55); }
+  body.light-canvas #tabBar .vm.vmpill:hover, body.light-canvas #tabBar .vm.taginv:hover { color:#5a3c00; background:rgba(150,100,10,.14); border-color:#8a6a1f; }
+  body.light-canvas #tabBar .vm.vmpill.on { background:rgba(150,100,10,.85); color:#fff; border-color:#ff5b5b; }
+  body.light-canvas #tabBar .statrow { color:#5a6b8c; }
+  body.light-canvas #tabBar .statrow b { color:#1a2a4a; }
+  body.light-canvas #tabBar .statstoggle { color:#5a6b8c; }
+  body.light-canvas #tabBar .modeBtn { background:rgba(35,80,180,.12); color:#1a2a4a; border-color:rgba(35,80,180,.4); }
+  body.light-canvas #tabBar .modeBtn:hover { background:rgba(35,80,180,.24); }
   body.dropping #app { outline:2px dashed var(--acc); outline-offset:-10px; }
   body.dropping #hintBar { color:var(--txt); border-color:var(--acc); }
   #toastEl { position:fixed; bottom:130px; left:50%; transform:translateX(-50%) translateY(10px); background:#1c2940; border:1px solid var(--line); color:#fff; font-size:13px; padding:9px 16px; border-radius:10px; opacity:0; transition:.25s; z-index:50; pointer-events:none; }
   #toastEl.show { opacity:1; transform:translateX(-50%) translateY(0); }
   .pickhide { position:fixed; left:8px; top:8px; width:4px; height:4px; opacity:0.01; pointer-events:none; }
   .rotrow { display:flex; align-items:center; gap:8px; margin-top:8px; min-width:0; }
-  .rotrow .btn { white-space:nowrap; flex-shrink:0; }
+  .rotrow .btn { white-space:nowrap; flex-shrink:0; width:94px; padding:4px 6px; text-align:center; }
   .rotrow input[type="range"] { flex:1 1 auto; min-width:0; width:0; accent-color:var(--acc); cursor:pointer; }
   .rotrow span[id$="Mul"] { font-size:11px; color:var(--mut); min-width:38px; text-align:right; flex-shrink:0; }
   /* verse minimap (Distribute mode): bottom-right glass pane, header-drags to
@@ -354,10 +518,10 @@
   #miniMapFold { background:none; border:1px solid var(--line); color:var(--mut); border-radius:6px; width:18px; height:18px; line-height:1; font-size:12px; cursor:pointer; padding:0; display:flex; align-items:center; justify-content:center; flex:0 0 auto; }
   #miniMapFold:hover { color:#9cc2ff; border-color:#9cc2ff; }
   #miniMap.folded #miniMapCv, #miniMap.folded #miniMapResize { display:none; }
-  #leftPanel, #docPanel, #devBox, #miniMap, #glossPane, #notesPane { background:rgba(20,26,32,calc(.72 * var(--paneAlpha, 1))); }
+  #leftPanel, #docPanel, #devBox, #miniMap, #glossPane, #notesPane, #pinPane { background:rgba(20,26,32,calc(.72 * var(--paneAlpha, 1))); }
   /* crisp glass overlay: layered sheen + blur painted as the pane background itself,
      so text, toggles, thumbnails and filenames always render in front of it */
-  #leftPanel.glass, #docPanel.glass, #devBox.glass, #miniMap.glass, #glossPane.glass, #notesPane.glass {
+  #leftPanel.glass, #docPanel.glass, #devBox.glass, #miniMap.glass, #glossPane.glass, #notesPane.glass, #pinPane.glass {
     background:
       linear-gradient(115deg, rgba(255,255,255,calc(.14 * var(--paneAlpha,1))), rgba(255,255,255,calc(.03 * var(--paneAlpha,1))) 30%, rgba(255,255,255,0) 48%, rgba(255,255,255,calc(.05 * var(--paneAlpha,1))) 74%, rgba(255,255,255,calc(.10 * var(--paneAlpha,1)))),
       linear-gradient(180deg, rgba(255,255,255,calc(.06 * var(--paneAlpha,1))), rgba(255,255,255,0) 26%),
@@ -367,15 +531,45 @@
     box-shadow:0 18px 50px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.22);
   }
   /* glass disengaged via the per-pane dot: flat background, no blur, no sheen */
-  #leftPanel.noglass, #docPanel.noglass, #devBox.noglass, #miniMap.noglass, #glossPane.noglass, #notesPane.noglass {
+  #leftPanel.noglass, #docPanel.noglass, #devBox.noglass, #miniMap.noglass, #glossPane.noglass, #notesPane.noglass, #pinPane.noglass {
     background:rgba(20,26,32,calc(.72 * var(--paneAlpha, 1)));
     backdrop-filter:none; -webkit-backdrop-filter:none;
     box-shadow:0 18px 50px rgba(0,0,0,.5);
   }
+  /* polished-glass overlay for the pills — same removable treatment as the panes */
+  #tabBar.glass {
+    background:
+      linear-gradient(115deg, rgba(255,255,255,.14), rgba(255,255,255,.03) 30%, rgba(255,255,255,0) 48%, rgba(255,255,255,.05) 74%, rgba(255,255,255,.10)),
+      linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0) 26%),
+      rgba(8,12,18,.92);
+    backdrop-filter:blur(18px) saturate(1.35);
+    -webkit-backdrop-filter:blur(18px) saturate(1.35);
+    box-shadow:0 18px 50px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.22);
+  }
+  #hintBar.glass {
+    background:
+      linear-gradient(115deg, rgba(255,255,255,.14), rgba(255,255,255,.03) 30%, rgba(255,255,255,0) 48%, rgba(255,255,255,.05) 74%, rgba(255,255,255,.10)),
+      linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0) 26%),
+      rgba(10,15,24,.85);
+    backdrop-filter:blur(18px) saturate(1.35);
+    -webkit-backdrop-filter:blur(18px) saturate(1.35);
+    box-shadow:0 8px 28px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.22);
+  }
+  /* glass disengaged via the pill dots: flat background, no blur, no sheen */
+  #tabBar.noglass {
+    background:rgba(8,12,18,.92);
+    backdrop-filter:none; -webkit-backdrop-filter:none;
+    box-shadow:0 18px 50px rgba(0,0,0,.6);
+  }
+  #hintBar.noglass {
+    background:rgba(10,15,24,.85);
+    backdrop-filter:none; -webkit-backdrop-filter:none;
+    box-shadow:0 8px 28px rgba(0,0,0,.5);
+  }
   /* white-canvas sharpness: dark glass washes out over a bright backdrop, so
      deepen the base, mute the sheen, harden the edge and shadow. Only matches
      body.light-canvas — the black-canvas look above is untouched. */
-  body.light-canvas #leftPanel.glass, body.light-canvas #docPanel.glass, body.light-canvas #devBox.glass, body.light-canvas #miniMap.glass, body.light-canvas #glossPane.glass, body.light-canvas #notesPane.glass {
+  body.light-canvas #leftPanel.glass, body.light-canvas #docPanel.glass, body.light-canvas #devBox.glass, body.light-canvas #miniMap.glass, body.light-canvas #glossPane.glass, body.light-canvas #notesPane.glass, body.light-canvas #pinPane.glass {
     background:
       linear-gradient(115deg, rgba(255,255,255,calc(.05 * var(--paneAlpha,1))), rgba(255,255,255,calc(.01 * var(--paneAlpha,1))) 30%, rgba(255,255,255,0) 48%, rgba(255,255,255,calc(.02 * var(--paneAlpha,1))) 74%, rgba(255,255,255,calc(.04 * var(--paneAlpha,1)))),
       linear-gradient(180deg, rgba(255,255,255,calc(.03 * var(--paneAlpha,1))), rgba(255,255,255,0) 26%),
@@ -383,10 +577,24 @@
     border-color:rgba(10,15,25,.65);
     box-shadow:0 18px 50px rgba(20,30,50,.45), inset 0 1px 0 rgba(255,255,255,.28);
   }
-  body.light-canvas #leftPanel.noglass, body.light-canvas #docPanel.noglass, body.light-canvas #devBox.noglass, body.light-canvas #miniMap.noglass, body.light-canvas #glossPane.noglass, body.light-canvas #notesPane.noglass {
+  body.light-canvas #leftPanel.noglass, body.light-canvas #docPanel.noglass, body.light-canvas #devBox.noglass, body.light-canvas #miniMap.noglass, body.light-canvas #glossPane.noglass, body.light-canvas #notesPane.noglass, body.light-canvas #pinPane.noglass {
     background:rgba(13,17,24,calc(.88 * var(--paneAlpha, 1) + .08));
     border-color:rgba(10,15,25,.65);
     box-shadow:0 18px 50px rgba(20,30,50,.45);
+  }
+  body.light-canvas #hintBar.glass {
+    background:
+      linear-gradient(115deg, rgba(255,255,255,.05), rgba(255,255,255,.01) 30%, rgba(255,255,255,0) 48%, rgba(255,255,255,.02) 74%, rgba(255,255,255,.04)),
+      linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0) 26%),
+      rgba(255,255,255,.93);
+    border-color:rgba(30,45,75,.28);
+    box-shadow:0 8px 28px rgba(30,45,75,.2), inset 0 1px 0 rgba(255,255,255,.28);
+  }
+  body.light-canvas #hintBar.noglass {
+    background:rgba(255,255,255,.93);
+    backdrop-filter:none; -webkit-backdrop-filter:none;
+    border-color:rgba(30,45,75,.28);
+    box-shadow:0 8px 28px rgba(30,45,75,.2);
   }
   /* round glossy toggle dot — top-right corner of each pane */
   .glassDot { position:absolute; z-index:6; width:18px; height:18px; border-radius:50%; padding:0; cursor:pointer;
@@ -400,9 +608,13 @@
   #docPanel .glassDot { top:11px; right:40px; }
   #devBox .glassDot { top:10px; right:10px; }
   /* dimmed dot = glass currently off for that pane */
-  #leftPanel.noglass .glassDot, #docPanel.noglass .glassDot, #devBox.noglass .glassDot, #miniMap.noglass .glassDot, #glossPane.noglass .glassDot {
+  #leftPanel.noglass .glassDot, #docPanel.noglass .glassDot, #devBox.noglass .glassDot, #miniMap.noglass .glassDot, #glossPane.noglass .glassDot, #tabBar.noglass .glassDot, #hintBar.noglass .glassDot {
     background:rgba(120,140,170,.22); border-color:rgba(140,160,190,.4); box-shadow:none;
   }
+  /* pill dots ride the outer corners so they never cover pill content; the bottom tip opens upward */
+  #tabBar .glassDot { top:8px; right:8px; }
+  #hintBar .glassDot { top:8px; right:8px; }
+  #hintBar .glassDot .glassTip { top:auto; bottom:calc(100% + 9px); }
   /* hover explainer caption */
   .glassDot .glassTip { position:absolute; top:calc(100% + 9px); right:-8px; width:196px; padding:9px 11px;
     font-size:11.5px; line-height:1.55; color:var(--txt); text-align:left; font-weight:400;
@@ -453,11 +665,14 @@
   #ctxMenu .ctx-picklist { display:flex; flex-direction:column; gap:2px; max-height:220px; overflow:auto; padding:0 2px 4px; }
   #ctxMenu .ctx-pick { overflow-wrap:anywhere; }
   #ctxMenu .ctx-pick.on { color:#cfe0ff; background:rgba(95,157,255,.14); }
-  .tabbar-label { display:block; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--mut); white-space:nowrap; text-align:center; padding:0; }
+  #ctxMenu .ctx-item.static { cursor:default; }
+  #ctxMenu .ctx-item.static:hover { background:none; }
+  .tabbar-label { display:block; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--mut); white-space:normal; overflow-wrap:anywhere; text-align:center; padding:0 30px; margin:0 0 8px; } /* 30px sides clear the corner overlays: mode button left, glass orb right */
   #autosaveStatus { font-size:10px; letter-spacing:0; color:var(--mut); text-transform:none; opacity:.9; }
   .tabbar-label .hw { position:static; margin-left:2px; letter-spacing:0; }
   .tabsave { font-size:10px; letter-spacing:0; text-transform:none; font-weight:400; color:var(--mut); margin-left:7px; text-decoration:underline; text-underline-offset:2px; opacity:.9; white-space:nowrap; }
   button.tab .tabsave:hover { color:#fff; }
+  #tabBar .tabcount { font-weight:100; opacity:.75; }
   .tab.tabopen { font-size:11px; letter-spacing:.02em; border-style:dashed; opacity:.9; font-weight:400; }
   #openProjMenu { position:fixed; top:66px; left:50%; transform:translateX(-50%); z-index:40; width:min(300px,86vw); padding:10px 12px; }
   #openProjMenu[hidden] { display:none; }
@@ -469,32 +684,54 @@
   #openProjMenu .opm-empty { font-size:12px; color:var(--mut); padding:6px 4px; }
   #openProjMenu .opm-sub { font-size:10px; letter-spacing:.12em; color:var(--mut); text-transform:uppercase; padding:8px 4px 6px; }
   #openProjMenu .rowbtns { margin-top:4px; }
-  .tabbar-row { display:flex; gap:6px; align-items:center; justify-content:flex-start; max-width:92vw; overflow-x:auto; padding:1px; }
+  .tabbar-row { display:flex; gap:6px; align-items:center; justify-content:center; flex-wrap:wrap; row-gap:6px; max-width:92vw; overflow:visible; padding:1px; }
+  #tabBar .ugroup { display:inline-flex; align-items:center; flex-wrap:wrap; row-gap:6px; gap:6px; border:1px solid rgba(155,190,240,.7); border-radius:13px; padding:3px 8px; min-width:0; max-width:100%; }
+  #tabBar .ugroup.live { border-color:rgba(255,120,120,.9); box-shadow:0 0 10px rgba(255,59,59,.35); }
   #tabBar { position:fixed; top:10px; left:50%; transform:translateX(-50%); z-index:20; display:flex; flex-direction:column; gap:1px; align-items:stretch; width:max-content; max-width:92vw; background:rgba(8,12,18,.92); border:1px solid rgba(140,170,220,.25); border-radius:14px; padding:5px 8px 6px; box-shadow:0 18px 50px rgba(0,0,0,.6); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); }
+  /* its ? popovers must clear the Active-body pane — except when the
+     stretched reader slides over the pill: then the reader wins (z20 < z21)
+     and only a non-overlapping open pop floats above it. syncTabBarZ() in
+     app.js owns the boost dynamically (sets z30 when a pop shows clear of
+     the reader, back to 20 otherwise), since a static :has rule can't see
+     the overlap. */
   /* associated (shared) tabs wear the shared accent color */
-  #tabBar .tab { background:rgba(95,157,255,.10); border:1px solid rgba(95,157,255,.45); color:#cfe0ff; font-size:12px; padding:5px 10px; border-radius:9px; cursor:pointer; white-space:nowrap; max-width:38vw; overflow:hidden; text-overflow:ellipsis; }
+  #tabBar .tab { background:rgba(95,157,255,.10); border:1px solid rgba(95,157,255,.45); color:#cfe0ff; font-size:12px; padding:5px 10px; border-radius:9px; cursor:pointer; white-space:nowrap; max-width:min(38vw, 100%); overflow:hidden; text-overflow:ellipsis; }
   #tabBar .tab:hover { color:#fff; background:rgba(95,157,255,.22); border-color:var(--acc); }
-  #tabBar .tab.active { color:#fff; background:rgba(95,157,255,.32); border-color:var(--acc); box-shadow:0 0 10px rgba(95,157,255,.35); }
+  #tabBar .tab.active { color:#fff; background:rgba(255,59,59,.40); border-color:rgba(255,120,120,.9); box-shadow:0 0 10px rgba(255,59,59,.45); }
   /* isolated tabs are unassociated: dim dashed grey instead of the shared accent */
   #tabBar .tab.iso { background:none; border:1px dashed rgba(125,138,163,.55); color:var(--mut); box-shadow:none; }
   #tabBar .tab.iso:hover { color:var(--txt); background:rgba(125,138,163,.12); border-color:var(--mut); }
-  #tabBar .tab.iso.active { border-color:var(--mut); color:var(--txt); background:rgba(125,138,163,.16); }
+  #tabBar .tab.iso.active { border-color:rgba(255,120,120,.9); color:#fff; background:rgba(255,59,59,.32); }
   #tabBar .tab.iso.tinted { border-style:solid; border-color:var(--tabc); color:#eef2fa; background:color-mix(in srgb, var(--tabc) 16%, transparent); box-shadow:0 0 10px color-mix(in srgb, var(--tabc) 45%, transparent); }
   #tabBar .tab.iso.tinted:hover { background:color-mix(in srgb, var(--tabc) 28%, transparent); border-color:var(--tabc); color:#fff; }
-  #tabBar .tab.iso.tinted.active { background:color-mix(in srgb, var(--tabc) 34%, transparent); border-color:var(--tabc); color:#fff; box-shadow:0 0 12px color-mix(in srgb, var(--tabc) 60%, transparent); }
+  #tabBar .tab.iso.tinted.active { background:rgba(255,59,59,.40); border-color:rgba(255,120,120,.9); color:#fff; box-shadow:0 0 12px rgba(255,59,59,.5); }
   #tabBar .tabadd { color:var(--sun); font-weight:700; font-size:14px; }
+  #tabBar .tabadd-out { color:#e8a83e; } /* standalone-Universe "+": deeper amber, vs the inside-frame joining gold */
   #tabBar .tabx { margin-left:7px; color:var(--mut); font-size:12px; padding:0 3px; border-radius:5px; }
   #tabBar .tabx:hover { color:#ff9d9d; background:rgba(255,120,120,.18); }
   /* universe view modes: discrete text row under the tabs */
-  #tabBar .viewmodes { display:flex; align-items:center; justify-content:center; gap:7px; padding:3px 4px 1px; font-size:11px; color:var(--mut); letter-spacing:.04em; white-space:nowrap; }
-  #tabBar .vm-label { opacity:.7; }
+  #tabBar .viewmodes { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; row-gap:2px; gap:7px; padding:3px 4px 1px; font-size:11px; color:var(--mut); letter-spacing:.04em; }
+  #tabBar .vm-label { color:var(--sun); opacity:1; }
   #tabBar .vm { background:none; border:none; padding:1px 2px; font:inherit; font-size:11px; letter-spacing:.04em; color:var(--mut); cursor:pointer; }
   #tabBar .vm:hover { color:#fff; text-decoration:underline; }
   #tabBar .vm.on { color:var(--sun); font-weight:700; }
+  #tabBar .vm.taginv { color:var(--sun); border:1px solid rgba(255,206,107,.55); border-radius:20px; padding:1px 10px; font-weight:700; }
+  #tabBar .vm.taginv:hover { color:#fff; background:rgba(255,206,107,.14); text-decoration:none; border-color:var(--sun); }
+  #tabBar .vm.vmpill { color:var(--sun); border:1px solid rgba(255,206,107,.55); border-radius:20px; padding:1px 10px; font-weight:700; }
+  #tabBar .vm.vmpill:hover { color:#fff; background:rgba(255,206,107,.14); text-decoration:none; border-color:var(--sun); }
+  #tabBar .vm.vmpill.on { background:rgba(255,206,107,.22); color:#fff; border-color:rgba(255,120,120,.9); box-shadow:0 0 8px rgba(255,59,59,.45); }
+  #tabBar .viewmodes .hw .sg-help { margin-left:2px; cursor:pointer; }
+  /* Universe view modes helps are click-only: hover/focus never opens them — only .help-open (pinned by click) does */
+  #tabBar .viewmodes .hw:not(.help-open) .sg-help-pop { visibility:hidden; opacity:0; transform:translateY(-4px); transition-delay:0s; pointer-events:none; }
   #tabBar .vm-sep { opacity:.35; }
-  #tabBar .statrow { display:flex; align-items:center; justify-content:center; gap:7px; padding:3px 4px 1px; font-size:11px; color:var(--mut); letter-spacing:.04em; white-space:nowrap; }
+  #tabBar .statrow { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:7px; padding:3px 4px 1px; font-size:11px; color:var(--mut); letter-spacing:.04em; white-space:normal; text-align:center; }
   #tabBar .statrow b { color:var(--txt); font-weight:600; }
-  #tabBar .statrow.collapsed .statbits { display:none; }
+  #tabBar .statrow.collapsed { display:none; }
+  #tabBar .statstoggle { margin-right:10px; }
+  #tabBar .pilltoggle { margin-left:10px; font-size:15px; line-height:1; padding:0 4px; }
+  #tabBar.pillCollapsed > :not(.viewmodes) { display:none; }
+  #tabBar .modeBtn { position:absolute; top:8px; left:8px; z-index:5; width:24px; height:24px; padding:0; line-height:1; font-size:13px; background:rgba(95,157,255,.12); color:var(--txt); border:1px solid var(--line); border-radius:7px; cursor:pointer; }
+  #tabBar .modeBtn:hover { background:rgba(95,157,255,.28); }
   .collapseBtn { position:absolute; top:8px; right:8px; z-index:5; width:24px; height:24px; padding:0; line-height:1; font-size:12px; background:rgba(95,157,255,.12); color:var(--txt); border:1px solid var(--line); border-radius:7px; cursor:pointer; }
   .collapseBtn:hover { background:rgba(95,157,255,.28); }
   #leftPanel h1 { padding-right:34px; }
@@ -512,6 +749,36 @@
   #confirmModal h3 { margin:0 0 8px; font-size:16px; overflow-wrap:anywhere; }
   #confirmMsg { font-size:13px; line-height:1.6; color:var(--txt); overflow-wrap:anywhere; }
   #confirmModal .rowbtns { margin-top:14px; }
+  #licenseModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:310; width:min(430px,94vw); padding:18px 20px; }
+  #licenseModal h3 { margin:0 0 8px; font-size:16px; }
+  #licenseMsg { font-size:13px; line-height:1.6; color:var(--txt); }
+  #licenseInput { width:100%; box-sizing:border-box; min-height:86px; margin-top:10px; font-size:12px; resize:vertical; color:var(--txt); background:rgba(0,0,0,.35); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  #licenseKeyInput { width:100%; box-sizing:border-box; margin-top:10px; font-size:13px; letter-spacing:.04em; color:var(--txt); background:rgba(0,0,0,.35); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  .lic-sep { margin:12px 0 2px; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--mut); text-align:center; }
+  #licenseErr { margin-top:10px; font-size:12px; color:#ff9d9d; }
+  #licenseErr[hidden] { display:none; }
+  #licenseModal .rowbtns { margin-top:14px; }
+  #eulaModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:320; width:min(520px,94vw); padding:18px 20px; }
+  #eulaModal h3 { margin:0 0 8px; font-size:16px; }
+  #eulaText { max-height:min(46vh,380px); overflow:auto; white-space:pre-wrap; font-size:12px; line-height:1.65; color:var(--txt); background:rgba(0,0,0,.35); border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-top:10px; }
+  #eulaCheck { display:flex; align-items:flex-start; gap:8px; margin-top:12px; font-size:13px; cursor:pointer; }
+  #eulaCheck input { margin-top:2px; accent-color:var(--acc); }
+  #eulaModal .rowbtns { margin-top:14px; }
+  /* update banner: slim glass notice parked under the top pill (top is set
+     in JS from the pill's live bottom edge, so wrapped tab rows never cover
+     it); above canvas UI, below menus and modals */
+  #updateBanner { position:fixed; left:50%; transform:translateX(-50%); z-index:65; width:min(430px,94vw); padding:12px 14px; }
+  #updateBanner[hidden] { display:none; }
+  .upb-head { display:flex; align-items:center; gap:8px; }
+  #updateTitle { flex:1; font-size:13px; font-weight:700; color:var(--sun); }
+  #updateClose { background:none; border:none; color:inherit; cursor:pointer; font-size:13px; line-height:1; opacity:.7; padding:0 0 0 4px; }
+  #updateClose:hover { opacity:1; }
+  #updateNotes { font-size:12px; line-height:1.6; color:var(--txt); margin:6px 0 2px; }
+  #updateNotes .upb-date { font-size:11px; color:var(--mut); }
+  #updateNotes ul { margin:4px 0 2px; padding-left:18px; }
+  #updateNotes li { margin:2px 0; }
+  #updateBanner .rowbtns { margin-top:8px; }
+  .upb-hint { font-size:10.5px; color:var(--mut); margin-top:6px; line-height:1.5; }
   #confirmSkip { display:flex; align-items:center; gap:7px; margin-top:12px; font-size:12px; color:var(--mut); cursor:pointer; }
   #confirmSkip[hidden] { display:none; }
   #confirmSkip input { accent-color:var(--acc); }
@@ -532,6 +799,11 @@
   .btn:disabled { opacity:.45; cursor:default; }
   #docActions { margin:10px 0 2px; }
   #docActions[hidden] { display:none; }
+  /* title-row × : same canvas-scoped removal as the button row, parked on the title */
+  #docTitleRow { display:flex; align-items:baseline; gap:8px; }
+  #docTitleRow #docTitle { flex:1; min-width:0; }
+  #docTitleX { flex:none; font-size:14px; line-height:1; color:var(--mut); background:none; border:1px solid transparent; border-radius:6px; padding:2px 7px; cursor:pointer; }
+  #docTitleX:hover { color:#ff9d9d; background:rgba(255,91,91,.12); border-color:rgba(255,120,120,.5); }
   #devBox { position:absolute; left:16px; bottom:16px; width:264px; padding:12px 14px; z-index:10; }
   #devBox .cb-head { font-size:11px; letter-spacing:.12em; color:var(--acc); display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
   #devBox .cb-head span:last-child { color:var(--mut); letter-spacing:0; font-size:10.5px; }
@@ -560,7 +832,7 @@
 
 <div id="app">
   <canvas id="uniCv"></canvas>
-  <div id="tabBar"></div>
+  <div id="tabBar" class="glass"></div>
   <div id="leftPanel" class="glass">
     <button class="collapseBtn" data-collapse="leftPanel" title="Collapse panel">▲</button>
     <button id="glossTab" title="Open the Glossary of Terms (movable, resizable — always reopens at its dock)"><span>Glossary of Terms</span></button>
@@ -568,28 +840,34 @@
     <h1><img id="titleLogo" src="src/logo.png" alt="VisiDocsVerse logo" draggable="false"><span class="visi">VISI</span><span class="pipe">|</span><span>DOCSVERSE</span></h1>
     <div class="sub">living document universe</div>
     <div class="notefilter" title="Which sticky-note squares to show next to body labels"><span>View notes:</span><label>All <input type="checkbox" id="notesViewAll" checked></label><span>/</span><label>Active body <input type="checkbox" id="notesViewSun" checked></label></div>
-    <input id="searchInput" placeholder="Search... (press / to focus)" autocomplete="off">
+    <div class="searchwrap"><input id="searchInput" placeholder="Search... (press / to focus)" autocomplete="off">
+      <span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="search"><span class="help-text" data-help-text="search">Searches across documents — it finds which file(s) in the project/verse match, so you can quickly jump to a different doc.</span><button class="help-edit-btn" data-help-edit="search" title="Edit this explanation">✎ edit</button></div></span>
+    </div>
     <div id="searchPop"></div>
     
     <div id="intakeLog" title="Last import result" style="font-size:11px;color:var(--mut);margin-top:8px;line-height:1.5;overflow-wrap:anywhere;"></div>
-    <div class="rowbtns">
+    <div class="rowbtns projgrid">
       <button class="btn" id="folderBtn" title="Select a local folder (.md/.txt/.csv/.pdf/.docx/.xlsx/.pptx)">⤓ Folder</button>
       <button class="btn" id="fileBtn" title="Import files">⤓ Files</button>
-    </div>
-    <div id="vaultBox" style="margin-top:8px;font-size:11px;color:var(--mut);line-height:1.5;" title="Desktop app only: keep a real folder of your originals on this computer. The universe keeps running from its fast internal stores; the folder is a durable mirror.">
-      <span id="vaultStatus">Vault folder: not linked</span>
-      <div class="rowbtns" style="margin-top:4px;">
-        <button class="btn" id="vaultLinkBtn" title="Desktop app only: pick a folder on this computer. Every upload's original is mirrored there as a real file.">Link folder…</button>
-        <button class="btn" id="vaultOpenBtn" hidden title="Open the linked vault folder">Open folder</button>
-        <button class="btn" id="vaultUnlinkBtn" hidden title="Stop mirroring to disk (everything already written stays)">Unlink</button>
-      </div>
+      <span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="files"><span class="help-text" data-help-text="files">Your files stay right where they are.</span><button class="help-edit-btn" data-help-edit="files" title="Edit this explanation">✎ edit</button></div></span>
+      <button class="btn" id="openProjBtn" data-openproj="1" title="Open a project — load / merge a master file from your computer">Open Saved Project</button>
     </div>
     <div class="sec-sep"></div>
-    <div class="sec-label">Personalization</div>
+    <div class="sec-label pers-label"><span>Personalization</span><button class="btn" id="paneTiltBtn" aria-pressed="false" title="Tilt the left pane 30° counter-clockwise (click again to straighten)">↺</button></div>
     <div class="rotrow" title="Universe speed — Pause freezes everything, slider goes down to full stop for slow-motion">
       <button class="btn" id="rotBtn">⏸ Pause</button>
       <input type="range" id="rotSpeed" min="0" max="100" step="1" value="78" title="Universe speed (0 = stopped)">
       <span id="rotMul">1.0×</span>
+    </div>
+    <div class="rotrow" title="Body size — slider scales orbs and triangles, button toggles 100% and your last size">
+      <button class="btn" id="szBtn">&#128309; Size</button>
+      <input type="range" id="szSize" min="5" max="400" step="1" value="100" title="Body size (100 = current, 5 to 400)">
+      <span id="szMul">100%</span>
+    </div>
+    <div class="rotrow" title="Body rotation — spin around the vertical axis (orbs and triangles), slider sets speed, button toggles">
+      <button class="btn" id="spBtn">&#128260; Rotation</button>
+      <input type="range" id="spSpeed" min="0" max="100" step="1" value="40" title="Rotation speed (0 = stopped)">
+      <span id="spMul">off</span>
     </div>
     <div class="rotrow" title="Photo-texture overlay on bodies — slider sets opacity, button toggles on/off">
       <button class="btn" id="ovBtn">&#127912; Overlay</button>
@@ -601,44 +879,10 @@
       <input type="range" id="lbSize" min="0" max="300" step="1" value="100" title="Label size (0 = hidden, up to 300)">
       <span id="lbMul">100%</span>
     </div>
-    <div class="rotrow" title="Body size — slider scales orbs and triangles, button toggles 100% and your last size">
-      <button class="btn" id="szBtn">&#128309; Size</button>
-      <input type="range" id="szSize" min="5" max="300" step="1" value="100" title="Body size (100 = current, 5 to 300)">
-      <span id="szMul">100%</span>
-    </div>
-    <div class="rotrow" title="Body rotation — spin around the vertical axis (orbs and triangles), slider sets speed, button toggles">
-      <button class="btn" id="spBtn">&#128260; Rotation</button>
-      <input type="range" id="spSpeed" min="0" max="100" step="1" value="40" title="Rotation speed (0 = stopped)">
-      <span id="spMul">off</span>
-    </div>
     <div class="rotrow" title="Compress — squish bodies along the horizontal axis, slider sets the amount, button toggles">
       <button class="btn" id="cpBtn">&#8596; Compress</button>
       <input type="range" id="cpSize" min="20" max="100" step="1" value="100" title="Horizontal squish (100 = round)">
       <span id="cpMul">100%</span>
-    </div>
-    <div class="rotrow" title="Canvas background shade — far left white, far right black (button flips extremes)">
-      <button class="btn" id="bgBtn">&#9681; Shade</button>
-      <input type="range" id="bgShade" min="0" max="100" step="1" value="100" title="Background shade (0 = white, 100 = black)">
-      <span id="bgMul">100%</span>
-    </div>
-    <div class="rotrow" title="Photo backdrop behind the universe — slider sets opacity, button toggles on/off (bodies and tethers always stay in front)">
-      <button class="btn" id="bdBtn">&#127748; Backdrop</button>
-      <input type="range" id="bdAlpha" min="0" max="100" step="1" value="55" title="Backdrop opacity (0 = off)">
-      <span id="bdMul">55%</span>
-    </div>
-    <div id="bgPal" title="Canvas backdrop — pick a photo texture (click the active one again to clear)">
-      <button class="bgsw" data-bg="bg01.jpg" style="background-image:url(src/backdrops/bg01.jpg)" title="swirl"></button>
-      <button class="bgsw" data-bg="bg02.jpg" style="background-image:url(src/backdrops/bg02.jpg)" title="rays"></button>
-      <button class="bgsw" data-bg="bg03.jpg" style="background-image:url(src/backdrops/bg03.jpg)" title="weave"></button>
-      <button class="bgsw" data-bg="bg04.jpg" style="background-image:url(src/backdrops/bg04.jpg)" title="splash"></button>
-      <button class="bgsw" data-bg="bg05.jpg" style="background-image:url(src/backdrops/bg05.jpg)" title="dunes"></button>
-      <button class="bgsw" data-bg="bg06.jpg" style="background-image:url(src/backdrops/bg06.jpg)" title="streak"></button>
-      <button class="bgsw" data-bg="bg07.jpg" style="background-image:url(src/backdrops/bg07.jpg)" title="stone"></button>
-      <button class="bgsw" data-bg="bg08.jpg" style="background-image:url(src/backdrops/bg08.jpg)" title="sand"></button>
-      <button class="bgsw" data-bg="bg09.jpg" style="background-image:url(src/backdrops/bg09.jpg)" title="plaster"></button>
-      <button class="bgsw" data-bg="bg10.jpg" style="background-image:url(src/backdrops/bg10.jpg)" title="clay"></button>
-      <button class="bgsw" data-bg="bg11.jpg" style="background-image:url(src/backdrops/bg11.jpg)" title="granite"></button>
-      <button class="bgsw" data-bg="bg12.jpg" style="background-image:url(src/backdrops/bg12.jpg)" title="relief"></button>
     </div>
     <div class="rotrow" title="Glow radius around bodies — far left removes it, middle is current, far right doubles it">
       <button class="btn" id="glBtn">&#10024; Glow</button>
@@ -664,7 +908,31 @@
       <button class="tesw" data-color="#d6409f" style="--sw:#d6409f" title="pink"></button>
       <button class="tesw" data-color="#e8eef7" style="--sw:#e8eef7" title="white"></button>
     </div>
-    <div class="rotrow" title="Pane backgrounds — far left clears the VisiDocsVerse / Active body / DEV panes to just text and controls, far right is the current glass (button toggles)">
+    <div class="rotrow" title="Canvas background shade — far left white, far right black (button flips extremes)">
+      <button class="btn" id="bgBtn">&#9681; Shade</button>
+      <input type="range" id="bgShade" min="0" max="100" step="1" value="100" title="Background shade (0 = white, 100 = black)">
+      <span id="bgMul">100%</span>
+    </div>
+    <div class="rotrow" title="Photo backdrop behind the universe — slider sets opacity, button toggles on/off (bodies and tethers always stay in front)">
+      <button class="btn" id="bdBtn">&#127748; Backdrop</button>
+      <input type="range" id="bdAlpha" min="0" max="100" step="1" value="55" title="Backdrop opacity (0 = off)">
+      <span id="bdMul">55%</span>
+    </div>
+    <div id="bgPal" title="Canvas backdrop — pick a photo texture (click the active one again to clear)">
+      <button class="bgsw" data-bg="bg01.jpg" style="background-image:url(src/backdrops/bg01.jpg)" title="swirl"></button>
+      <button class="bgsw" data-bg="bg02.jpg" style="background-image:url(src/backdrops/bg02.jpg)" title="rays"></button>
+      <button class="bgsw" data-bg="bg03.jpg" style="background-image:url(src/backdrops/bg03.jpg)" title="weave"></button>
+      <button class="bgsw" data-bg="bg04.jpg" style="background-image:url(src/backdrops/bg04.jpg)" title="splash"></button>
+      <button class="bgsw" data-bg="bg05.jpg" style="background-image:url(src/backdrops/bg05.jpg)" title="dunes"></button>
+      <button class="bgsw" data-bg="bg06.jpg" style="background-image:url(src/backdrops/bg06.jpg)" title="streak"></button>
+      <button class="bgsw" data-bg="bg07.jpg" style="background-image:url(src/backdrops/bg07.jpg)" title="stone"></button>
+      <button class="bgsw" data-bg="bg08.jpg" style="background-image:url(src/backdrops/bg08.jpg)" title="sand"></button>
+      <button class="bgsw" data-bg="bg09.jpg" style="background-image:url(src/backdrops/bg09.jpg)" title="plaster"></button>
+      <button class="bgsw" data-bg="bg10.jpg" style="background-image:url(src/backdrops/bg10.jpg)" title="clay"></button>
+      <button class="bgsw" data-bg="bg11.jpg" style="background-image:url(src/backdrops/bg11.jpg)" title="granite"></button>
+      <button class="bgsw" data-bg="bg12.jpg" style="background-image:url(src/backdrops/bg12.jpg)" title="relief"></button>
+    </div>
+    <div class="rotrow" title="Pane backgrounds — far left clears the Visi|Docsverse / Active body / DEV panes to just text and controls, far right is the current glass (button toggles)">
       <button class="btn" id="paBtn">&#9703; Panes</button>
       <input type="range" id="paSize" min="0" max="100" step="1" value="100" title="Pane background opacity (0 = clear, 100 = current glass)">
       <span id="paMul">100%</span>
@@ -679,27 +947,26 @@
     <div class="rowbtns" id="docActions">
       <button class="btn" id="docRemoveBtn" title="Remove the active body from this canvas only (copies on other canvases survive)">✕ Remove from canvas</button>
       <button class="btn danger" id="docDeleteBtn" title="Delete the active body from every canvas (cannot be undone)">✕ Delete everywhere</button>
-      <button class="btn" id="docSrcBtn" title="Preview the first 120 words of this body's source (same preview as right-hold — no right-click needed)">👁 Preview source</button>
-      <button class="btn" id="docFindBtn" title="Find text inside this body — highlights every match, ‹ › steps through">Find in document</button>
-      <button class="btn" id="docTagRenameBtn" hidden title="Rename this tag everywhere on this canvas — prose, manual tags and canvas labels follow">✎ Rename tag</button>
+      <button class="btn" id="docBackBtn" style="margin-left:auto" title="Back to the previous reader position — the document or list the reader showed before">← Back</button>
     </div>
     <div id="docShared"></div>
-    <h2 id="docTitle"></h2>
+    <div id="docTitleRow"><h2 id="docTitle"></h2><button id="docTitleX" title="Remove this document from this canvas only (copies on other canvases survive)">×</button></div>
     <div id="docMeta"></div>
     <div id="docTags"></div>
-    <div id="findBar" hidden>
+    <div id="findBar">
       <input id="findInput" placeholder="Find in body…" autocomplete="off" aria-label="Find in this body">
       <button class="btn" id="findPrev" title="Previous match (Shift+Enter)">‹</button>
       <button class="btn" id="findNext" title="Next match (Enter)">›</button>
       <span id="findCount"></span>
-      <button class="btn" id="findClose" title="Clear find (Esc)">✕</button>
     </div>
     <div id="docBody"></div>
     <div id="docLinks"></div>
     <div id="notePop" class="glass" hidden></div>
   </div>
   <div id="docResize" title="Drag to resize the reader pane — double-click to reset">‹</div>
-  <div id="findSide" class="glass" hidden><input id="findInput2" placeholder="Find in body…" autocomplete="off" aria-label="Find in this body"><div id="findSideRow"><button class="btn" id="findPrev2" title="Previous match (Shift+Enter)">‹</button><button class="btn" id="findNext2" title="Next match (Enter)">›</button><span id="findCount2"></span><button class="btn" id="findClose2" title="Clear find and close this bar (Esc)">✕</button></div></div>
+  <button id="docTiltBtn" aria-pressed="false" title="Tilt the reader pane 30° clockwise (click again to straighten) — unavailable while the stretched pane covers the pills">↻</button>
+  <div id="findSide" class="glass" hidden><input id="findInput2" placeholder="Find in body…" autocomplete="off" aria-label="Find in this body"><div id="findSideRow"><button class="btn" id="findPrev2" title="Previous match (Shift+Enter)">‹</button><button class="btn" id="findNext2" title="Next match (Enter)">›</button><span id="findCount2"></span></div></div>
+  <div id="gotoSide" class="glass" hidden aria-label="Where this document sits"><div id="gotoSideCap">Locate document in :</div><div id="gotoSideRow"><button id="gotoMain" title="Show where this document sits in the Main view (the reader stays put)">MAIN</button><button id="gotoThematic" title="Show which theme this document grounds in the Thematic view">THEMATIC</button><button id="gotoTags" title="Show which tag this document carries in the Tags view">TAGS</button></div></div>
   <button id="notesTab" hidden title="Open the Notes pane — one shared notepad for this body (fixed beside the reader)"><span>Notes</span></button>
   <aside id="notesPane" class="glass" hidden aria-label="Notes for the active body">
     <div id="notesHead"><span id="notesTitle">◉ NOTES</span><span id="notesHeadCount"></span><button id="notesClose" title="Close the Notes pane (unsaved composer text is kept as a draft)">✕</button></div>
@@ -718,12 +985,13 @@
   </aside>
   <button id="notesTopBtn" class="glass" hidden title="Back to the top of the notes">↑ Top</button>
   <button id="docTopBtn" class="glass" hidden title="Back to the top of this body">↑ Top</button>
-  <div id="hintBar"><div class="hb-return"><button id="returnBtn" title="Return to the previous view — the lens, sun, canvas and camera as they were before the last change">↩ Return</button></div><div class="hb-btns"><button id="hvBtn" title="Hover highlight on — hovering a body lights up its row (click to turn off)">◉ Hover peek</button><span class="hb-sep">|</span><button id="lbPillBtn" title="No associated documents in view — right-click a theme orb (or empty canvas) to show them (orb labels stay in the left pane)">○ Labels</button><span class="hb-sep">|</span><button id="fitBtn" title="Fit: recenter and zoom out until every body is on screen (never zooms in), enlarging any orb below readable size">○ Fit</button><span class="hb-sep">|</span><button id="autoBtn" title="Auto-distribute: pin bodies in a fit-to-canvas orb (orbital motion overridden while on)">◉ Distribute</button><span class="hb-sep">|</span><button id="isoBtn" title="Show/hide the tether lines between bodies (bodies always stay)">◉ Tethers</button><span class="hb-sep">|</span><button id="simpleOrbBtn" title="Plain Body: flat white discs with a thin black outline (photo + glow overlays off)">○ Plain Body</button><span class="hb-sep">|</span><button id="simpleOrb2Btn" title="Plain Body 2: original blue orbs with the photo overlays stripped">○ Plain Body 2</button><span class="hb-sep">|</span><button id="triOrbBtn" title="Triangles: upside-down triangles instead of orbs (same colors, same sizes)">○ Orb to ▼</button><span class="hb-sep">|</span><button id="tipsBtn" title="Hide the tips below the pill buttons (buttons stay)">– Tips</button></div><div class="hb-tips"><div class="hb-tiprow"><span class="tt-w">drag empty space to pan</span><span class="tt-sep">·</span><span class="tt-g">drag a body to rotate</span><span class="tt-sep">·</span><span class="tt-w">distribute: alt-drag a body to move it</span><span class="tt-sep">·</span><span class="tt-g">wheel to zoom</span><span class="tt-sep">·</span><span class="tt-w">alt+↑/↓ zooms</span></div><div class="hb-tiprow"><span class="tt-g">click a body for sun</span><span class="tt-sep">·</span><span class="tt-w">click empty space to release</span><span class="tt-sep">·</span><span class="tt-g">double click empty space to (re)center</span><span class="tt-sep">·</span><span class="tt-w">shift-drag to box-select</span><span class="tt-sep">—</span><span class="tt-w">Del deletes selection</span><span class="tt-sep">·</span><span class="tt-g">right-click to delete</span></div><div class="hb-tiprow"><span class="tt-g">main view : right-click -hold a body to preview its document</span><span class="tt-sep">·</span><span class="tt-w">quick right-click opens its menu</span><span class="tt-sep">·</span><span class="tt-w">release to close, or pin it with 👁 Preview source</span></div></div></div>
+  <div id="hintBar" class="glass"><button class="glassDot" data-glaze="hintBar" aria-label="Toggle the frosted-glass background of this pill"><span class="glassTip">Polished-glass finish — click to switch this pill to a flat background, click again to bring the glass back. Text and controls always stay on top.</span></button><div class="hb-return"><button id="returnBtn" title="Return to the previous view — the lens, sun, canvas and camera as they were before the last change">↩ Return</button></div><div class="hb-tips-tab"><button id="tipsBtn" title="Hide the tips below the pill buttons (buttons stay)">– Tips</button></div><div class="hb-btns"><button id="hvBtn" title="Hover highlight on — hovering a body lights up its row (click to turn off)">◉ Hover peek</button><button id="lbPillBtn" title="No associated documents in view — right-click a theme orb (or empty canvas) to show them (orb labels stay in the left pane)">○ <svg viewBox="0 0 12 14" aria-hidden="true" style="height:1.1em;width:auto;vertical-align:-0.2em;margin:0 1px"><path d="M2 0h6l4 4v9a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V1a1 1 0 0 1 1-1z" fill="#ffffff" stroke="#000000" stroke-width="1"/><path d="M8 0l4 4H8z" fill="#c7d0dd"/></svg> Labels</button><button id="fitBtn" title="Fit: recenter and zoom out until every body is on screen (never zooms in), enlarging any orb below readable size">○ Fit</button><button id="autoBtn" title="Auto-distribute: pin bodies in a fit-to-canvas orb (orbital motion overridden while on)">◉ Distribute</button><button id="isoBtn" title="Show/hide the tether lines between bodies (bodies always stay)">◉ Tethers</button><button id="simpleOrbBtn" title="Plain Body: flat white discs with a thin black outline (photo + glow overlays off)">○ Plain Body</button><button id="simpleOrb2Btn" title="Plain Body 2: original blue orbs with the photo overlays stripped">○ Plain Body 2</button><button id="triOrbBtn" title="Triangles: upside-down triangles instead of orbs (same colors, same sizes)">○ Orb to ▼</button></div><div class="hb-tips"><div class="hb-tiprow"><span class="help-text" data-help-text="tip1"><span class="tt-w">drag empty space to pan</span><span class="tt-sep">·</span><span class="tt-g">drag a body to rotate</span><span class="tt-sep">·</span><span class="tt-w">alt-drag a body to move it</span><span class="tt-sep">·</span><span class="tt-g">wheel to zoom</span><span class="tt-sep">·</span><span class="tt-w">alt+↑/↓ zooms</span></span><button class="help-edit-btn" data-help-edit="tip1" title="Edit this tips row (dev only — saved on this machine + in backups)">✎</button></div><div class="hb-tiprow"><span class="help-text" data-help-text="tip2"><span class="tt-g">click a body for sun</span><span class="tt-sep">·</span><span class="tt-w">click empty space to release</span><span class="tt-sep">·</span><span class="tt-g">double click empty space to (re)center</span><span class="tt-sep">·</span><span class="tt-w">shift-drag to box-select</span><span class="tt-sep">—</span><span class="tt-w">Del deletes selection</span><span class="tt-sep">·</span><span class="tt-g">right-click to delete</span></span><button class="help-edit-btn" data-help-edit="tip2" title="Edit this tips row (dev only — saved on this machine + in backups)">✎</button></div><div class="hb-tiprow"><span class="help-text" data-help-text="tip3"><span class="tt-g">main view : right-click -hold a body to preview its document</span><span class="tt-sep">·</span><span class="tt-w">quick right-click opens its menu</span><span class="tt-sep">·</span><span class="tt-w">release to close, or pin it with 👁 Preview source</span></span><button class="help-edit-btn" data-help-edit="tip3" title="Edit this tips row (dev only — saved on this machine + in backups)">✎</button></div></div></div>
   <!-- verse minimap: live top-down dot map, shown only in Distribute mode -->
   <div id="miniMap" class="glass" hidden><button class="glassDot" data-glaze="miniMap" aria-label="Toggle the frosted-glass background of this pane"><span class="glassTip">Polished-glass finish — click to switch this pane to a flat background, click again to bring the glass back. Text and controls always stay on top.</span></button><div id="miniMapHead"><span>◈ VERSE MAP</span><span class="mm-right"><span id="miniMapCount"></span><button id="miniMapFold" title="Collapse the verse map to its header bar">–</button></span></div><canvas id="miniMapCv"></canvas><div id="miniMapResize" title="Drag to resize the map">⤡</div></div>
   <!-- glossary of terms: draggable + resizable glass pane, docked tall beside the left panel -->
-  <div id="glossPane" class="glass" hidden><button class="glassDot" data-glaze="glossPane" aria-label="Toggle the frosted-glass background of this pane"><span class="glassTip">Polished-glass finish — click to switch this pane to a flat background, click again to bring the glass back. Text and controls always stay on top.</span></button><div id="glossHead"><span>◈ GLOSSARY OF TERMS</span><button id="glossClose" title="Close the glossary">✕</button></div><div id="glossBody"><div class="g-term"><span class="g-word">/to focus</span> — the keyboard shortcut for the search field: pressing / anywhere outside a text field jumps the cursor straight into Search.</div><div class="g-term"><span class="g-word">active body</span> — the document currently in focus. It is shown in the Active-body reader pane and gilded gold on the canvas. There is at most one per canvas; clicking empty space releases it back to the general view. Selecting never moves bodies — the map holds still under every click; the sun itself (the gravitational center) is crowned only through a body's "Make sun" menu, which does move it home.</div><div class="g-term"><span class="g-word">active project</span> — the project canvas (tab) currently on screen, named in the top bar. Each project keeps its own documents, formation, sun, and lens; + starts a new empty one.</div><div class="g-term"><span class="g-word">associate project</span> — linking verses together: right-click any tab for its associations menu and tick another verse (links are always mutual). Associated projects share an accent color, and uploads, copies, deletes, and twin lockstep span the whole group.</div><div class="g-term"><span class="g-word">associated documents</span> — the grounded member documents behind a theme orb in the Thematic view. Right-click the orb for "Show all associated documents" (with or without name labels): every member appears as a small paper icon ringed around the orb — the top grounding documents in gold when that theme is selected, in blue otherwise, the rest in a lighter shade of it. Files no theme grounds are still shown, palest of all, each riding the single orb whose terms hit its text hardest (or the largest orb when nothing hits) — so every file in the project displays. Icon count is per-theme attachments, not a file census: a grounded file can ground in up to two themes and then appears on both orbs, so the ringed icons can outnumber the project's files (e.g. 17 icons for 15 files when two files are shared). Left-click an icon to light up that document's row in the reader's bodies inventory (grounded bodies plus the ungrounded files riding that orb, listed in their own section below); right-click it to remove that document from this canvas. Right-click empty canvas to show every theme's documents at once, or to clear them all away. The icons never impinge on neighboring orbs: they shrink and spill into wider rings as membership grows. The bottom pill's Labels button (next to Hover peek) flips the name labels on every associated document currently in view — orb labels are untouched and stay on the left-panel Labels row; with nothing in view it explains how to show documents first. The overlay is session-only — switching canvases or leaving the Thematic view lifts it.</div><div class="g-term"><span class="g-word">Autosaved (project)</span> — every change is stored automatically inside the app (the top bar stamps the time: "autosaved …"), and projects reopen on their own next launch. This is separate from "save project", which downloads a backup file to your computer.</div><div class="g-term"><span class="g-word">backlinks</span> — the documents on this canvas that reference a file by its title. Every general-view row reports them (“N backlink(s)”), and title-links are also what pull a body into something's orbit.</div><div class="g-term"><span class="g-word">body</span> — one file, drawn as one orb (or one ▼ triangle with Orb to ▼ on). A body carries its file's words, mass, tags, and note; click one to make it the sun.</div><div class="g-term"><span class="g-word">center of gravity</span> — whatever the universe orbits around. With a focused document it is the sun; with no active body (general view) the canvas center itself pulls with sun-strength gravity so the formation holds together.</div><div class="g-term"><span class="g-word">delete tag</span> — erase a tag from the whole canvas: open All thematic tags, hover the pill and click its ×, then confirm — every body's #tag is stripped from its text and auto-derived copies of that name are suppressed so title words can't grow it back. Explicitly writing #tag in any body brings it back. Deletes affect the current canvas only. Tick “Don't ask again” to skip future confirmations; the Confirms row in the tags pane tips turns them back on.</div><div class="g-term"><span class="g-word">disassociate project</span> — unlinking a verse: untick its last link and it goes isolated (◌ dashed grey tab with its own identity color). Uploads land only in that tab, copies neither leave nor enter, deletes span only it, and its formation evolves independently.</div><div class="g-term"><span class="g-word">explicit tag</span> — a #hashtag typed directly into a document’s text: a plain green pill with no badge. Its purpose is grouping — it declares “these documents belong together” in your own words: bodies sharing it pull together with a tether, share weight, light up jointly in search, and appear as one node in the Tags view (e.g. #thesis_core on three bodies groups those three). It lives in the prose itself, so editing the words can add or remove it — unlike a manual tag, which is pinned to one passage from the menu (green pill + gold M). Both are yours and always count (blue auto tags only repeat title words and are ignored when too common); writing #name in any body (re)creates the tag everywhere, including resurrecting a deleted one. Use the + #tag button in the reader's tag row to write one in-app (appended to the body's text).</div><div class="g-term"><span class="g-word">general view</span> — the canvas with no active body: the center holds gravity and the reader lists the LARGEST BODIES (plus View all bodies), each with word count, mass, and backlinks. The All thematic tags button lives here.</div><div class="g-term"><span class="g-word">Main (Universe) view</span> — the regular canvas universe: one body per document, orbiting the focused sun — or the canvas center when no body is active (general view). This is the default view and the one both lenses rebuild; leaving the Thematic or Tags view, or picking Main in the Universe view modes row, always returns here with the formation untouched.</div><div class="g-term"><span class="g-word">mass</span> — a file's gravitational pull: bigger, more comprehensive files weigh more and tug harder on everything around them. Shown in the meta line and Properties; a newly focused sun temporarily borrows mass 600 for stability while its real vault mass is kept safe and restored afterwards.</div><div class="g-term"><span class="g-word">merge tags</span> — fold one tag into another: in All thematic tags, drag a pill and drop it onto another pill, then confirm — every body carrying the dragged tag is rewritten to the receiving tag, the dragged name disappears, and its auto-derived form is suppressed. Simple hierarchy: the receiving tag is the primary and keeps its name; the moved tag does not retain its name. Merges affect the current canvas only. Tick “Don't ask again” to skip future confirmations; the Confirms row in the tags pane tips turns them back on.</div><div class="g-term"><span class="g-word">rename tag</span> — give a tag a new name everywhere on the canvas: right-click any pill (the Active body reader, the tag page, or the All thematic tags card) or right-click a tag body on the canvas and choose Rename, then type the new name — every body's explicit #old is rewritten to #new, manual anchors move with it, and auto-only bodies are grounded under the new name so nothing is lost. The old name is suppressed (title words can't grow it back) and the new name is unsuppressed so it can live. Renaming onto an existing name folds in like a merge. Renames affect the current canvas only and share the delete/merge confirmation setting (“Don't ask again”; the Confirms row in the tags pane tips turns it back on).</div><div class="g-term"><span class="g-word">notes</span> — every document in your library includes a built-in shared notepad attached directly to the file itself, ensuring your notes persist. You can read and write notes from three convenient locations: a canvas icon beside the document label (which turns solid when notes exist), a quick pop-out button inside the document reader, or a dedicated glass Notes Pane on the left edge. Because notes are tied to the document itself, any entry added or edited in one view updates instantly across all open tabs.<br><br>The Notes Pane provides a complete, timestamped history along with smart time-savers like Auto-save as you type and an Add Selection feature that appends highlighted passage text directly to your notes. Highlighted text creates an interactive link — clicking the note inside the pane jumps the reader straight to that exact passage in the text, while deleting the note removes the highlight mark. Note controls appear automatically whenever a document is actively open in the reader and remain hidden during broad system or thematic overviews where no single file is selected.</div><div class="g-term"><span class="g-word">Tags (manually created)</span> — tags you make by selecting a block of text in the Active body reader, right-clicking it, and choosing Tag: the selection becomes a tag on that body, badged with a gold M on its pills. Manual tags tether, weigh, and search exactly like written #tags, but they live outside the body text — editing or deleting the words won't remove them. Remove one from the Tags pane × or by deleting its tag in the tags view.</div><div class="g-term"><span class="g-word">Open Existing Project</span> — the top-bar button that reopens projects held in the in-app autosave: pick one by name, open all at once, or pull one back from Recently closed. It never touches files on your computer — those come from the save-project backup.</div><div class="g-term"><span class="g-word">orbital mechanics</span> — the physics layer: sun gravity, peer springs between linked bodies, shell tethers by link depth, and gentle braking — no blanket drag, so genuine orbits survive. New bodies and suns start at circular-orbit speed instead of teleporting; linkless comets drift outward toward the rim cap.</div><div class="g-term"><span class="g-word">rim</span> — the edge of the visualized universe. The top-pill rim number is simply how far the farthest body has drifted; bodies out past it are loners with no links, and a single new reference can pull them back in.</div><div class="g-term"><span class="g-word">search bodies</span> — the search field in the left panel. Type to spotlight every matching body while the rest fade, with a jump-to list underneath; tag pills feed it a #tag, and clearing the box — or one click on empty canvas — restores the full view.</div><div class="g-term"><span class="g-word">shared ground</span> — files holding the same (or very similar) conversation. Distinctive themes are compared across files; files sharing them are tethered together, and the reader's Shared Ground section lists them for the focused document.</div><div class="g-term"><span class="g-word">sun</span> — the document in focus, sitting at the center and pulling everything else around it. Click any body to make it the sun; click empty space to release it — the same click also clears any tag highlight, restoring the full non-faded view.</div><div class="g-term"><span class="g-word">system energy</span> — the total motion of all bodies, shown as a single top-pill number. High readings mean bodies are flying fast — typically right after files are added — and it settles down as stable orbits form.</div><div class="g-term"><span class="g-word">tag</span> — a #hashtag grouping: hand-written in a file, or auto-derived from its title, pictures' text, and top terms (blue auto/ pills). Matching is prefix-blind (#evidence is the same tag as auto/evidence), and tags shared across files tether bodies together and weave the tags view. A tag typed into the prose is an explicit tag; one applied from the menu is a manual tag.</div><div class="g-term"><span class="g-word">tags view</span> — the canvas redrawn around the labels on its documents instead of the documents themselves: one body per tag — hand-written #tags, blue ones derived from titles, gold-M ones tagged by hand — webbed wherever two tags share member documents and sized by grounded-body count. Tags grounding a single body settle beside their best partner, so the shape of the map is the shape of your labeling: shared tags pull their documents’ neighborhoods together. Click a tag to see its grounded members, click a member to open it as the sun — which returns you to the Main view. Picking Main (or toggling Tag off) restores the regular canvas exactly; the two rebuilds are mutually exclusive. How it differs from the thematic view is spelled out in the comparison below.</div><div class="g-comp"><table><tr><th>Feature</th><th>Tags view</th><th>Thematic view</th></tr><tr><td class="gf">Primary Focus</td><td>Labels on the documents</td><td>Ideas shared across the documents</td></tr><tr><td class="gf">Node Representation</td><td>One body per label, grounded by its member documents</td><td>One body per shared idea, sized by thematic weight</td></tr><tr><td class="gf">Isolated Nodes</td><td>Loners seated beside their best partner</td><td>Ideas merged into unified theme clusters</td></tr><tr><td class="gf">Interaction</td><td>Trace how labels connect the corpus; drill into tags and members</td><td>Drill into themes and grounded files; toggle off to restore the Main view</td></tr></table></div><div class="g-term"><span class="g-word">thematic view</span> — the canvas redrawn around the ideas its documents share instead of the documents themselves: terms that travel together across files are distilled into theme bodies — one body per theme, sized by its thematic weight — webbed by the grounded documents they share, under the same orbital physics. One-off words never qualify (a concept must evidence across several bodies; corpus-wide boilerplate is excluded), so what you see is the genuine common ground. With no active body it distills every shared canvas at once. Click a theme to see its concepts and grounded members, click a member to open it as the sun — which returns you to the Main view. Picking Main (or toggling Thematic off) restores the regular canvas exactly. How it differs from the tags view is spelled out in the comparison above.</div><div class="g-term"><span class="g-word">Universe view modes</span> — the discrete row under the top tabs: Main | Thematic | Tag. Three ways to see the same canvas — Main shows every document body, Thematic rebuilds it from distilled text themes, Tags rebuilds it from shared tags. The two rebuilds are mutually exclusive lenses; picking Main (or toggling the live one off) restores the regular canvas exactly.</div><div class="g-term"><span class="g-word">verse</span> — short for universe: one project canvas — a grouping of documents with its own formation, sun, and lens. The whole-visidocsverse thematic map is the one view that spans every verse at once.</div><div class="g-term"><span class="g-word">View notes: Active body notes and All notes</span> — the left-pane View notes: filter for the yellow sticky-note squares beside body labels. All puts a solid square on every body that has note entries; Active body shows the focused body's square — solid if it has entries, a hollow frame if not. Click a square to open the floating note editor; the reader and the Notes book tab show the same shared notepad (see "notes").</div><div class="g-term"><span class="g-word">vault folder</span> — a real folder on your computer (desktop app only) that mirrors every upload's original file, so your documents exist twice: once alive in the universe, once as genuine files you can browse, copy, or sync. Link it from the Vault folder row in the left panel; the universe keeps running from its fast internal stores either way, and revealing a body (right-click menu) highlights its file. Unlinking stops the mirroring — everything already written stays on disk.</div><div class="g-vs"><div class="g-vs-head">The two views, side by side</div><div class="g-vs-row"><b>Built from</b> — thematic view: ideas the files share, distilled into theme bodies; tags view: the labels on the files, one body per tag.</div><div class="g-vs-row"><b>Bodies are</b> — thematic view: one body per shared idea, sized by thematic weight; tags view: one body per label, sized by grounded-body count.</div><div class="g-vs-row"><b>Links mean</b> — thematic view: the grounded documents the themes share; tags view: the member documents the tags share.</div><div class="g-vs-row"><b>Enter via</b> — thematic view: the Universe view modes row; tags view: the Universe view modes row, or Main view → All thematic tags → ◈ Show tags view.</div><div class="g-vs-row"><b>Both</b> run the same orbital physics, are mutually exclusive with each other, and switching either off (or picking Main) restores the Main view exactly.</div></div></div><div id="glossResize" title="Drag to resize the pane">⤡</div></div>
-  <button id="glossTopBtn" class="glass" hidden title="Back to the top of the glossary">↑ Top</button>
+  <div id="glossPane" class="glass" hidden><button class="glassDot" data-glaze="glossPane" aria-label="Toggle the frosted-glass background of this pane"><span class="glassTip">Polished-glass finish — click to switch this pane to a flat background, click again to bring the glass back. Text and controls always stay on top.</span></button><div id="glossHead"><span>◈ GLOSSARY OF TERMS</span><button id="glossClose" title="Close the glossary">✕</button></div><div id="glossBody"><div class="g-term"><span class="g-word">/to focus</span> — the keyboard shortcut for the search field: pressing / anywhere outside a text field jumps the cursor straight into Search.</div><div class="g-term"><span class="g-word">active body</span> — the document currently in focus. It is shown in the Active-body reader pane and gilded gold on the canvas. There is at most one per canvas; clicking empty space releases it back to the general view. It never moves for being selected — the pick is marked where it sits (gold halo, bold label, hot tethers, gold inventory rows); the sun itself (the gravitational center) is crowned through an inventory dot box (theme/tag rows carry dots; document rows carry an eye-preview plus a + #tag writer instead), which moves it home.</div><div class="g-term"><span class="g-word">active project</span> — the project canvas (tab) currently on screen, named in the top bar. Each project keeps its own documents, formation, sun, and lens; + starts a new empty one.</div><div class="g-term"><span class="g-word">associate project</span> — linking verses together: right-click any tab for its associations menu and tick another verse (links are always mutual). Associated projects share an accent color, and uploads, copies, deletes, and twin lockstep span the whole group.</div><div class="g-term"><span class="g-word">associated documents</span> — the grounded member documents behind a theme orb in the Thematic view. Right-click the orb for "Show all associated documents" (with or without name labels): every member appears as a small paper icon ringed around the orb — the top grounding documents in gold when that theme is selected, in blue otherwise, the rest in a lighter shade of it. Files no theme grounds are still shown, palest of all, each riding the single orb whose terms hit its text hardest (or the largest orb when nothing hits) — so every file in the project displays. Icon count is per-theme attachments, not a file census: a grounded file can ground in up to two themes and then appears on both orbs, so the ringed icons can outnumber the project's files (e.g. 17 icons for 15 files when two files are shared). Left-click an icon to light up that document's row in the reader's bodies inventory (grounded bodies plus the ungrounded files riding that orb, listed in their own section below); right-click it to remove that document from this canvas. Right-click empty canvas to show every theme's documents at once, or to clear them all away. The icons never impinge on neighboring orbs: they shrink and spill into wider rings as membership grows. The bottom pill's Labels button (next to Hover peek) flips the name labels on every associated document currently in view — orb labels are untouched and stay on the left-panel Labels row; with nothing in view it explains how to show documents first. The overlay is session-only — switching canvases or leaving the Thematic view lifts it.</div><div class="g-term"><span class="g-word">Autosaved (project)</span> — every change is stored automatically inside the app (the top bar stamps the time: "autosaved …"), and projects reopen on their own next launch. This is separate from "save project", which downloads a backup file to your computer.</div><div class="g-term"><span class="g-word">backlinks</span> — the documents on this canvas that reference a file by its title. Every general-view row reports them (“N backlink(s)”), and title-links are also what pull a body into something's orbit.</div><div class="g-term"><span class="g-word">body</span> — one file, drawn as one orb (or one ▼ triangle with Orb to ▼ on). A body carries its file's words, mass, tags, and note; click one to make it the sun.</div><div class="g-term"><span class="g-word">center of gravity</span> — whatever the universe orbits around. With a focused document it is the sun; with no active body (general view) the canvas center itself pulls with sun-strength gravity so the formation holds together.</div><div class="g-term"><span class="g-word">copy all content</span> — duplicate a whole project tab's documents into another tab: right-click the source tab and choose ⧉ Copy all content, then right-click the destination tab and choose ⤓ Paste N bodies from "X". It works across universes — no association needed. Each pasted body arrives with its text, tags, pictures, notes, sticky-spot anchors and original file, and stays linked to its origin; a copied body never resurrects a name the destination deleted or merged away. Bodies already present under the same name are skipped, so pasting twice reports everything is already here. The copied stash survives reloads and stays ready for repeated pastes into several tabs.</div><div class="g-term"><span class="g-word">delete tag</span> — erase a tag from the whole canvas: open ALL TAGS, hover the pill and click its ×, then confirm — every body's #tag is stripped from its text and auto-derived copies of that name are suppressed so title words can't grow it back. Explicitly writing #tag in any body brings it back. Deletes affect the current canvas only. Tick “Don't ask again” to skip future confirmations; the Confirms row in the tags pane tips turns them back on.</div><div class="g-term"><span class="g-word">disassociate project</span> — unlinking a verse: untick its last link and it goes isolated (◌ dashed grey tab with its own identity color). Uploads land only in that tab, copies neither leave nor enter, deletes span only it, and its formation evolves independently.</div><div class="g-term"><span class="g-word">document views</span> — MAIN, THEMATIC and TAG as seen from one document's side: the "Locate document in :" box beside the reader shows where the shown document sits in each view. MAIN lights the document's own orb on the Main canvas; THEMATIC enters the Thematic view on the theme that grounds it; TAGS enters the Tags view with every tag it carries lit gold together. Each jump also centers the canvas on its target (the whole tag group for TAGS). The reader keeps the document throughout — only the canvas moves. Not to be confused with the whole-universe views (Main (Universe) view, thematic view, tags view, switched from the Universe view modes row): those apply the same three lenses on the macro level, recomposing the entire canvas — all documents, themes and tags at once — while document views apply them on the micro level, to a single document. More generally, any document shown in the reader keeps its orb lit gold on every canvas where it has a body — parked or focused, selection or not.</div><div class="g-term"><span class="g-word">explicit tag</span> — a #hashtag typed directly into a document’s text: a plain green pill with no badge. Its purpose is grouping — it declares “these documents belong together” in your own words: bodies sharing it pull together with a tether, share weight, light up jointly in search, and appear as one node in the Tags view (e.g. #thesis_core on three bodies groups those three). It lives in the prose itself, so editing the words can add or remove it — unlike a manual tag, which is pinned to one passage from the menu (green pill + gold M). Both are yours and always count (blue auto tags only repeat title words and are ignored when too common); writing #name in any body (re)creates the tag everywhere, including resurrecting a deleted one. Use the + #tag button in the reader's tag row to write one in-app (appended to the body's text).</div><div class="g-term"><span class="g-word">files (adding)</span> — your files stay right where they are. Adding a file or folder (left-pane ⤓ Folder / ⤓ Files) never moves, copies, or alters the originals on your hard drive — the app only reads them.<br><br>Instead it builds a lightweight visual duplicate (a "rendered clone") inside the canvas — extracted text plus image previews — so you can map, explore, and connect your documents without touching your original work.</div><div class="g-term"><span class="g-word">general view</span> — the canvas with no active body: the center holds gravity and the reader lists the LARGEST BODIES (plus View all bodies), each with word count, mass, and backlinks. The See Tag Inventory button, which opens ALL TAGS, lives in the top pill.</div><div class="g-term"><span class="g-word">Main (Universe) view</span> — the regular canvas universe: one body per document, orbiting the focused sun (or the canvas center with nothing active). This is the default view and the one both lenses rebuild — leaving the Thematic or Tags view always returns here with the formation untouched.<br><br>The Analogy: Think of your library as a Solar System, where every document is an individual planet floating in space.<br><br>How It Works: In your daily work, when you click on a file, it acts like a gravitational anchor—the Sun—drawing all related files into its orbit so you can see what directly connects to it. When nothing is selected, your files rest in their default positions. Switching to other views and back is like taking a space walk: when you return, your desktop universe remains completely untouched.</div><div class="g-term"><span class="g-word">mass</span> — a file's gravitational pull: bigger, more comprehensive files weigh more and tug harder on everything around them. Shown in the meta line and Properties; a newly focused sun temporarily borrows mass 600 for stability while its real vault mass is kept safe and restored afterwards.</div><div class="g-term"><span class="g-word">merge tags</span> — fold one tag into another: in ALL TAGS, drag a pill and drop it onto another pill, then confirm — every body carrying the dragged tag is rewritten to the receiving tag, the dragged name disappears, and its auto-derived form is suppressed. Simple hierarchy: the receiving tag is the primary and keeps its name; the moved tag does not retain its name. Merges affect the current canvas only. Tick “Don't ask again” to skip future confirmations; the Confirms row in the tags pane tips turns them back on.</div><div class="g-term"><span class="g-word">notes</span> — every document in your library includes a built-in shared notepad attached directly to the file itself, ensuring your notes persist. You can read and write notes from three convenient locations: a canvas icon beside the document label (which turns solid when notes exist), a quick pop-out button inside the document reader, or a dedicated glass Notes Pane on the left edge. Because notes are tied to the document itself, any entry added or edited in one view updates instantly across all open tabs.<br><br>The Notes Pane provides a complete, timestamped history along with smart time-savers like Auto-save as you type and an Add Selection feature that appends highlighted passage text directly to your notes. Highlighted text creates an interactive link — clicking the note inside the pane jumps the reader straight to that exact passage in the text, while deleting the note removes the highlight mark. Note controls appear automatically whenever a document is actively open in the reader and remain hidden during broad system or thematic overviews where no single file is selected.</div><div class="g-term"><span class="g-word">Open Project</span> — the left-pane button for bringing computer files back in: load a master file (replaces every open project) or merge one into the current canvas. It never touches files on your computer beyond the one you pick — day-to-day safety copies come from the save-project backup.</div><div class="g-term"><span class="g-word">orbital mechanics</span> — the physics layer: sun gravity, peer springs between linked bodies, shell tethers by link depth, and gentle braking — no blanket drag, so genuine orbits survive. New bodies and suns start at circular-orbit speed instead of teleporting; linkless comets drift outward toward the rim cap.</div><div class="g-term"><span class="g-word">rename tag</span> — give a tag a new name everywhere on the canvas: right-click any pill (the Active body reader, the tag page, or the ALL TAGS card) or right-click a tag body on the canvas and choose Rename, then type the new name — every body's explicit #old is rewritten to #new, manual anchors move with it, and auto-only bodies are grounded under the new name so nothing is lost. The old name is suppressed (title words can't grow it back) and the new name is unsuppressed so it can live. Renaming onto an existing name folds in like a merge. Renames affect the current canvas only and share the delete/merge confirmation setting (“Don't ask again”; the Confirms row in the tags pane tips turns it back on).</div><div class="g-term"><span class="g-word">rim</span> — the edge of the visualized universe. The top-pill rim number is simply how far the farthest body has drifted; bodies out past it are loners with no links, and a single new reference can pull them back in.</div><div class="g-term"><span class="g-word">Search bar (left pane)</span> — Searches across documents — it finds which file(s) in the project/verse match, so you can quickly jump to a different doc. Type to spotlight every matching body while the rest fade, with a jump-to list underneath; tag pills feed it a #tag, and clearing the box — or one click on empty canvas — restores the full view.</div><div class="g-term"><span class="g-word">shared ground</span> — files holding the same (or very similar) conversation. Distinctive themes are compared across files; files sharing them are tethered together, and the reader's Shared Ground section lists them for the focused document: who it connects to, and through which shared words. The reverse direction is grounding: in the Thematic and Tag views, a theme or tag body is grounded in its member documents — the files its idea or label stands on, listed in its GROUNDED section. Shared ground fans outward from one document to its neighbors; grounded documents fan inward from one theme or tag to the files behind it.</div><div class="g-term"><span class="g-word">sun</span> — the document in focus, sitting at the center and pulling everything else around it. Click any body to make it the sun; click empty space to release it — the same click also clears any tag highlight, restoring the full non-faded view.</div><div class="g-term"><span class="g-word">system energy</span> — the total motion of all bodies, shown as a single top-pill number. High readings mean bodies are flying fast — typically right after files are added — and it settles down as stable orbits form.</div><div class="g-term"><span class="g-word">tag</span> — a #hashtag grouping: hand-written in a file, or auto-derived from its title, pictures' text, and top terms (blue auto/ pills). Matching is prefix-blind (#evidence is the same tag as auto/evidence), and tags shared across files tether bodies together and weave the tags view. A tag typed into the prose is an explicit tag; one applied from the menu is a manual tag.</div><div class="g-term"><span class="g-word">Tags (manually created)</span> — tags you make by selecting a block of text in the Active body reader, right-clicking it, and choosing Tag: the selection becomes a tag on that body, badged with a gold M on its pills. Manual tags tether, weigh, and search exactly like written #tags, but they live outside the body text — editing or deleting the words won't remove them. Remove one from the Tags pane × or by deleting its tag in the tags view. Shortcut: drag any pill from ALL TAGS onto highlighted reader text to pin that tag onto the exact passage.</div><div class="g-term"><span class="g-word">tags view</span> — the canvas redrawn around the labels on its documents: one body per tag, webbed wherever two tags share member documents, sized by grounded-body count. Click a tag to see its grounded member documents, click a member document to open it. When a document is shown in the reader, each tag it sits in glows gold; orange lines between tags only mean shared member documents, not membership.  Mutually exclusive with the Thematic view.<br><br>The Analogy: Think of a whiteboard organized by colored sticky notes, where every tag is a central pinboard.<br><br>How It Works: Instead of looking at the files themselves or deep underlying concepts, the canvas groups everything by the specific labels you or the system have attached (like #Draft, #Invoice, or #Urgent).<br><br>--Larger tag bodies mean more files are pinned under that label.
+-- Lines connecting two tags show overlap—documents that carry both sticky notes at the same time.<br><br>Clicking a tag opens up the folder of every document carrying that label, giving you a quick, organized view of your explicitly marked work.</div><div class="g-comp"><table><tr><th>Feature</th><th>Tags view</th><th>Thematic view</th></tr><tr><td class="gf">Primary Focus</td><td>Labels on the documents</td><td>Ideas shared across the documents</td></tr><tr><td class="gf">Node Representation</td><td>One body per label, grounded by its member documents</td><td>One body per shared idea, sized by thematic weight</td></tr><tr><td class="gf">Isolated Nodes</td><td>Loners seated beside their best partner</td><td>Ideas merged into unified theme clusters</td></tr><tr><td class="gf">Interaction</td><td>Trace how labels connect the corpus; drill into tags and members</td><td>Drill into themes and grounded files; toggle off to restore the Main view</td></tr></table></div><div class="g-term"><span class="g-word">thematic view</span> — the canvas re-composed and re-visualized around the ideas its documents share: terms that travel together across files are distilled into theme bodies, one per theme, sized by thematic weight and webbed by shared members. Click a theme to see its grounded member documents, click a member document to open it; toggling Thematic off restores the Main view untouched.<br><br>The Analogy: Imagine looking up at the night sky and grouping individual stars into constellations.<br><br>How It Works: Instead of looking at single files (stars), the canvas zooms out to highlight the overarching ideas (constellations) hidden across your text—such as Market Research, Budgeting, or Compliance. Each theme body is sized by how much content supports it, with glowing threads connecting themes that share common files. Clicking a constellation reveals the specific document stars within it; turning the view off snaps you right back to your individual file layout.</div><div class="g-term"><span class="g-word">ungrounded</span> — a file no theme grounds: it carries none of the distilled ideas strongly enough to be a member. Each one still rides on exactly one theme orb — the theme whose terms hit its text hardest, or the largest theme when nothing hits — listed in that theme's UNGROUNDED section below the grounded members. Same rows, same clicks: clicking one drills down into the document.</div><div class="g-term"><span class="g-word">Universe view modes</span> — the discrete row under the top tabs: Main | Thematic | Tag as golden pills, each with its own "?" explicator. Three ways to see the same canvas — Main shows every document body, Thematic rebuilds it from distilled text themes, Tags rebuilds it from shared tags. The two rebuilds are mutually exclusive lenses; picking Main (or toggling the live one off) restores the regular canvas exactly.</div><div class="g-term"><span class="g-word">verse</span> — short for universe: one project canvas — a grouping of documents with its own formation, sun, and lens. The whole-Visi|Docsverse thematic map is the one view that spans every verse at once.</div><div class="g-term"><span class="g-word">View notes: Active body notes and All notes</span> — the left-pane View notes: filter for the yellow sticky-note squares beside body labels. All puts a solid square on every body that has note entries; Active body shows the focused body's square — solid if it has entries, a hollow frame if not. Click a square to open the floating note editor; the reader and the Notes book tab show the same shared notepad (see "notes").</div><div class="g-vs"><div class="g-vs-head">The two views, side by side</div><div class="g-vs-row"><b>Built from</b> — thematic view: ideas the files share, distilled into theme bodies; tags view: the labels on the files, one body per tag.</div><div class="g-vs-row"><b>Bodies are</b> — thematic view: one body per shared idea, sized by thematic weight; tags view: one body per label, sized by grounded-body count.</div><div class="g-vs-row"><b>Links mean</b> — thematic view: the grounded documents the themes share; tags view: the member documents the tags share.</div><div class="g-vs-row"><b>Enter via</b> — thematic view: the Universe view modes row; tags view: the Universe view modes row, or Main view → See Tag Inventory → ◈ Show tags view.</div><div class="g-vs-row"><b>Both</b> run the same orbital physics, are mutually exclusive with each other, and switching either off (or picking Main) restores the Main view exactly.</div></div></div><div id="glossResize" title="Drag to resize the pane">⤡</div></div>
+  <div id="pinPane" class="glass" hidden><div id="pinHead"><span id="pinTitle">◈ PINNED TERM</span><span id="pinBtns"><button id="pinUnpin" title="Remove this pin tab">unpin</button><button id="pinClose" title="Close the pinned term">✕</button></span></div><div id="pinBody"></div></div><button id="glossTopBtn" class="glass" hidden title="Back to the top of the glossary">↑ Top</button>
   <div id="devBox" class="glass" hidden>
     <!-- DEV-ONLY-START -->
     <button class="glassDot" data-glaze="devBox" aria-label="Toggle the frosted-glass background of this pane"><span class="glassTip">Polished-glass finish — click to switch this pane to a flat background, click again to bring the glass back. Text and controls always stay on top.</span></button>
@@ -731,9 +999,9 @@
     <div class="cb-head"><span>☁ CLOUD BACKUP</span><span id="cbStatus">no pushes yet</span></div>
     <div class="rowbtns">
       <button class="btn" id="pushBtn" title="Upload a full snapshot (code + documents + settings) to the cloud">⤒ Push backup</button>
-      <button class="btn" id="dlMasterBtn" title="Download the VisiDocsVerse master settings/data file to your computer">⤓ Master file</button>
-      <button class="btn" id="loadBtn" title="Load a VisiDocsVerse master file back into the universe (replaces everything)">Load…</button>
-      <button class="btn" id="mergeBtn" title="Add a VisiDocsVerse master file's documents into the current canvas (keeps what is already open)">Merge…</button>
+      <button class="btn" id="dlMasterBtn" title="Download the Visi|Docsverse master settings/data file to your computer">⤓ Master file</button>
+      <button class="btn" id="loadBtn" title="Load a Visi|Docsverse master file back into the universe (replaces everything)">Load…</button>
+      <button class="btn" id="mergeBtn" title="Add a Visi|Docsverse master file's documents into the current canvas (keeps what is already open)">Merge…</button>
     </div>
     <div id="cbLast"></div>
     <input type="file" id="loadInput" class="pickhide" accept=".json,application/json">
@@ -765,8 +1033,9 @@
 <div id="openProjMenu" class="glass" hidden>
   <div class="opm-head">Open a project</div>
   <div id="openProjList"></div>
-  <div class="rowbtns"><button class="btn" id="openAllBtn" title="Reopen every project from the in-app autosave">Open all</button></div>
 </div>
+<input type="file" id="restorePick" class="pickhide" accept=".json,application/json">
+<input type="file" id="absorbPick" class="pickhide" accept=".json,application/json">
 <div id="propsModal" class="glass" hidden>
   <h3 id="propsTitle"></h3>
   <div id="propsBody"></div>
@@ -775,8 +1044,32 @@
 <div id="confirmModal" class="glass" hidden>
   <h3 id="confirmTitle">Are you sure?</h3>
   <div id="confirmMsg"></div>
+  <button class="help-edit-btn" id="confirmEditBtn" style="display:none" title="Edit this notice (dev only — locked in desktop builds)">✎ edit</button>
   <div class="rowbtns"><button class="btn danger" id="confirmOk">Confirm</button><button class="btn" id="confirmCancel">Cancel</button></div>
   <label id="confirmSkip" hidden><input type="checkbox" id="confirmSkipBox"> <span id="confirmSkipLabel">Don't ask again</span></label>
+</div>
+<div id="licenseModal" class="glass" hidden>
+  <h3>◈ Activate Visi|Docsverse</h3>
+  <div id="licenseMsg">Paste your license key and activate online (one internet check), or use a key file — that path works fully offline. Either way, the app runs offline afterwards.</div>
+  <input id="licenseKeyInput" placeholder="License key (from your purchase email)" autocomplete="off" spellcheck="false">
+  <div class="rowbtns"><button class="btn danger" id="licenseOnlineBtn">Activate online</button></div>
+  <div class="lic-sep">or with a key file (fully offline)</div>
+  <textarea id="licenseInput" placeholder="Paste the whole key file contents here"></textarea>
+  <div class="rowbtns"><button class="btn" id="licenseFileBtn">Load key file…</button><button class="btn danger" id="licenseOk">Activate</button></div>
+  <div id="licenseErr" hidden></div>
+  <input type="file" id="licenseFile" accept=".json,application/json" hidden>
+</div>
+<div id="eulaModal" class="glass" hidden>
+  <h3>◈ End User License Agreement</h3>
+  <div id="eulaText"></div>
+  <label id="eulaCheck"><input type="checkbox" id="eulaCheckBox"> <span>I have read and accept the End User License Agreement above.</span></label>
+  <div class="rowbtns"><button class="btn danger" id="eulaOk" disabled>I Accept</button></div>
+</div>
+<div id="updateBanner" class="glass" hidden role="note" aria-label="Application update available">
+  <div class="upb-head"><span id="updateTitle">Update available</span><button id="updateClose" title="Dismiss — this version won't nag again">✕</button></div>
+  <div id="updateNotes"></div>
+  <div class="rowbtns"><button class="btn" id="updateCopyBtn" title="Copy a search string that finds your original purchase email">Copy receipt search</button><button class="btn" id="updateLaterBtn" title="Dismiss — this version won't nag again">Later</button></div>
+  <div class="upb-hint">Patch updates are free — re-download with your original Lemon Squeezy receipt email. The copy button finds that email fast.</div>
 </div>
 <div id="pickModal" class="glass" hidden>
   <h3 id="pickTitle">Copy constellation</h3>
@@ -788,7 +1081,7 @@
   <h3 id="helpEditTitle">Edit explanation</h3>
   <textarea id="helpEditText" rows="6"></textarea>
   <div class="rowbtns"><button class="btn" id="helpSaveBtn">Save</button><button class="btn" id="helpResetBtn" title="Restore the original wording">Reset to default</button><button class="btn" id="helpCancelBtn">Cancel</button></div>
-  <div id="helpEditHint">Saved on this machine + included in cloud backups / master files.</div>
+  <div id="helpEditHint">Saved on this machine + included in cloud backups / master files. A blank line starts a new paragraph.</div>
 </div>
 
 <div id="noteEdit" class="glass" hidden>
@@ -800,7 +1093,8 @@
 <!-- reader picture lightbox: click a gallery image to zoom, click out / Esc to close -->
 <div id="imgLight" hidden><img alt="image"></div>
 <!-- tags-view pop-out: every tag in the verse as pills on a glass card, click out / Esc to close -->
-<div id="tagPop" hidden><div class="tvp-card tvp-clear"><div class="tvp-head" title="Drag to move — double-click re-centers"><span class="tvp-title">ALL THEMATIC TAGS</span><button class="tvp-x" data-tvclose="1" title="Close">✕</button></div><div class="tvp-tags"></div><button class="tvp-go" id="tagVerseBtn" data-tvverse="1">◈ Show tags view</button><div class="tvp-tips"><span class="tvp-term">Colors:</span><span class="tvp-exp"><span class="tagpill demo">#explicit</span> hand-written in body text · <span class="tagpill auto demo">#auto</span> derived from titles · <span class="tagpill manual demo">#manual<span class="mmark">M</span></span> you tagged by hand (gold M)</span><span class="tvp-term">Merge:</span><span class="tvp-exp">drag one tag onto another — the tag you drop onto keeps its name, the dragged tag joins it and disappears.</span><span class="tvp-term">Delete:</span><span class="tvp-exp">hover a tag and click its × to remove it from every body on this canvas. Merges and deletes affect this canvas only; deleted names stay suppressed until you write #tag in a body again.</span><span class="tvp-term">Rename:</span><span class="tvp-exp">right-click any tag — here, in the reader, or its canvas body — to rename it everywhere on this canvas (prose, manual anchors and labels follow).</span><span class="tvp-term">Confirms:</span><span class="tvp-exp"><span id="tvpConfirmTxt">tag delete/merge confirmations are on</span> — <button class="tvp-link" data-tvconfirms="1" id="tvpConfirmBtn">click to stop asking</button>.</span></div></div></div>
+<div id="tagPop" hidden><div class="tvp-card tvp-clear"><div class="tvp-head" title="Drag to move — double-click resets position and size"><span class="tvp-title">ALL TAGS</span><button class="tvp-x" data-tvclose="1" title="Close">✕</button></div><div class="tvp-tags"></div><button class="tvp-go" id="tagVerseBtn" data-tvverse="1">◈ Show tags view</button><div class="tvp-tips"><span class="tvp-term">Colors:</span><span class="tvp-exp"><span class="tagpill demo">#explicit</span> hand-written in body text · <span class="tagpill auto demo">#auto</span> derived from titles · <span class="tagpill manual demo">#manual<span class="mmark">M</span></span> you tagged by hand (gold M)</span><span class="tvp-term">Merge:</span><span class="tvp-exp">drag one tag onto another — the tag you drop onto keeps its name, the dragged tag joins it and disappears.</span><span class="tvp-term">Delete:</span><span class="tvp-exp">hover a tag and click its × to remove it from every body on this canvas. Merges and deletes affect this canvas only; deleted names stay suppressed until you write #tag in a body again.</span><span class="tvp-term">Rename:</span><span class="tvp-exp">double-click (or right-click) any tag here — in the reader or on its canvas body, right-click — to rename it everywhere on this canvas (prose, manual anchors and labels follow).</span><span class="tvp-term">Tag passages:</span><span class="tvp-exp">drag a tag onto highlighted text in the reader to pin it onto that exact passage (gold M — click the pill to jump back).</span><span class="tvp-term">Gold orbs:</span><span class="tvp-exp">a gold orb means the document shown in the reader sits in that tag — orange lines only mean tags share member documents, not membership.</span><span class="tvp-term">Confirms:</span><span class="tvp-exp"><span id="tvpConfirmTxt">tag delete/merge confirmations are on</span><button class="tvp-link tvp-confirms" data-tvconfirms="1" id="tvpConfirmBtn">click to stop asking</button></span></div><button class="tvp-go" data-tvguide="1" id="tagGuideBtn" title="Open the tagging guide">The Art of Tagging: A Quick Guide on How to Tag</button><span id="tvpGrip" title="Drag to resize this pane — double-click the header to reset">⤡</span></div></div>
+<div id="tagGuidePane" hidden><div class="tvp-card tvp-clear"><div class="tgp-head"><span class="tgp-title">The Art of Tagging: A Quick Guide on How to Tag</span><button class="help-edit-btn" data-tguide-edit="1" title="Edit this guide (this machine only)">✎ edit</button><button class="tgp-x" data-tguideclose="1" title="Close">✕</button></div><div class="tgp-body" id="tagGuideBody"></div></div></div>
 <div id="srcPop" hidden><div class="tvp-card tvp-clear svp-card"><div class="svp-head"><span class="svp-kicker">SOURCE PREVIEW</span><span class="svp-sec" id="svpSec">Opening</span><span class="svp-rel" id="svpRel">release to close</span><button class="svp-x" id="svpX" title="Close">✕</button></div><h3 class="svp-title" id="svpTitle"></h3><div class="svp-body" id="svpBody"></div><div class="svp-cap" id="svpCap" hidden></div><div class="svp-foot" id="svpFoot"></div></div></div>
 
 <script type="module" src="src/app.js"></script>

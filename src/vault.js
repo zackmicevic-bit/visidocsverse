@@ -1,8 +1,28 @@
-// VisiDocsVerse vault: local-first document store (browser adaptation of the Rust/SQLite pillar).
+// VisiDocsverse vault: local-first document store (browser adaptation of the Rust/SQLite pillar).
 // - Folder intake via File System Access API (showDirectoryPicker) + drag-drop + file picker
 // - Mass = word count + reference frequency. Connections = [[wikilinks]] + shared tags.
 const LS_KEY = 'visidocsverse.v1';
 const TABS_KEY = 'visidocsverse.tabsV1'; // multi-canvas store: {tabs:[{id,name,docs,activeId,main,assoc:[tabIds]}], activeTabId} (assoc is mutual; empty = isolated)
+const TABS_CORRUPT_PREFIX = 'visidocsverse.tabsV1.corrupt.'; // forensic archives: raw store bytes saved here before any reseed overwrites them
+
+// Never silently overwrite a populated store with a fresh seed: stash the raw
+// bytes under a timestamped key (keeping the 3 newest) so a failed parse or
+// validation can always be diagnosed and restored. Runs before any seed persist.
+function archiveCorruptTabs(raw) {
+  try {
+    if (!raw) return;
+    try { localStorage.setItem(TABS_CORRUPT_PREFIX + Date.now(), String(raw)); } catch { return; }
+    try {
+      const ks = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.indexOf(TABS_CORRUPT_PREFIX) === 0) ks.push(k);
+      }
+      ks.sort();
+      while (ks.length > 3) localStorage.removeItem(ks.shift());
+    } catch { /* pruning is best-effort */ }
+  } catch { /* archiving must never break boot */ }
+}
 const STOP = new Set(('a,about,above,after,again,against,all,also,am,an,and,any,are,as,at,be,because,been,before,being,below,between,both,but,by,can,could,did,do,does,doing,down,during,each,few,for,from,further,had,has,have,having,he,her,here,hers,herself,him,himself,his,how,if,in,into,is,it,its,itself,more,most,nor,not,of,off,on,once,only,or,other,ought,our,ours,out,over,own,same,should,such,than,that,the,their,them,then,there,these,they,this,those,through,under,until,very,was,were,what,when,where,which,while,who,whom,why,with,would,your,will,just,often,however,therefore,thus,within,without,upon,along,among,used,using,use,study,studies,research,based,including,include,chapter,chapters,page,pages,table,tables,figure,figures,abstract,references,reference,appendix,method,methods,literature,introduction,conclusion,findings,analysis,et,al,via,per').split(','));
 
 // reference lists are NOT what a document is about: a trailing References /
@@ -384,8 +404,9 @@ export const vault = {
   },
 
   load() {
+    let raw = null;
+    try { raw = localStorage.getItem(TABS_KEY); } catch { raw = null; }
     try {
-      const raw = localStorage.getItem(TABS_KEY);
       if (raw) {
         const o = JSON.parse(raw);
         if (o && Array.isArray(o.tabs) && o.tabs.every(t => t && (Array.isArray(t.docs) || Array.isArray(t.documents)))) {
@@ -397,13 +418,19 @@ export const vault = {
           }
           try {
             this.adoptTabs(o.tabs);
-          } catch (e) { console.warn('stored tabs unusable, reseeding', e); throw e; }
+          } catch (e) { console.warn('stored tabs unusable, reseeding (raw archived)', e); archiveCorruptTabs(raw); throw e; }
           if (!this.tabs.some(t => t.id === o.activeTabId)) o.activeTabId = this.tabs[0].id;
           this.activeTabId = o.activeTabId;
           return;
         }
+        // bytes exist but are not a valid tabs payload: archive before seeding over them.
+        archiveCorruptTabs(raw);
       }
-    } catch { /* fall through to legacy migrate / seed */ }
+    } catch (e) {
+      // parse failed (or adopt failed above): the raw bytes are already
+      // archived, so falling through to legacy migrate / seed is safe.
+      try { archiveCorruptTabs(raw); } catch { /* best-effort */ }
+    }
     // first run with tabs: migrate the legacy single-universe store, else seed
     let docs = null;
     try {
@@ -549,6 +576,32 @@ export const vault = {
       if (d.manualTags && Object.keys(d.manualTags).length) c.manualTags = { ...d.manualTags }; // spot anchors travel with the copy
       if (Array.isArray(d.noteLog) && d.noteLog.length) c.noteLog = d.noteLog.map(e => ({ ...e })); // copies open with the same notepad; later edits sync by lineage
       if (d.origKey) c.origKey = d.origKey; // copies share the original bytes, like shared picture keys
+      this.applySuppress(c, t); // a copied body never resurrects a name this canvas deleted/merged away
+      t.docs.push(c);
+      names.add(c.name.toLowerCase());
+      copied.push(c);
+    }
+    this.persist();
+    return { copied, skipped };
+  },
+  // copy a whole tab's content into another canvas — any tab may receive,
+  // associated or not (unlike copyIdsTo, there is no scope check). Same skip
+  // + lineage rules as body copies; pictures travel as shared keys.
+  copyTabDocs(destTabId, srcTabId, ids) {
+    const s = this.tabs.find(t => t.id === srcTabId);
+    const t = this.tabs.find(t => t.id === destTabId);
+    if (!s || !t || s.id === t.id) return null;
+    const want = new Set(Array.isArray(ids) && ids.length ? ids : s.docs.map(d => d.id));
+    const names = new Set(t.docs.map(x => x.name.toLowerCase()));
+    const copied = [];
+    let skipped = 0;
+    for (const d of s.docs.filter(d => want.has(d.id))) {
+      if (names.has(d.name.toLowerCase())) { skipped++; continue; } // already there
+      const c = { id: uid(), name: d.name, text: d.text, words: d.words, links: [...d.links], tags: [...d.tags], origin: d.origin || d.id };
+      if (Array.isArray(d.images) && d.images.length) c.images = d.images.map(im => ({ ...im })); // shared picture keys, like origKey
+      if (d.manualTags && Object.keys(d.manualTags).length) c.manualTags = { ...d.manualTags }; // spot anchors travel with the copy
+      if (Array.isArray(d.noteLog) && d.noteLog.length) c.noteLog = d.noteLog.map(e => ({ ...e })); // copies open with the same notepad
+      if (d.origKey) c.origKey = d.origKey; // copies share the original bytes
       this.applySuppress(c, t); // a copied body never resurrects a name this canvas deleted/merged away
       t.docs.push(c);
       names.add(c.name.toLowerCase());

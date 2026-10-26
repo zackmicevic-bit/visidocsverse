@@ -1,4 +1,4 @@
-// VisiDocsVerse orbital engine: true N-body gravity around an active-doc sun,
+// VisiDocsverse orbital engine: true N-body gravity around an active-doc sun,
 // tangential orbital-velocity init, Hooke spring tethers, orphan comet drift.
 // Semi-implicit Euler at fixed dt with damping. Pure math — no DOM.
 export class PhysicsNode {
@@ -121,19 +121,34 @@ export class Universe {
     }
     for (const n of this.nodes) {
       if (n === sun) continue;
-      const r = Math.max(40, Math.hypot(n.x, n.y, n.z) || 1);
-      const dx = n.x / r, dy = n.y / r, dz = n.z / r;
-      // tangential direction: radial × tilted axis (stable inclinations, no polar pile-up)
-      const ax = 0.25, ay = 1, az = 0.35;
-      const tx = dy * az - dz * ay, ty = dz * ax - dx * az, tz = dx * ay - dy * ax;
-      const tl = Math.hypot(tx, ty, tz) || 1;
-      const v = Math.sqrt(this.G * M / Math.max(40, r));
-      const dir = (hash01(n.id) < 0.85) ? 1 : -1; // mostly prograde, some retrograde
-      const nvx = (tx / tl) * v * dir, nvy = (ty / tl) * v * dir, nvz = (tz / tl) * v * dir;
-      n.vx += (nvx - n.vx) * blend;
-      n.vy += (nvy - n.vy) * blend;
-      n.vz += (nvz - n.vz) * blend;
+      this.seatOrbit(n.id, blend);
     }
+  }
+
+  // seat ONE body onto its circular orbit from exactly where it is: the
+  // tangential v = sqrt(G*M/r) for its current radius. Full blend drops it
+  // straight onto a stable circle; partial blends glide. Orbital ALT-drag
+  // drops use this, so a moved body rejoins orbital mechanics from its new
+  // spot instead of freezing (pinning) or plunging.
+  seatOrbit(id, blend = 1) {
+    const n = this.byId.get(id);
+    if (!n) return false;
+    const sun = this.byId.get(this.sunId);
+    if (n === sun) return false; // the sun has its own center-homing integration
+    const M = sun ? sun.mass : this.sunMass;
+    const r = Math.max(40, Math.hypot(n.x, n.y, n.z) || 1);
+    const dx = n.x / r, dy = n.y / r, dz = n.z / r;
+    // tangential direction: radial × tilted axis (stable inclinations, no polar pile-up)
+    const ax = 0.25, ay = 1, az = 0.35;
+    const tx = dy * az - dz * ay, ty = dz * ax - dx * az, tz = dx * ay - dy * ax;
+    const tl = Math.hypot(tx, ty, tz) || 1;
+    const v = Math.sqrt(this.G * M / Math.max(40, r));
+    const dir = (hash01(n.id) < 0.85) ? 1 : -1; // mostly prograde, some retrograde
+    const nvx = (tx / tl) * v * dir, nvy = (ty / tl) * v * dir, nvz = (tz / tl) * v * dir;
+    n.vx += (nvx - n.vx) * blend;
+    n.vy += (nvy - n.vy) * blend;
+    n.vz += (nvz - n.vz) * blend;
+    return true;
   }
 
   // release the sun: the ex-sun cools back to its vault mass and the canvas
@@ -251,6 +266,7 @@ export class Universe {
     }
     // 4. integrate; the new sun glides home fast, then locks to the origin
     for (const n of ns) {
+      if (n._held) { n.vx = n.vy = n.vz = 0; n.fx = n.fy = n.fz = 0; continue; } // mid-drag the pointer owns this body
       if (n === sun) {
         n.vx = -n.x * 0.12; n.vy = -n.y * 0.12; n.vz = -n.z * 0.12;
         n.x += n.vx * dt * 4; n.y += n.vy * dt * 4; n.z += n.vz * dt * 4;
@@ -267,6 +283,36 @@ export class Universe {
         n.vx -= ux * vr * (1 - brake);
         n.vy -= uy * vr * (1 - brake);
         n.vz -= uz * vr * (1 - brake);
+      }
+      // cruise control for tethered bodies: steer tangential speed toward the
+      // circular-orbit value for this radius. Spring torques otherwise grind
+      // some bodies to a near-standstill while neighbors race at the same
+      // radius — every view ends up with its own arbitrary tempo. This keeps
+      // the Kepler feel (outer orbits stay slower) but guarantees the same
+      // stately motion in Main, Thematic and Tag views. Isolates (comets)
+      // are exempt: their slow outward drift is the design.
+      if ((n.deg || 0) > 0) {
+        const rr = Math.max(40, Math.hypot(n.x, n.y, n.z));
+        const rx = n.x / rr, ry = n.y / rr, rz = n.z / rr;
+        const vr2 = n.vx * rx + n.vy * ry + n.vz * rz;
+        let tx = n.vx - rx * vr2, ty = n.vy - ry * vr2, tz = n.vz - rz * vr2;
+        let ts = Math.hypot(tx, ty, tz);
+        const Mc = sun ? sun.mass : this.sunMass;
+        const vc = Math.min(this.vmax, Math.sqrt(this.G * Mc / rr));
+        if (ts < vc * 0.05) {
+          // parked or purely radial: seed the prograde direction (same tilted
+          // axis + mostly-prograde convention as seatOrbit)
+          tx = ry * 0.35 - rz * 1; ty = rz * 0.25 - rx * 0.35; tz = rx * 1 - ry * 0.25;
+          const tl = Math.hypot(tx, ty, tz) || 1;
+          const dir = (hash01(n.id) < 0.85) ? 1 : -1;
+          tx = tx / tl * dir; ty = ty / tl * dir; tz = tz / tl * dir;
+          ts = 0;
+        } else { tx /= ts; ty /= ts; tz /= ts; }
+        const gov = 1 - Math.exp(-dt * 0.6);
+        const nv = ts + (vc - ts) * gov;
+        n.vx = rx * vr2 + tx * nv;
+        n.vy = ry * vr2 + ty * nv;
+        n.vz = rz * vr2 + tz * nv;
       }
       n.update((n.deg || 0) > 0 ? this.linkDrag : this.damping, dt); // tethered: linkDrag (default 1.0 = no isotropic drag, it eats orbit speed); isolates: whisper damping; radial brake + tethers stabilize
       const sp = n.speed();

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Allow the VisiDocsVerse window, store persistence, Gumroad verification, and the vault-folder mirror (fs under $HOME, folder picker, reveal-in-Finder).",
+  "description": "Allow the Visi|Docsverse window, store persistence, Gumroad verification, and the vault-folder mirror (fs under $HOME, folder picker, reveal-in-Finder).",
   "windows": ["main"],
   "permissions": [
     "core:default",

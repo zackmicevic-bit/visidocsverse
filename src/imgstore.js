@@ -1,4 +1,4 @@
-// VisiDocsVerse image sidecar: binary store for document images (Word/PPT/PDF).
+// VisiDocsverse image sidecar: binary store for document images (Word/PPT/PDF).
 // Vault docs live in localStorage (small text JSON, ~5MB quota), so image BYTES
 // must never go there — one photo would evict the whole workspace. Blobs live
 // here in IndexedDB (large quota, structured-clone safe); docs carry only tiny
@@ -32,7 +32,7 @@ export async function imgPut(rec) { await txDo('readwrite', st => st.put(rec)); 
 export async function imgGet(key) { return await txDo('readonly', st => st.get(key)) || null; }
 export async function imgKeys() { return await txDo('readonly', st => st.getAllKeys()) || []; }
 export async function imgDelete(key) { await txDo('readwrite', st => st.delete(key)); }
-// VisiDocsVerse rename: one-time copy of pre-release image bytes into the new store.
+// VisiDocsverse rename: one-time copy of pre-release image bytes into the new store.
 export async function migrateImageDB() {
   if (DBN === OLD_DBN) return;
   let recs = [];
