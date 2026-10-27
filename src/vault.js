@@ -132,7 +132,7 @@ const isManual = (t) => String(t || '').toLowerCase().startsWith('manual/');
 function titleTerms(name) {
   const seen = new Set();
   const out = [];
-  for (const w of String(name || '').toLowerCase().replace(/(\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?))+$/i, '').split(/[^a-z0-9]+/)) {
+  for (const w of String(name || '').toLowerCase().replace(/(\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?|mp4|mov|mp3|wav|jpe?g|png))+$/i, '').split(/[^a-z0-9]+/)) {
     if (w.length < 3 || !/[a-z]/.test(w) || /^\d+$/.test(w) || STOP.has(w) || seen.has(w)) continue;
     seen.add(w);
     out.push(w);
@@ -634,11 +634,11 @@ export const vault = {
     return n;
   },
 
-  titleOf(d) { return (d.name || 'Untitled').replace(/\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?)$/i, ''); },
+  titleOf(d) { return (d.name || 'Untitled').replace(/\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?|mp4|mov|mp3|wav|jpe?g|png)$/i, ''); },
   byId(id) { return this.docs.find(d => d.id === id) || null; },
   byIdAnywhere(id) { return this.byId(id) || this.tabs.flatMap(t => t.docs || []).find(d => d.id === id) || null; }, // whole-visidocsverse thematic: members may live on other canvases
   byTitle(t) {
-    const c = String(t || '').trim().toLowerCase().replace(/\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?)$/i, '');
+    const c = String(t || '').trim().toLowerCase().replace(/\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?|mp4|mov|mp3|wav|jpe?g|png)$/i, '');
     return this.docs.find(d => this.titleOf(d).toLowerCase() === c) || null;
   },
 
@@ -732,7 +732,8 @@ export const vault = {
       let refs = inCount.get(d.id) + d.links.length;
       refs += autoCounts(d) * 0.5;
       refs += (degMap?.get(d.id) || 0) * 1.0;
-      out.set(d.id, 2 + d.words / 150 + refs * 1.5);
+      let m = 2 + d.words / 150 + refs * 1.5;
+      out.set(d.id, m);
     }
     return out;
   },
@@ -745,7 +746,7 @@ export const vault = {
     docs = docs || this.docs;
     const self = this;
     const byTitle = (t) => {
-      const c = String(t || '').trim().toLowerCase().replace(/\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?)$/i, '');
+      const c = String(t || '').trim().toLowerCase().replace(/\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?|mp4|mov|mp3|wav|jpe?g|png)$/i, '');
       return docs.find(d => self.titleOf(d).toLowerCase() === c) || null;
     };
     const T = analyzeTopics(docs, this.topicIdfFloor ?? 30);

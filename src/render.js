@@ -89,6 +89,7 @@ export class Renderer {
     this.simpleOrb = false; // plain white discs + thin black outline (no gradients, halos, or photo overlays)
     this.stripOverlays = false; // "Plain Body 2": original blue orbs, photo textures skipped (glow stays)
     this.triOrb = false; // triangle mode: upside-down triangles instead of discs (same fill, same size)
+    this.docIcon = false; // document-icon mode: plain white page glyphs instead of discs (same size; theme bodies stay round)
     this.tetherScale = 1; // tether thickness multiplier (0 = hidden, 1 = current, 2 = double)
     this.tetherColor = '#82aaff'; // tether tint (user palette; shared-ground links auto-contrast off it)
     this.selSet = null; // marquee-selected body ids (Set, owned by app.js) — ring highlight
@@ -322,11 +323,15 @@ export class Renderer {
       if (tw > 0.01) {
         const ax = Math.round(a.x / px) * px, ay = Math.round(a.y / px) * px;
         const bx = Math.round(b.x / px) * px, by = Math.round(b.y / px) * px;
+        // floor the widths in device px: below ~1px a stroke turns to dotted
+        // stairs (thin slider settings), so hairlines keep a continuous core
+        const haloW = Math.max((hot ? 3 : 2.6) * tw, hot ? 1.8 : 1.5);
+        const coreW = Math.max((hot ? 1.6 : 1.3) * tw, hot ? 1.0 : 0.75);
         ctx.strokeStyle = sunTopic ? `rgba(${sgc},0.22)` : hot ? tint(0.28) : tint(0.18);
-        ctx.lineWidth = (hot ? 3 : 2.6) * tw;
+        ctx.lineWidth = haloW;
         ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
         ctx.strokeStyle = sunTopic ? `rgba(${sgc},0.95)` : hot ? tint(0.95) : coreTint(0.85);
-        ctx.lineWidth = (hot ? 1.6 : 1.3) * tw;
+        ctx.lineWidth = coreW;
         ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
       }
       ctx.globalAlpha = 1;
@@ -341,7 +346,7 @@ export class Renderer {
       const rad = Math.max(2, n.radius * (n._fitBoost || 1) * p.s * 1.6 * bs);
       const pulse = 1 + 0.08 * Math.sin(t * 2 + (n.phase || 0));
       // horizontal body geometry: static compress squish; spheres rotate by
-      // surface motion (triangles flip like cards around the vertical axis)
+      // surface motion (triangles and pages flip like cards around the vertical axis)
       const bl = (this.spinBlend == null ? 0 : this.spinBlend);
       const spinPh = (this.spinAngle || 0) + (n.phase || 0);
       const drift = Math.sin(spinPh) * bl; // surface sweep, 0 when off (light stays fixed)
@@ -349,14 +354,16 @@ export class Renderer {
       // silhouette: spheres stay round (their markings do the turning);
       // triangles are flat cards, so they flip edge-on and back
       const compress = (this.compressScale == null ? 1 : this.compressScale);
-      let sxSil = this.triOrb ? compress * flip : compress;
-      // keep an edge-on sliver so a flipping triangle never fully vanishes
-      if (this.triOrb && bl > 0.001 && Math.abs(sxSil) < 0.12) sxSil = (sxSil < 0 ? -1 : 1) * 0.12;
+      const docMode = this.docIcon && !/^theme_/.test(n.id || ''); // themes keep their orbs; docs + tags become pages
+      // pages are flat cards, so like triangles they flip edge-on and back while spinning
+      let sxSil = (this.triOrb || docMode) ? compress * flip : compress;
+      // keep an edge-on sliver so a flipping card never fully vanishes
+      if ((this.triOrb || docMode) && bl > 0.001 && Math.abs(sxSil) < 0.12) sxSil = (sxSil < 0 ? -1 : 1) * 0.12;
       const R = rad * pulse;
       // outer halo (glow slider scales its radius, far left removes it) — round
       // ambiance, never squished, so the glow doesn't fight the sphere
       const gl = (this.glowScale == null ? 1 : this.glowScale);
-      if (gl > 0.01 && !this.simpleOrb) {
+      if (gl > 0.01 && !this.simpleOrb && !docMode) {
         const halo = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, Math.max(1, rad * 4 * gl));
         const hc = hot ? '255,210,120' : '90,150,255';
         halo.addColorStop(0, `rgba(${hc},${hot ? 0.5 : 0.35})`);
@@ -389,7 +396,43 @@ export class Renderer {
         }
         ctx.closePath();
       };
-      if (this.triOrb) {
+      if (docMode) {
+        // plain white page with a folded corner, same screen presence as the
+        // disc it replaces (area-matched); gold fill + dark-gold edge for the
+        // focused/hovered body so the selection signal survives the swap
+        const w = R * 1.55, h = R * 1.95, x0 = p.x - w / 2, y0 = p.y - h / 2, f = Math.min(w, h) * 0.28;
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x0 + w - f, y0);
+        ctx.lineTo(x0 + w, y0 + f);
+        ctx.lineTo(x0 + w, y0 + h);
+        ctx.lineTo(x0, y0 + h);
+        ctx.closePath();
+        ctx.fillStyle = hot ? body : '#ffffff';
+        ctx.fill();
+        // light canvas: black ink so the white page pops against the pale ground
+        ctx.strokeStyle = hot ? '#7a4d00' : (sh < 0.5 ? '#000000' : '#111111');
+        ctx.lineWidth = Math.max(1, R * 0.05);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x0 + w - f, y0);
+        ctx.lineTo(x0 + w, y0 + f);
+        ctx.lineTo(x0 + w - f, y0 + f);
+        ctx.closePath();
+        ctx.fillStyle = hot ? '#e8b34a' : (sh < 0.5 ? '#8f99a8' : '#c7d0dd');
+        ctx.fill();
+        // a few ruled text lines so the page reads as a document, not a blank slab
+        ctx.strokeStyle = hot ? 'rgba(90,60,0,.8)' : (sh < 0.5 ? 'rgba(15,18,26,.92)' : 'rgba(100,115,140,.8)');
+        ctx.lineWidth = Math.max(1, R * 0.045);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        const lx0 = x0 + w * 0.16, lx1 = x0 + w * 0.86;
+        ctx.moveTo(lx0, y0 + h * 0.38); ctx.lineTo(lx1, y0 + h * 0.38);
+        ctx.moveTo(lx0, y0 + h * 0.54); ctx.lineTo(lx1, y0 + h * 0.54);
+        ctx.moveTo(lx0, y0 + h * 0.70); ctx.lineTo(x0 + w * 0.60, y0 + h * 0.70);
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+      } else if (this.triOrb) {
         triPath(p.x, p.y, R);
         ctx.fillStyle = this.simpleOrb ? '#ffffff' : body;
         ctx.fill();
@@ -405,7 +448,7 @@ export class Renderer {
         ctx.beginPath(); ctx.arc(p.x, p.y, rad * pulse, 0, 7); ctx.fill();
       }
       // photo-texture overlay, clipped to the disc (distinctiveness pass)
-      if (!this.simpleOrb && !this.stripOverlays && this.overlayAlpha > 0.01 && this.overlayImgs.length) {
+      if (!docMode && !this.simpleOrb && !this.stripOverlays && this.overlayAlpha > 0.01 && this.overlayImgs.length) {
         const { h1, h2 } = this.ovFor(n.id);
         const im = this.overlayImgs[(h1 + this.overlaySeed) % this.overlayImgs.length];
         if (im) {
@@ -427,7 +470,7 @@ export class Renderer {
           ctx.restore();
         }
       }
-      if (!this.triOrb) {
+      if (!this.triOrb && !docMode) {
         // spherical falloff over the texture: dark limbs, lit center — the ball
         // reads round even where the photo is bright to the edge
         if (!this.simpleOrb) {

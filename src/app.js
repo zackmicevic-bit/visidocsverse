@@ -118,33 +118,6 @@ try {
 
 vault.load();
 
-// autosave status: every vault.persist() stamps the time (the in-app copy),
-// shown next to "Active VisiDocsverse Projects" in the top tab bar.
-let lastPersistAt = null;
-try {
-  const raw = localStorage.getItem('visidocsverse.lastPersist');
-  if (raw && !isNaN(Number(raw))) lastPersistAt = Number(raw);
-} catch { /* fresh prefs */ }
-function fmtAutosave() {
-  if (!lastPersistAt) return '· autosave on';
-  try { return '· autosaved ' + new Date(lastPersistAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
-  catch { return '· autosave on'; }
-}
-function refreshAutosaveStatus() {
-  const el = document.querySelector('#autosaveStatus');
-  if (el) el.textContent = fmtAutosave();
-}
-try {
-  const _persist = vault.persist.bind(vault);
-  vault.persist = (...a) => {
-    const r = _persist(...a);
-    lastPersistAt = Date.now();
-    try { localStorage.setItem('visidocsverse.lastPersist', String(lastPersistAt)); } catch {}
-    refreshAutosaveStatus();
-    return r;
-  };
-} catch { /* persist stays unwrapped */ }
-
 function setLog(msg) {
   try {
     const el = document.querySelector('#intakeLog');
@@ -379,10 +352,16 @@ let fitActive = false, fitSnapshot = null; // Fit toggle: pre-fit camera + orb b
 let simpleOrb = false; // plain-body mode: flat white discs + thin black outline, no photo/glow overlays
 let simpleOrb2 = false; // plain-body 2: original blue orbs with photo overlays stripped (mutually exclusive with simpleOrb)
 let triOrb = false; // triangle mode: upside-down triangles instead of orbs (same fill, same size; combines with any color mode)
+let docIcon = false; // document-icon mode: plain white page glyphs instead of orbs (docs + tags; themes stay round; shape-exclusive with triOrb)
 let miniX = null, miniY = null, miniW = 0, miniH = 0; // verse minimap geometry (null x/y = docked bottom-right; 0 w/h = default size)
+let tabX = null, tabY = null, hintX = null, hintY = null; // pill positions (null = docked default; hand-drag moves, persists; top width always matches the bottom pill; both fully on-screen)
+let pillLaneW = 0; // free-lane width from the last placeTabBar run (restores a moved top pill after a bottom-edge shrink)
+let pillMinW = 0; // legacy: recorded widest seated width (kept for saved-state compat; no longer a floor — the top pill tracks the bottom pill's width exactly)
+let clusterW = 0; // THE cluster-frame width, shared by every group — uniform, fixed, never shrinks (only ever grows to fit a wider group)
 let miniFolded = false; // verse map collapsed to its header bar (persists like its geometry)
 let glossX = null, glossY = null, glossW = 0, glossH = 0, glossOpen = false; // glossary pane geometry + visibility (same pattern as the minimap)
 let pinnedTerms = []; // glossary words pinned as their own book tabs under the glossary tab (persists like other ui prefs)
+const MAX_PINS = 2; // the left pane fits two extra book tabs; further pins are refused with a toast
 let pinOpenWord = null; // pinned term currently shown in the pin pane (session-only; null = pane closed)
 let tvpX = null, tvpY = null; // tags pop-out card position (null = centered; header-drags to move, persists)
 let tvpDragTag = null; // tags-merge drag source: stripped tag name being dragged onto another pill (null = no drag)
@@ -468,20 +447,28 @@ try {
   if (ui.simpleOrb === true) simpleOrb = true;
   if (ui.simpleOrb2 === true) simpleOrb2 = true;
   if (ui.triOrb === true) triOrb = true;
+  if (ui.docIcon === true) docIcon = true;
   if (typeof ui.miniX === 'number' && typeof ui.miniY === 'number') { miniX = ui.miniX; miniY = ui.miniY; }
   if (typeof ui.miniW === 'number' && ui.miniW >= 140 && ui.miniW <= 640) miniW = ui.miniW;
   if (typeof ui.miniH === 'number' && ui.miniH >= 100 && ui.miniH <= 480) miniH = ui.miniH;
   if (ui.miniFolded === true) miniFolded = true;
   if (typeof ui.tvpX === 'number' && typeof ui.tvpY === 'number') { tvpX = ui.tvpX; tvpY = ui.tvpY; }
   if (typeof ui.tvpW === 'number' && typeof ui.tvpH === 'number') { tvpW = ui.tvpW; tvpH = ui.tvpH; }
+  if (typeof ui.tabX === 'number' && typeof ui.tabY === 'number') { tabX = ui.tabX; tabY = ui.tabY; }
+  if (typeof ui.hintX === 'number' && typeof ui.hintY === 'number') { hintX = ui.hintX; hintY = ui.hintY; }
+  fitPillsToScreen(ui.vw, ui.vh); // auto-fit the pair to this screen on every open
+  if (typeof ui.pillMinW === 'number' && ui.pillMinW >= 240 && ui.pillMinW <= 4000) pillMinW = ui.pillMinW;
+  if (ui.groupMinW && typeof ui.groupMinW === 'object') { const vs = Object.values(ui.groupMinW).filter(v => typeof v === 'number' && v >= 80 && v <= 4000); if (vs.length) clusterW = Math.max(...vs); } // migrated per-group floors -> one uniform width
+  if (typeof ui.clusterW === 'number' && ui.clusterW >= 80 && ui.clusterW <= 4000) clusterW = ui.clusterW;
   if (typeof ui.glossX === 'number' && typeof ui.glossY === 'number') { glossX = ui.glossX; glossY = ui.glossY; }
   if (typeof ui.glossW === 'number' && ui.glossW >= 240 && ui.glossW <= 620) glossW = ui.glossW;
   if (typeof ui.glossH === 'number' && ui.glossH >= 160 && ui.glossH <= 720) glossH = ui.glossH;
   if (ui.glossOpen === true) glossOpen = true;
-  if (Array.isArray(ui.pinnedTerms)) pinnedTerms = ui.pinnedTerms.filter(w => typeof w === 'string' && w);
+  if (Array.isArray(ui.pinnedTerms)) pinnedTerms = ui.pinnedTerms.filter(w => typeof w === 'string' && w).slice(0, MAX_PINS);
   if (!ui.glossDockV1) { glossX = null; glossY = null; glossW = 0; glossH = 0; } // v1 dock: tall pane beside the left panel (was bottom-right)
   if (glossOpen) { glossX = null; glossY = null; } // a pane open across reload still restarts at the dock
   if (simpleOrb && simpleOrb2) simpleOrb2 = false; // never both (older pref wins)
+  if (docIcon && triOrb) triOrb = false; // one shape at a time (older pref wins)
   const stored = ui.speedMul ?? ui.rotMul;
     if (typeof ui.ovAlpha === 'number' && ui.ovAlpha >= 0 && ui.ovAlpha <= 1) ovAlpha = ui.ovAlpha;
     if (typeof ui.ovLast === 'number' && ui.ovLast > 0 && ui.ovLast <= 1) ovLast = ui.ovLast;
@@ -519,18 +506,20 @@ try {
   if (ui.pillCollapsed === true) pillCollapsed = true;
   if (ui.tipsCollapsed === true) tipsCollapsed = true;
     if (typeof ui.docWidth === 'number' && ui.docWidth >= 260 && ui.docWidth <= 1200) docWidth = ui.docWidth;
+    fitPaneWidthToScreen(ui.vw); // reader saved on another display: re-fit its width to this screen on open
     if (ui.lensThematic === true) lensThematic = true;
     if (ui.lensTags === true) lensTags = true;
     if (ui.skipTagConfirms === true) skipTagConfirms = true;
     if (ui.viewNotesAll === false) viewNotesAll = false;
     if (ui.viewNotesSun === false) viewNotesSun = false;
     if (ui.viewNotes === false) { viewNotesAll = false; viewNotesSun = false; } // legacy single toggle
-    if (ui.notesAuto === false) notesAuto = false; else if (ui.notesAuto === true) notesAuto = true;
+    if (typeof ui.carZoom === 'number' && ui.carZoom >= 100 && ui.carZoom <= 145) carZoom = Math.round(ui.carZoom);
+  if (ui.notesAuto === false) notesAuto = false; else if (ui.notesAuto === true) notesAuto = true;
     if (ui.notesOpen === true) notesOpen = true;
   if (stored >= 0 && stored <= SPEED_MAX) rotMul = stored;
 } catch { /* fresh prefs */ }
 function saveUi() {
-  try { localStorage.setItem('visidocsverse.ui', JSON.stringify({ rotOn, rotMul, speedMul: rotMul, autoDist, simpleOrb, simpleOrb2, triOrb, miniX, miniY, miniW, miniH, miniFolded, tvpX, tvpY, tvpW, tvpH, glossX, glossY, glossW, glossH, glossOpen, glossDockV1: true, ovAlpha, ovLast, lbScale, lbLast, sizeScale, sizeLast, spinOn, spinSpeed, compressScale, compressLast, bgShade, glow: glowScale, glowLast, tether: tetherScale, tetherLast, tetherColor, backdrop, backdropAlpha, backdropLast, paneAlpha, paneLast, glazeLeft, glazeDoc, glazeCloud, glazeMini, glazeGloss, glazeTabBar, glazeHintBar, leftCollapsed, docCollapsed, docWidth, hoverPrev, hideUngr, statsCollapsed, pillCollapsed, tipsCollapsed, pinnedTerms, lensThematic, lensTags, skipTagConfirms, viewNotesAll, viewNotesSun, notesOpen, notesAuto })); } catch { /* private mode */ }
+  try { localStorage.setItem('visidocsverse.ui', JSON.stringify({ rotOn, rotMul, speedMul: rotMul, autoDist, simpleOrb, simpleOrb2, triOrb, docIcon, miniX, miniY, miniW, miniH, miniFolded, tvpX, tvpY, tvpW, tvpH, tabX, tabY, hintX, hintY, vw: window.innerWidth, vh: window.innerHeight, pillMinW, clusterW, glossX, glossY, glossW, glossH, glossOpen, glossDockV1: true, ovAlpha, ovLast, lbScale, lbLast, sizeScale, sizeLast, spinOn, spinSpeed, compressScale, compressLast, bgShade, glow: glowScale, glowLast, tether: tetherScale, tetherLast, tetherColor, backdrop, backdropAlpha, backdropLast, paneAlpha, paneLast, glazeLeft, glazeDoc, glazeCloud, glazeMini, glazeGloss, glazeTabBar, glazeHintBar, leftCollapsed, docCollapsed, docWidth, hoverPrev, hideUngr, statsCollapsed, pillCollapsed, tipsCollapsed, pinnedTerms, lensThematic, lensTags, skipTagConfirms, viewNotesAll, viewNotesSun, notesOpen, notesAuto, carZoom })); } catch { /* private mode */ }
 }
 // bottom hint pill: flip to a light pill on a white canvas, dark pill on black
 function syncHintContrast() {
@@ -548,10 +537,114 @@ function syncPaneContrast() {
 }
 // reader pane width: discrete left-edge handle stretches it (persisted).
 // The pane may stretch clean across the centered top pill (the reader paints
-// above it) and slides underneath the bottom pill (which stays on top).
+// above it) but never past the Return tab's right edge — the stretch clamps
+// there, so the bottom pill's centered tab always stays clear.
+function fitPaneWidthToScreen(savedVw) {
+  try {
+    if (!(docWidth > 0) || !(savedVw > 0) || savedVw === window.innerWidth) return; // default width is CSS-responsive; same screen needs nothing
+    const k = Math.min(2, Math.max(0.5, window.innerWidth / savedVw));
+    docWidth = clampDocW(Math.round(docWidth * k));
+  } catch {}
+}
+function syncInkContrast() {
+  try {
+    const sh = Math.max(0, Math.min(1, typeof bgShade === 'number' ? bgShade : 1));
+    const sig = sh.toFixed(2) + '|' + document.body.className + '|' + paneAlpha + '|' + glazeDoc + '|' + glazeLeft;
+    inkTickN = (inkTickN + 1) % 240;
+    if (sig === inkContrastSeen && inkTickN !== 0) return; // theme/pane changes recompute at once; the live canvas gets a slow re-sample
+    inkContrastSeen = sig;
+    const mix = (a, b) => Math.round(a + (b - a) * sh);
+    const flat = [mix(255, 17), mix(255, 22), mix(255, 31)]; // fallback base when the canvas can't be sampled
+    const rgba = (s) => { const m = /rgba?\(([^)]+)\)/.exec(s || ''); if (!m) return null; const p = m[1].split(',').map(x => parseFloat(x)); return [p[0] || 0, p[1] || 0, p[2] || 0, p.length > 3 ? p[3] : 1]; };
+    const over = (fg, bg) => { const a = fg[3]; return [fg[0] * a + bg[0] * (1 - a), fg[1] * a + bg[1] * (1 - a), fg[2] * a + bg[2] * (1 - a)]; };
+    const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+    const sampleBase = (rect) => { // real canvas pixels behind a rect (nebula/backdrop art included); falls back to the flat shade
+      try {
+        const cv = document.getElementById('uniCv');
+        if (!cv) return flat.slice();
+        const cr = cv.getBoundingClientRect();
+        if (cr.width < 2 || cr.height < 2) return flat.slice();
+        const ctx = cv.getContext('2d');
+        const sx = cv.width / cr.width, sy = cv.height / cr.height;
+        const pts = [[rect.left + 3, rect.top + 3], [rect.right - 3, rect.top + 3], [(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2], [rect.left + 3, rect.bottom - 3], [rect.right - 3, rect.bottom - 3]];
+        let r = 0, g = 0, b = 0, n = 0;
+        for (const [px, py] of pts) {
+          const cx = Math.round((px - cr.left) * sx), cy = Math.round((py - cr.top) * sy);
+          if (cx < 0 || cy < 0 || cx >= cv.width || cy >= cv.height) continue;
+          const d = ctx.getImageData(cx, cy, 1, 1).data;
+          r += d[0]; g += d[1]; b += d[2]; n++;
+        }
+        return n ? [r / n, g / n, b / n] : flat.slice();
+      } catch { return flat.slice(); }
+    };
+    for (const [iid, pid] of [['findInput', 'docPanel'], ['findInput2', 'findSide']]) {
+      const inp = document.getElementById(iid); if (!inp) continue;
+      const pane = document.getElementById(pid);
+      let bg = (pane && pane.offsetParent !== null) ? sampleBase(pane.getBoundingClientRect()) : flat.slice();
+      if (pane && pane.offsetParent !== null) { const pc = rgba(getComputedStyle(pane).backgroundColor); if (pc) bg = over(pc, bg); }
+      const ic = rgba(getComputedStyle(inp).backgroundColor); if (ic) bg = over(ic, bg);
+      const dark = lum(bg) > 0.45;
+      inp.style.color = dark ? '#17222f' : '#f2f6fd';
+      inp.style.setProperty('--findink', dark ? 'rgba(23,34,47,.62)' : 'rgba(242,246,253,.6)');
+    }
+    const dpk = document.getElementById('docPanel'); // reader kicker sits straight on the reader pane: same contrast rule
+    if (dpk && dpk.offsetParent !== null) {
+      const pc = rgba(getComputedStyle(dpk).backgroundColor);
+      const pbg = pc ? over(pc, sampleBase(dpk.getBoundingClientRect())) : flat.slice();
+      dpk.style.setProperty('--kickink', lum(pbg) > 0.45 ? '#8a6a1f' : '#ffce6b');
+    }
+    const db = document.getElementById('docBody'); // empty-view helper text rides the reader body: same contrast rule
+    if (db) {
+      const dp = document.getElementById('docPanel');
+      let dbg = (dp && dp.offsetParent !== null) ? sampleBase(dp.getBoundingClientRect()) : flat.slice();
+      if (dp && dp.offsetParent !==null) { const pc = rgba(getComputedStyle(dp).backgroundColor); if (pc) dbg = over(pc, dbg); }
+      if (db.offsetParent !== null) { const bc = rgba(getComputedStyle(db).backgroundColor); if (bc && bc[3] > 0) dbg = over(bc, dbg); }
+      db.style.setProperty('--ovink', lum(dbg) > 0.45 ? '#17222f' : '#eef3fb');
+    }
+    const lp = document.getElementById('leftPanel'); // section headers sit straight on the left pane: same contrast rule
+    if (lp && lp.offsetParent !== null) {
+      const lc = rgba(getComputedStyle(lp).backgroundColor);
+      const lbg = lc ? over(lc, sampleBase(lp.getBoundingClientRect())) : flat.slice();
+      const lit = lum(lbg) > 0.45;
+      lp.style.setProperty('--secink', lit ? '#1c2940' : '#e8eef8');
+      lp.style.setProperty('--brandink', lit ? '#8a6a1f' : '#ffce6b'); // bronze brand on bright panes, gold on dark
+      lp.classList.toggle('lit', lit); // drives the logo invert filter
+    }
+  } catch {}
+}
+let inkContrastSeen = '';
+let inkTickN = 0;
 function clampDocW(w) {
-  const max = Math.max(280, Math.min(1200, window.innerWidth * 0.9 - 32));
+  let max = Math.min(1200, window.innerWidth * 0.9 - 32);
+  try {
+    const rb = document.getElementById('returnBtn');
+    if (rb && rb.offsetParent !== null) max = Math.min(max, window.innerWidth - 16 - Math.ceil(rb.getBoundingClientRect().right) - 12); // 12px breathing room — never touches the tab
+  } catch {}
+  max = Math.max(280, max);
   return Math.max(260, Math.min(max, Math.round(w)));
+}
+// fixed reader height: top edge pinned at 16px, bottom edge parked a breath
+// above the bottom pill — independent of how many inventory rows show, the
+// pane never grows or shrinks with content (overflow:auto scrolls inside)
+function sizeDocPanel() {
+  try {
+    const p = document.getElementById('docPanel');
+    if (!p) return;
+    if (p.classList.contains('collapsed') || window.innerWidth <= 760 || !p.offsetParent) { p.style.height = ''; return; }
+    const hb = document.getElementById('hintBar');
+    let pillTop = window.innerHeight;
+    if (hb && hb.offsetParent !== null && getComputedStyle(hb).display !== 'none') {
+      try { pillTop = hb.getBoundingClientRect().top; } catch {}
+    }
+    p.style.height = Math.max(220, Math.round(pillTop - 12 - 16)) + 'px';
+    // height moved the middle and the bottom — re-seat everything parked on them
+    try { syncResizeHandle(); } catch {}
+    try { placeNotesTab(); } catch {}
+    try { placeTopBtn(); } catch {}
+    try { placeFindSide(); } catch {} // also re-stacks the jump cluster below it
+    try { placeGotoSide(); } catch {}
+    try { if (typeof notesOpen !== 'undefined' && notesOpen) applyNotesGeom(); } catch {}
+  } catch {}
 }
 function applyDocWidth() {
   try {
@@ -559,43 +652,62 @@ function applyDocWidth() {
     if (!p) return;
     if (p.classList.contains('collapsed')) { p.style.width = ''; syncResizeHandle(); return; }
     p.style.width = docWidth > 0 ? clampDocW(docWidth) + 'px' : '';
+    sizeDocPanel();
     syncResizeHandle();
     if (p.classList.contains('tiltedR') && docTiltBlocked()) { setDocTilt(false, true); toast('Reader tilt off — the stretched pane covers the pills'); }
     try { placeTabBar(); } catch {}
     try { placeGotoSide(); } catch {} // width changes move the pane edge — the jump cluster rides it
   } catch {}
 }
+// tilt-ride: park an edge rider in the pane's own 3D plane so it glides WITH
+// the rotation instead of sitting at the pre-glide spot and snapping after.
+// Same recipe as the Notes tab — identical perspective + angle about the
+// pane's own center (keep in sync with #docPanel.tiltedR); seats come from
+// layout (offset) geometry, which is transition-stable. Riders carry
+// transition:transform .45s ease in CSS to move in lockstep.
+function rideTiltPlane(el) {
+  const p = document.getElementById('docPanel');
+  if (!el || !p) return;
+  if (p.classList.contains('tiltedR')) {
+    el.style.transform = 'perspective(1100px) rotateY(-30deg)';
+    el.style.transformOrigin = (p.offsetLeft + p.offsetWidth / 2 - (el.offsetLeft || 0)).toFixed(1) + 'px 50%';
+  } else {
+    el.style.transform = '';
+    el.style.transformOrigin = '';
+  }
+}
 function syncResizeHandle() {
   try {
-    const p = document.getElementById('docPanel'), h = document.getElementById('docResize'), tb = document.getElementById('docTiltBtn');
+    const p = document.getElementById('docPanel'), h = document.getElementById('docResize'), tb = document.getElementById('docTiltBtn'), cb = document.getElementById('carPaneBtn');
     if (!p || !h) return;
-    if (p.classList.contains('collapsed') || window.innerWidth <= 760 || !p.offsetParent) { h.style.display = 'none'; if (tb) tb.style.display = 'none'; return; }
+    if (p.classList.contains('collapsed') || window.innerWidth <= 760 || !p.offsetParent) { h.style.display = 'none'; if (tb) tb.style.display = 'none'; if (cb) cb.style.display = 'none'; const ob0 = document.getElementById('origPaneBtn'); if (ob0) ob0.style.display = 'none'; return; }
     h.style.display = 'flex';
-    const r = p.getBoundingClientRect();
-    // seating edge: normally the pane's left side, but while tilted the
-    // visual edge has swung away — project the local left-edge midpoint
-    // through the CSS transform (perspective(1100px) rotateY(-30°) about the
-    // pane center; keep these constants in sync with #docPanel.tiltedR).
-    // Rotation about the vertical center never moves y, only x.
-    let edgeX = r.left;
-    if (p.classList.contains('tiltedR')) {
-      const halfW = p.offsetWidth / 2;
-      const P = 1100, COS = Math.cos(Math.PI / 6), SIN = 0.5;
-      const parkedL = halfW * COS * (P / (P + halfW * SIN));
-      const parkedR = halfW * COS * (P / (P - halfW * SIN));
-      // the bounding midpoint is NOT the rotation center under perspective:
-      // the toward-viewer side magnifies more, biasing the box right by
-      // (parkedR-parkedL)/2 — subtract it to recover the true center first
-      const trueCx = (r.left + r.width / 2) - (parkedR - parkedL) / 2;
-      edgeX = trueCx - parkedL;
-    }
-    const hTop = Math.round(r.top + r.height / 2 - 27);
-    h.style.left = Math.round(edgeX - 11) + 'px';
+    // layout (tilt-invariant) seats — identical to the old bounding-rect seats
+    // when untilted; while tilted the shared plane (rideTiltPlane) lands them
+    // on the visual edge through the whole glide, no projection math needed
+    const px = p.offsetLeft, midY = p.offsetTop + p.offsetHeight / 2;
+    const hTop = Math.round(midY - 27);
+    h.style.left = Math.round(px - 11) + 'px';
     h.style.top = hTop + 'px';
-    if (tb) { // tilt toggle rides 14px above the arrow, centered on it
+    rideTiltPlane(h);
+    if (tb) { // tilt toggle rides 26px above the arrow, centered on it
       tb.style.display = 'flex';
-      tb.style.left = Math.round(edgeX - 12) + 'px';
-      tb.style.top = (hTop - 14 - 26) + 'px';
+      tb.style.left = Math.round(px - 12) + 'px';
+      tb.style.top = (hTop - 26 - 26) + 'px';
+      rideTiltPlane(tb);
+    }
+    const ob = document.getElementById('origPaneBtn');
+    if (ob) { // jump-to-original rides just above the carousel trigger, centered on it
+      ob.style.display = 'flex';
+      ob.style.left = Math.round(px - 14) + 'px';
+      ob.style.top = (hTop + 54 + 14) + 'px';
+      rideTiltPlane(ob);
+    }
+    if (cb) { // carousel trigger rides 14px below the jump icon, centered on it
+      cb.style.display = 'flex';
+      cb.style.left = Math.round(px - 14) + 'px';
+      cb.style.top = (hTop + 54 + 14 + 34 + 14) + 'px';
+      rideTiltPlane(cb);
     }
   } catch {}
 }
@@ -627,8 +739,8 @@ function setDocTilt(on, silent) {
   if (on && docTiltBlocked()) { if (!silent) toast('Tilt is off while the stretched reader covers the pills — narrow it first'); return false; }
   p.classList.toggle('tiltedR', !!on);
   if (b) b.setAttribute('aria-pressed', on ? 'true' : 'false');
-  try { syncResizeHandle(); } catch {} // re-seat arrow + button on the (new) visual edge…
-  setTimeout(() => { try { syncResizeHandle(); } catch {} }, 500); // …and again once the .45s glide lands (the instant read is mid-transition)
+  try { syncResizeHandle(); placeNotesTab(); placeFindSide(); placeTopBtn(); placeGotoSide(); if (notesOpen) applyNotesGeom(); } catch {} // rail + cards glide in-plane (gotoSide stays flat by design); seats are transition-stable so one pass covers it…
+  setTimeout(() => { try { syncResizeHandle(); placeNotesTab(); placeFindSide(); placeTopBtn(); placeGotoSide(); applyNotesGeom(); } catch {} }, 500); // …and again once the .45s glide lands (gotoSide lands flat on the visual edge), absorbing any resize mid-swing
   return !!on;
 }
 // Thematic lens: the same docs, masses and orbital mechanics, recomposed around
@@ -1046,6 +1158,37 @@ function continuitySeed(u, items) {
       n._seeded = true;
       seeded++;
     }
+    try {
+      // de-formation: bodies sharing identical member sets seed onto the same
+      // centroid with the same shell, mass and springs (and no bond between
+      // them), so they fly in exact lockstep forever. Round orbs hid it;
+      // flipping pages show it as doubled bodies. Spread exact overlaps by
+      // rotating the twin around the origin in the XZ plane (deterministic
+      // per-id angle): radius-preserving, so the shell re-projection keeps
+      // the full offset, and with no bond between the twins nothing reunites
+      // them — the relax just settles each into its own slot.
+      const seen = new Map();
+      for (const n of u.nodes) {
+        if (n.id === u.sunId) continue;
+        const k = (n.x || 0).toFixed(3) + ',' + (n.y || 0).toFixed(3) + ',' + (n.z || 0).toFixed(3);
+        const c = seen.get(k) || 0;
+        seen.set(k, c + 1);
+        if (!c) continue;
+        const rr = Math.hypot(n.x, n.z);
+        if (rr > 1) {
+          let hh = 0; const sid = String(n.id);
+          for (let i = 0; i < sid.length; i++) hh = (hh * 33 + sid.charCodeAt(i)) | 0;
+          const ah = Math.abs(hh);
+          const dAng = (0.18 + 0.07 * ((ah >> 10) % 5)) * c; // ~10-20 deg per collider
+          const ca = Math.cos(dAng), sa = Math.sin(dAng);
+          const ox = n.x, oz = n.z;
+          n.x = ox * ca - oz * sa;
+          n.z = ox * sa + oz * ca;
+          n.y += (((ah >> 5) % 21) - 10) * 0.8 * c; // small vertical break
+          n.vx = 0; n.vy = 0; n.vz = 0;
+        }
+      }
+    } catch {}
     return seeded;
   } catch { return 0; }
 }
@@ -1139,7 +1282,7 @@ function getThematicUni(tabId) {
   const t = vault.tabs.find(x => x.id === tabId) || vault.tab();
   if (!t) return null;
   let u = thematicUnis.get(t.id);
-  const stamp = t.docs.length + ':b6:' + (mainPhysSun(t.id) ? 's1' : 's0'); // rebuild when docs, the distillation rules, or the Main physical-sun state change
+  const stamp = t.docs.length + ':b7:' + (mainPhysSun(t.id) ? 's1' : 's0'); // rebuild when docs, the distillation rules, or the Main physical-sun state change (b7 = de-formation nudge for lockstep twins)
   if (!u || thematicBuilt.get(t.id) !== stamp) {
     const prev = vault.activeTabId;
     vault.activeTabId = t.id;
@@ -1222,7 +1365,7 @@ function getTagUni(tabId) {
   const t = vault.tabs.find(x => x.id === tabId) || vault.tab();
   if (!t) return null;
   let u = tagUnis.get(t.id);
-  const stamp = t.docs.length + ':g11:' + tagSig(t.docs) + ':' + (mainPhysSun(t.id) ? 's1' : 's0'); // rebuild when docs, their tags, or the Main physical-sun state change
+  const stamp = t.docs.length + ':g13:' + tagSig(t.docs) + ':' + (mainPhysSun(t.id) ? 's1' : 's0'); // rebuild when docs, their tags, or the Main physical-sun state change (g13 = angular de-formation for lockstep twins)
   if (!u || tagBuilt.get(t.id) !== stamp) {
     const recs = tagsFor(t.docs);
     tagRecords.set(t.id, recs);
@@ -1489,6 +1632,21 @@ function readerGoBack() {
     } finally { readerBackNav = false; }
     return;
   }
+  // history spent: one more Back releases to the inventory list itself, so
+  // repeated presses always get all the way back to the list view instead of
+  // dead-ending on the first document with 'nothing to go back to'.
+  if (!readerIsList || activeId || paneId) {
+    readerBackNav = true;
+    try {
+      activeId = null;
+      paneId = null;
+      try { const tb = vault.tab(); if (tb) { tb.activeId = activeId; vault.persist(); } } catch {}
+      readerLast = { tabId: vault.activeTabId, activeId, paneId };
+      renderDoc();
+      toast('Back to the list');
+    } finally { readerBackNav = false; }
+    return;
+  }
   toast('Nothing to go back to yet');
 }
 // pill-button state dot: filled when the function is on, hollow when off.
@@ -1540,12 +1698,38 @@ function applyMiniGeom() {
   const w = Math.max(140, Math.min(640, window.innerWidth - 16, miniW > 0 ? miniW : 232));
   const h = miniFolded ? (miniH > 0 ? miniH : 172) : Math.max(100, Math.min(480, window.innerHeight - 16, miniH > 0 ? miniH : 172));
   box.style.width = w + 'px'; box.style.height = miniFolded ? 'auto' : h + 'px';
-  if (miniX == null || miniY == null) { box.style.right = '16px'; box.style.bottom = '16px'; box.style.left = 'auto'; box.style.top = 'auto'; }
+  // the verse map never tucks under the bottom pill: when the pill reaches
+  // the map's zone the map rides 8px above the pill's top edge instead.
+  const pillTopAt = (zoneL) => {
+    try {
+      const hb = document.getElementById('hintBar');
+      if (!hb || hb.offsetParent === null) return -1;
+      const hr = hb.getBoundingClientRect();
+      if (hr.width <= 0 || hr.height <= 0 || hr.top >= window.innerHeight) return -1;
+      return hr.right > zoneL ? Math.round(hr.top) : -1;
+    } catch { return -1; }
+  };
+  if (miniX == null || miniY == null) {
+    const pt = pillTopAt(window.innerWidth - 16 - w);
+    box.style.right = '16px';
+    box.style.bottom = (pt >= 0 ? Math.max(16, window.innerHeight - pt + 8) : 16) + 'px';
+    box.style.left = 'auto'; box.style.top = 'auto';
+  }
   else {
     miniX = Math.max(8, Math.min(Math.max(8, window.innerWidth - w - 8), miniX));
     miniY = Math.max(8, Math.min(Math.max(8, window.innerHeight - (miniFolded ? 60 : h) - 8), miniY));
     box.style.left = miniX + 'px'; box.style.top = miniY + 'px';
     box.style.right = 'auto'; box.style.bottom = 'auto';
+    try { // a hand-placed map still never slides under the pill: intersect -> ride above it
+      const hb = document.getElementById('hintBar');
+      if (hb && hb.offsetParent !== null) {
+        const hr = hb.getBoundingClientRect(), br = box.getBoundingClientRect();
+        if (hr.width > 0 && hr.height > 0 && br.bottom > hr.top + 1 && br.top < hr.bottom - 1 && br.right > hr.left + 1 && br.left < hr.right - 1) {
+          miniY = Math.max(8, Math.round(hr.top - 8 - br.height));
+          box.style.top = miniY + 'px';
+        }
+      }
+    } catch {}
   }
 }
 function syncMiniMap() {
@@ -1646,30 +1830,55 @@ function syncPinTabs() {
     const words = glossWords();
     const before = pinnedTerms.length;
     pinnedTerms = pinnedTerms.filter(w => words.includes(w)); // drop pins whose term is gone
+    if (pinnedTerms.length > MAX_PINS) pinnedTerms = pinnedTerms.slice(0, MAX_PINS); // never more than two book tabs
     if (pinnedTerms.length !== before) saveUi();
     document.querySelectorAll('.pinTab').forEach(t => t.remove());
     document.querySelectorAll('#glossBody .g-pin').forEach(p => p.classList.toggle('on', pinnedTerms.includes(p.dataset.gpin)));
     const lp = document.getElementById('leftPanel');
     const app = document.getElementById('app');
-    if (!lp || !app || lp.classList.contains('collapsed')) return; // pins hide with the collapsed panel
-    let pr = 280;
-    try { pr = lp.getBoundingClientRect().right; } catch {}
-    let top = 312; // glossary tab runs 132..304 — pins stack below it with an 8px gap
-    for (const w of pinnedTerms) {
+    if (!lp || !app) return; // parked at the panel's live right edge — works expanded or collapsed
+    let pr = 280; // LAYOUT right edge (offset geometry: tilt-invariant — the
+    try { pr = lp.offsetLeft + lp.offsetWidth; } catch {} // bounding rect shrinks under tilt and would drag the tabs a
+    const tilted = lp.classList.contains('tilted'); // full tab-width inward, so never anchor to it
+    const glossBottom = 132 + 172; // #glossTab geometry: pins stack 8px below it
+    let top = 312;
+    try { top = (lp.offsetTop || 0) + glossBottom + 8; } catch {}
+    let ccx = 148; // panel layout center X (app coords): the tilt pivot the tabs must share
+    try { ccx = lp.offsetLeft + lp.offsetWidth / 2; } catch {}
+    // never stick past the pane bottom: precompute heights, then shrink the
+    // inter-tab gap (into an overlap if needed) so the last tab ends inside
+    // the pane. Overlap never buries a tab: at least a 28px strip stays visible.
+    const hs = pinnedTerms.map(w => Math.min(220, 30 + w.length * 9.5));
+    let gap = 8;
+    try {
+      const bottom = (lp.offsetTop || 0) + (lp.offsetHeight || 0) - 8;
+      const avail = bottom - top;
+      if (hs.length > 1) {
+        gap = Math.min(8, (avail - hs.reduce((a, h) => a + h, 0)) / (hs.length - 1));
+        gap = Math.max(gap, -(Math.min(...hs) - 28));
+      } else if (hs.length === 1 && hs[0] > avail) {
+        hs[0] = Math.max(48, avail); // one tall tab shrinks instead of overflowing
+      }
+    } catch {}
+    pinnedTerms.forEach((w, i) => {
       const b = document.createElement('button');
       b.className = 'pinTab' + (pinOpenWord === w ? ' open' : '');
       b.dataset.pinword = w;
       b.title = `Open pinned term “${w}”`;
       b.style.left = (pr - 1) + 'px';
-      const h = Math.min(220, 30 + w.length * 9.5);
+      const h = hs[i];
       b.style.top = top + 'px';
       b.style.height = h + 'px';
+      // same 3D plane as the tilted panel: identical perspective + angle about
+      // the panel's own center (rotateY pivots on a vertical line, so X is enough)
+      b.style.transform = tilted ? 'perspective(1100px) rotateY(30deg)' : '';
+      b.style.transformOrigin = tilted ? `${(ccx - pr + 1).toFixed(1)}px 50%` : '';
       const s = document.createElement('span');
       s.textContent = w;
       b.appendChild(s);
       app.appendChild(b);
-      top += h + 8;
-    }
+      top += h + gap;
+    });
   } catch {}
 }
 function togglePin(word) {
@@ -1679,6 +1888,10 @@ function togglePin(word) {
     if (pinOpenWord === word) setPin(null);
     toast(`Unpinned “${word}”`);
   } else {
+    if (pinnedTerms.length >= MAX_PINS) {
+      toast(`Only ${MAX_PINS} pinned tabs fit — unpin one first (its 📌 button, or Unpin in the pin pane)`);
+      return;
+    }
     pinnedTerms.push(word);
     toast(`Pinned “${word}” as a tab`);
   }
@@ -1744,9 +1957,23 @@ function placeNotesTab() {
   const t = $('#notesTab'), p = $('#docPanel');
   if (!t || !p) return;
   if (t.hidden) return;
-  const r = p.getBoundingClientRect();
-  t.style.left = Math.max(8, Math.round(r.left - 25)) + 'px';
-  t.style.top = Math.max(8, Math.round(r.top + 132)) + 'px'; // same relative recipe as the Glossary book tab (fixed offset below the pane top, riding its border) — high above the mid-height stretch arrow + side find bar
+  // layout (tilt-invariant) geometry: offset coords ignore CSS transforms, and
+  // both nodes are absolute in #app, so these already are viewport coords
+  const px = p.offsetLeft, py = p.offsetTop, pw = p.offsetWidth, ph = p.offsetHeight;
+  t.style.left = Math.max(8, Math.round(px - 25)) + 'px';
+  // parked above the edge cluster (26px clear of the tilt toggle) with breathing
+  // room — anchored to the pane middle so it tracks the cluster on any height
+  t.style.top = Math.max(8, Math.min(Math.round(py + ph / 2 - 225), window.innerHeight - 128)) + 'px';
+  // same 3D plane as the tilted pane: identical perspective + angle about the
+  // pane's own center (keep in sync with #docPanel.tiltedR), so the tab slants
+  // with the visual edge instead of floating flat beside it
+  if (p.classList.contains('tiltedR')) {
+    t.style.transform = 'perspective(1100px) rotateY(-30deg)';
+    t.style.transformOrigin = (pw / 2 + 25).toFixed(1) + 'px 50%';
+  } else {
+    t.style.transform = '';
+    t.style.transformOrigin = '';
+  }
 }
 function syncNotesTab() {
   const t = $('#notesTab'), p = $('#docPanel');
@@ -2073,6 +2300,7 @@ function drawMiniMap() {
   const s = Math.min(w / ((x1 - x0) * pad || 1), h / ((z1 - z0) * pad || 1));
   const px = (x) => w / 2 + (x - mx) * s, py = (z) => h / 2 + (z - mz) * s;
   const tri = triOrb === true; // verse map mirrors the main canvas body shape
+  const docM = docIcon === true; // document icons mirror too (theme bodies stay round, like the canvas)
   const triPath = (x, y, r) => {
     ctx.beginPath();
     for (let k = 0; k < 3; k++) {
@@ -2086,9 +2314,11 @@ function drawMiniMap() {
     if (!Number.isFinite(n.x) || !Number.isFinite(n.z)) continue;
     const [X, Z] = rot(n.x, n.z);
     const rad = Math.max(1.6, Math.min(5, 1.2 + Math.sqrt(Math.max(1, n.mass || 4)) * 0.35));
+    const isDocM = docM && !/^theme_/.test(n.id || '');
     if (tri) triPath(px(X), py(Z), rad);
+    else if (isDocM) { const rw = rad * 1.3, rh = rad * 1.6; ctx.beginPath(); ctx.rect(px(X) - rw / 2, py(Z) - rh / 2, rw, rh); }
     else { ctx.beginPath(); ctx.arc(px(X), py(Z), rad, 0, 7); }
-    ctx.fillStyle = n.id === uni.sunId ? '#ffce6b' : '#5f9dff';
+    ctx.fillStyle = n.id === uni.sunId ? '#ffce6b' : (isDocM ? '#ffffff' : '#5f9dff');
     ctx.fill();
   }
   // the active body reads as a white ring, like the main view's sun ring
@@ -2116,6 +2346,15 @@ function syncSimpleOrb2Btn() {
   b.title = simpleOrb2
     ? 'Plain-body-2 mode is ON — click to restore photo overlays'
     : 'Plain Body 2: original blue orbs with the photo overlays stripped';
+}
+function syncDocIconBtn() {
+  const b = $('#docIconBtn');
+  if (!b) return;
+  b.classList.toggle('on', docIcon);
+  try { b.querySelector('.pglyph').textContent = docIcon ? '◉' : '○'; } catch {}
+  b.title = docIcon
+    ? 'Document-icon mode is ON — click to restore orbs'
+    : 'Turn bodies into document icons: plain white page icons instead of orbs (same sizes, labels, tethers and selection) — only available in MAIN and TAG view modes (theme bodies always stay round)';
 }
 function syncTriOrbBtn() {
   const b = $('#triOrbBtn');
@@ -2214,8 +2453,7 @@ function setCollapsed(id, on) {
   const b = p.querySelector('[data-collapse]');
   if (b) { b.textContent = on ? '▼' : '▲'; b.title = on ? 'Expand panel' : 'Collapse panel'; }
   if (id === 'leftPanel') leftCollapsed = !!on;
-  if (id === 'leftPanel' && on && pinOpenWord != null) setPin(null); // pinned tabs hide with the panel — close the pane too
-  if (id === 'leftPanel') { try { syncPinTabs(); } catch {} } // re-seat or hide the pin tabs
+  if (id === 'leftPanel') { try { syncPinTabs(); } catch {} } // re-seat the pin tabs at the new edge
   if (id === 'docPanel') docCollapsed = !!on;
   saveUi();
   try { applyDocWidth(); } catch {}
@@ -2268,8 +2506,11 @@ function syncTipsBtn() {
   if (!b || !bar) return;
   bar.classList.toggle('notips', tipsCollapsed);
   b.classList.toggle('open', !tipsCollapsed); // red border while the tips are shown (non-collapsed)
-  b.textContent = (tipsCollapsed ? '+' : '–') + ' Tips';
+  b.textContent = (tipsCollapsed ? '▸ Tips' : '▾ Tips');
   b.title = tipsCollapsed ? 'Show the tips below the pill buttons' : 'Hide the tips below the pill buttons (buttons stay)';
+  try { sizeDocPanel(); } catch {} // pill height changed — re-park the reader's bottom edge (+ riders)
+  // the pill can settle a hair after the toggle (fonts/wraps) — one post-settle pass, then done
+  setTimeout(() => { try { sizeDocPanel(); } catch {} }, 200);
 }
 
 // ---------- "?" explicator popups: editable in the editor, locked in desktop exports ----------
@@ -2446,7 +2687,7 @@ function saveHelpEditor(reset) {
 // body.help-can-edit, same as every helper — locked in desktop/file shells).
 // The data-help-text span lets the editor live-update it after saving.
 function ovBlurb(key) {
-  return `<span data-help-text="${key}">${esc(helpTexts[key])}</span> <button class="help-edit-btn" data-help-edit="${key}" title="Edit this explanation">✎ edit</button>`;
+  return `<span class="ovblurb"><span data-help-text="${key}">${esc(helpTexts[key])}</span> <button class="help-edit-btn" data-help-edit="${key}" title="Edit this explanation">✎ edit</button></span>`;
 }
 // ---------- glossary editing: same lock, but machine-only (never ships) ----------
 // Overrides live ONLY in localStorage (`visidocsverse.gloss`): they are never
@@ -2600,45 +2841,232 @@ function placeTabBar() {
   if (vis(lp)) { const b = lp.getBoundingClientRect(); if (b.left < vw / 2 && b.right > L) L = Math.min(b.right + gap, vw - 120); }
   const gt = document.getElementById('glossTab'); // book tab protrudes 25px past the left panel: clear it too
   if (vis(gt)) { const b = gt.getBoundingClientRect(); if (b.left < vw / 2 && b.right > L) L = Math.min(b.right + gap, vw - 120); }
-  // the pills are fully static: docked beside the left pane at full content
-  // width, never shrunk or pushed by anything. A stretched reader slides OVER
+  // the pills keep their own natural size (never stretched to match each
+  // other) and dock at the lane's left beside the left pane — until the user
+  // hand-drags one elsewhere (that position persists; auto-layout then only
+  // enforces the size caps + right-edge clamp). A stretched reader slides OVER
   // the top pill and UNDER the bottom one (z-ladder) instead of squeezing them.
   const laneW = R - L;
-  if (laneW < 240) { L = 8; R = vw - 8; } // degenerate sliver: fall back to viewport margins
-  // left-docked: the pair's shared edge sits at the lane's left (beside the
-  // left pane / glossary tab), never centered. Full content width always.
-  bar.style.transform = 'none';
-  bar.style.left = L + 'px';
+  pillLaneW = R - L;
+  if (laneW < 240) { L = 8; R = vw - 8; pillLaneW = R - L; } // degenerate sliver: fall back to viewport margins
   bar.style.maxWidth = Math.max(240, R - L) + 'px';
-  syncPillPair(bar);
+  if (tabX == null || tabY == null) { bar.style.transform = 'none'; bar.style.left = L + 'px'; }
+  else applyTabGeom(); // user-moved: keep the hand position, enforce the right clamp
+  syncPillPair(bar, L);
+  enforceTopRight(); // the top pill matches the bottom pill's width exactly (positions stay independent)
+  try { applyGlossGeom(); } catch {} // the top pill may have wrapped taller: keep the glossary out from under it
   syncTabBarZ(); // restack after every move: reader-over-pill vs popover-above
 }
-// pill-pair width: the top + bottom pills always share both edges. Every
-// render measures what each pill needs and gives BOTH the wider of the two
-// (capped by the lane), so neither pill ever overflows its frame and the pair
-// stays edge-aligned no matter how tabs or tips change. The shared edge is
-// the left dock beside the left pane — the bottom pill left-aligns to the top
-// pill's dock x rather than matching centers.
-function syncPillPair(bar) {
+// MAIN folder-tab canvas mimic: the tab's fill tracks the canvas center shade
+// (white -> #11161f across bgShade, same mix as the renderer's backdrop core),
+// so it always reads as cut from the canvas below. Change-cached: one compare
+// per frame, one style write per shade change.
+let mainTabBgSeen = null;
+function syncMainTabBg() {
+  try {
+    const sh = Math.max(0, Math.min(1, typeof bgShade === 'number' ? bgShade : 1));
+    if (sh === mainTabBgSeen) return;
+    mainTabBgSeen = sh;
+    const bar = document.getElementById('tabBar');
+    if (!bar) return;
+    const mix = (a, b) => Math.round(a + (b - a) * sh);
+    const tabBg = `rgb(${mix(255, 17)},${mix(255, 22)},${mix(255, 31)})`;
+    bar.style.setProperty('--maintabbg', tabBg);
+    try { document.documentElement.style.setProperty('--maintabbg', tabBg); } catch {} // global copy: mini folder tabs (gotoSide) seat in canvas fill too
+  } catch {}
+}
+// pill-pair docking: the top + bottom pills share the lane's left edge; the
+// bottom pill keeps its own natural width and the top pill matches it
+// exactly (see enforceTopRight). A hand-dragged pill keeps its position
+// and never drags the other pill along; auto-layout only sets the top
+// width, so neither pill ever overflows its frame.
+function syncPillPair(bar, dockL) {
   try {
     const hint = document.getElementById('hintBar');
     if (!hint || !bar) return;
     if (hint.offsetParent === null) return; // hidden (mobile): leave it alone
-    bar.style.width = ''; // back to max-content: measure the top pill's own need
-    const r = bar.getBoundingClientRect();
-    const dockX = r.left; // transform is none: rect left is the dock edge
-    const laneMax = parseFloat(bar.style.maxWidth) || window.innerWidth;
-    hint.style.width = 'auto'; // shrink-to-fit: measure the bottom pill's need
-    hint.style.maxWidth = 'none';
-    const need = Math.min(Math.max(r.width, hint.offsetWidth), laneMax);
-    const W = Math.ceil(need);
-    bar.style.width = W + 'px';
+    bar.style.width = ''; // natural size: never stretched to match the other pill
+    hint.style.width = ''; // natural size: never stretched to match the other pill
     hint.style.boxSizing = 'border-box';
-    hint.style.width = W + 'px';
-    hint.style.maxWidth = bar.style.maxWidth;
-    hint.style.transform = 'none';
-    hint.style.left = dockX + 'px';
+    hint.style.maxWidth = bar.style.maxWidth || '96vw'; // cap only
+    if (hintX == null || hintY == null) {
+      // docked: share the lane's left edge with the top pill, at own width
+      hint.style.transform = 'none';
+      hint.style.top = ''; hint.style.bottom = ''; // back to the CSS bottom:14px
+      hint.style.left = (typeof dockL === 'number' ? dockL : bar.getBoundingClientRect().left) + 'px';
+    } else applyHintGeom(); // user-moved: keep the hand position, enforce the right clamp
   } catch {}
+}
+// screen-size auto-fit: pill positions are saved together with the viewport
+// they were placed on; on open (fresh load or backup restore) scale them
+// onto the current screen so the pair lands proportionally, then clampPill
+// + placeTabBar keep both pills fully on-screen. Factors are capped so an
+// odd saved size can never fling a pill across the display.
+// hand-draggable pills: fixed size (never stretchable). Both pills are fully
+// contained in the viewport at all times — no part can leave the screen —
+// and both pills only slide horizontally (heights stay where docking put
+// them). Double-click a pill's background to send it back to the dock.
+function fitPillsToScreen(savedVw, savedVh) {
+  try {
+    const cw = window.innerWidth, ch = window.innerHeight;
+    if (!(savedVw > 0) || !(savedVh > 0)) return; // legacy save without a screen size: clampPill still keeps it on-screen
+    if (savedVw === cw && savedVh === ch) return; // same screen: nothing to do
+    const kx = Math.min(2, Math.max(0.5, cw / savedVw));
+    const ky = Math.min(2, Math.max(0.5, ch / savedVh));
+    if (tabX != null && tabY != null) { tabX = Math.round(tabX * kx); tabY = Math.round(tabY * ky); }
+    if (hintX != null && hintY != null) { hintX = Math.round(hintX * kx); hintY = Math.round(hintY * ky); }
+  } catch {}
+}
+function clampPill(box, x, y) {
+  try {
+    const r = box.getBoundingClientRect();
+    const w = Math.max(80, r.width || 200), h = Math.max(30, r.height || 40);
+    const vw = window.innerWidth, vh = window.innerHeight;
+    x = Math.min(Math.max(x, 8), Math.max(8, vw - w - 8));
+    y = Math.min(Math.max(y, 8), Math.max(8, vh - h - 8));
+    return [x, y];
+  } catch { return [x, y]; }
+}
+function applyTabGeom() {
+  const box = $('#tabBar'); if (!box) return;
+  if (tabX == null || tabY == null) return; // docked: placeTabBar owns the position
+  const [x, y] = clampPill(box, tabX, tabY);
+  tabX = x; tabY = y;
+  box.style.transform = 'none'; box.style.left = x + 'px'; box.style.top = y + 'px';
+  enforceTopRight(); // width match only — a hand move never drags the other pill along
+}
+function applyHintGeom() {
+  const box = $('#hintBar'); if (!box) return;
+  if (hintX == null || hintY == null) return; // docked: syncPillPair owns the position
+  const [x, y] = clampPill(box, hintX, hintY);
+  hintX = x; hintY = y;
+  box.style.transform = 'none'; box.style.left = x + 'px'; box.style.top = y + 'px'; box.style.bottom = 'auto';
+  enforceTopRight(); // width match only — the bottom pill moves freely, the top pill stays put
+}
+// width match: the top pill is always EXACTLY as wide as the bottom pill
+// (grows and shrinks with it). The two pills are NOT position-wired: moving
+// one never moves the other — only this width match plus the viewport clamp
+// apply. Skipped while the bottom pill is hidden (mobile).
+function enforceTopRight() {
+  try {
+    const bar = document.getElementById('tabBar'), hint = document.getElementById('hintBar');
+    if (!bar || !hint || hint.offsetParent === null) return;
+    const matchW = Math.max(240, Math.min(Math.round(hint.getBoundingClientRect().width), window.innerWidth - 16));
+    bar.style.width = matchW + 'px'; // exact match, both directions — never frozen wider, never left narrower
+    bar.style.maxWidth = matchW + 'px';
+    delete bar.dataset.topShrunk;
+    const r = bar.getBoundingClientRect();
+    if (r.right > window.innerWidth - 8 + 0.5) { // a wider bottom pill must never push the top pill off-screen: slide it left
+      const nx = Math.max(8, Math.round(window.innerWidth - 8 - r.width));
+      if (tabX != null && tabY != null) tabX = nx;
+      bar.style.left = nx + 'px';
+    }
+    try { if (typeof autoDist !== 'undefined' && autoDist) applyMiniGeom(); } catch {} // the bottom pill moved: re-seat the verse map so it never tucks under it
+  } catch {}
+}
+// static cluster fill: inside the live universe's group frame, pad with dashed
+// add-tab frames after the last tab until the row band is full (single band
+// only — never wraps). The frames are fixed-size placeholders (clicking one
+// starts a project), so the whole cluster reads static and non-stretchable.
+// Runs after every tab render (renders rebuild the row, wiping old fills).
+function fillTabRow() {
+  try {
+    if (typeof vault === 'undefined' || !vault || !Array.isArray(vault.tabs)) return; // no store: nothing to pad
+    const bar = document.getElementById('tabBar');
+    const row = bar && bar.querySelector('.tabbar-row');
+    const hint = document.getElementById('hintBar');
+    if (!bar || !row || !hint || hint.offsetParent === null) return; // row hidden (collapsed) or mobile: leave it alone
+    row.querySelectorAll('[data-filltab]').forEach(el => el.remove()); // recount from the real tabs (fills never persist)
+    let groups = [...row.querySelectorAll(':scope > .ugroup')].filter(g => !g.classList.contains('ugroupghost'));
+    if (!groups.length) { // zero tabs: the ghost cluster stands in as the live group, red frame + full placeholders
+      const ghost = row.querySelector(':scope > .ugroupghost');
+      if (!ghost) return;
+      groups = [ghost];
+    }
+    // the "+" buttons are overflow controls: park them out of the way while measuring (they reappear below if nothing fits)
+    const plusBtns = [...row.querySelectorAll('.ugroup [data-addto]:not([data-filltab])'), ...row.querySelectorAll(':scope > [data-addtab]:not([data-filltab])')];
+    plusBtns.forEach(b => { b.style.display = 'none'; });
+    const makeGhost = (joinId, joinTitle) => {
+      const g = document.createElement('button');
+      g.className = 'tab tabghost';
+      g.setAttribute('data-filltab', '1');
+      if (joinId) { g.setAttribute('data-addto', joinId); g.title = joinTitle || 'Join this universe with a new project canvas'; }
+      else { g.setAttribute('data-addtab', '1'); g.title = 'Start a new project canvas'; }
+      g.textContent = 'add tab';
+      return g;
+    };
+    const rowH = () => row.getBoundingClientRect().height;
+    let placed = 0, floorBumped = false;
+    const trace = [];
+    for (const g of groups) { // one width for all: a group wider than clusterW raises it for every group
+      const w = g.getBoundingClientRect().width;
+      if (w > clusterW + 0.5) { clusterW = Math.round(w); floorBumped = true; }
+    }
+    for (const g of groups) { // every group is padded out to clusterW — fixed, static, never shrinks
+      const addto = g.querySelector('[data-addto]');
+      const joinId = addto ? addto.getAttribute('data-addto') : null;
+      const joinTitle = addto ? addto.title : '';
+      let guard = 0;
+      while (clusterW > 0 && g.getBoundingClientRect().width < clusterW - 0.5 && guard++ < 8) {
+        const h0 = rowH();
+        const ghost = makeGhost(joinId, joinTitle);
+        g.appendChild(ghost);
+        const h1 = rowH(), gw1 = Math.round(g.getBoundingClientRect().width);
+        trace.push(['topup', gw1, Math.round(h0), Math.round(h1)]);
+        if (h1 > h0 + 2) { ghost.remove(); break; } // never wrap
+        placed++;
+      }
+    }
+    const parent = row.querySelector('.ugroup.live') || row; // the live cluster's remainder fills the row band to the right edge
+    const liveAddto = parent !== row ? parent.querySelector('[data-addto]') : null;
+    const joinId = liveAddto ? liveAddto.getAttribute('data-addto') : null; // the cluster's own join control: fills join it, never start a separate canvas
+    const joinTitle = liveAddto ? liveAddto.title : '';
+    let guard = 0;
+    while (guard++ < 14) {
+      const h0 = rowH();
+      const ghost = makeGhost(joinId, joinTitle);
+      parent.appendChild(ghost);
+      if (rowH() > h0 + 2) { ghost.remove(); break; } // row is full: keep it a single visual band, never wrap
+      placed++;
+    }
+    if (floorBumped) { try { saveUi(); } catch {} }
+    try { window.__filldbg = {clusterW, placed, groups: groups.length, trace, barW: Math.round(bar.getBoundingClientRect().width), at: Date.now()}; } catch {}
+    // the "+" buttons only appear when the row is full and a new tab would open a second row (fills carry data-addto too, so exclude them)
+    const showPlus = placed === 0;
+    plusBtns.forEach(b => { b.style.display = showPlus ? '' : 'none'; });
+    try { placeTabBar(); } catch {} // re-clamp with the filled row (exact right-edge fit, floor ratchet)
+  } catch {}
+}
+function wirePillDrag(box, set) {
+  if (!box || box.dataset.pilldrag) return;
+  box.dataset.pilldrag = '1';
+  let mv = null;
+  box.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'mouse' && !e.isPrimary) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (e.target && e.target.closest && e.target.closest('button,input,a,select,textarea,label,.glassDot,.glassTip,[contenteditable="true"]')) return;
+    const r = box.getBoundingClientRect();
+    mv = { dx: e.clientX - r.left, dy: e.clientY - r.top, x0: e.clientX, y0: e.clientY, on: false };
+  });
+  box.addEventListener('pointermove', (e) => {
+    if (!mv) return;
+    if (!mv.on && Math.hypot(e.clientX - mv.x0, e.clientY - mv.y0) < 5) return;
+    if (!mv.on) {
+      mv.on = true;
+      box.style.touchAction = 'none';
+      try { box.setPointerCapture(e.pointerId); } catch {}
+      try { getSelection()?.removeAllRanges(); } catch {}
+      box.style.cursor = 'grabbing';
+    }
+    set(e.clientX - mv.dx, e.clientY - mv.dy);
+  });
+  const end = () => { if (!mv) return; const was = mv.on; mv = null; box.style.touchAction = ''; box.style.cursor = ''; if (was) saveUi(); };
+  box.addEventListener('pointerup', end);
+  box.addEventListener('pointercancel', end);
+  box.addEventListener('dblclick', (e) => {
+    if (e.target && e.target.closest && e.target.closest('button,input,a,select,textarea,label,.glassDot,.glassTip')) return;
+    set(null, null); saveUi(); // back to the dock
+  });
 }
 function syncModeBtn() {
   try {
@@ -2691,7 +3119,7 @@ function renderTabs() {
     }
     plusAfter.set(last, rep);
   }
-  bar.innerHTML = `<button class="glassDot" data-glaze="tabBar" aria-label="Toggle the frosted-glass background of this pill"><span class="glassTip">Polished-glass finish — click to switch this pill to a flat background, click again to bring the glass back. Text and controls always stay on top.</span></button><button class="modeBtn" id="modeBtn" title="Light mode — flip the whole workspace light">☾</button><span class="tabbar-label">Active Visi|Docsverse Projects <span id="autosaveStatus">${esc(fmtAutosave())}</span> <span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="tabs"><span class="help-text" data-help-text="tabs">${esc(helpTexts.tabs)}</span><button class="help-edit-btn" data-help-edit="tabs" title="Edit this explanation">✎ edit</button></div></span></span><span class="tabbar-row">` + (() => {
+  bar.innerHTML = `<button class="glassDot" data-glaze="tabBar" aria-label="Toggle the frosted-glass background of this pill"><span class="glassTip">Polished-glass finish — click to switch this pill to a flat background, click again to bring the glass back. Text and controls always stay on top.</span></button><button class="modeBtn" id="modeBtn" title="Light mode — flip the whole workspace light">☾</button><span class="tabbar-label">${vault.tabs.length ? 'Active Visi|Docsverse Projects' : 'Visi|Docsverse Projects'}</span><span class="tabbar-row">` + (() => {
     const tabHtml = (t) => {
       const iso = vault.isIso(t);
       const tinted = iso && typeof t.color === 'string' && /^#[0-9a-f]{6}$/i.test(t.color);
@@ -2715,7 +3143,7 @@ function renderTabs() {
     }).join('');
   })() + (vault.tabs.length
     ? '' // no trailing add button: every universe already carries its own "+"
-    : `<button class="tab tabadd" data-addtab="1" title="${esc(plusCaption('createTab'))}">Create Project</button>`) + `</span>` + `<span class="viewmodes"><button class="vm statstoggle" data-statstoggle="1" title="${statsCollapsed ? 'Show the verse stats' : 'Collapse the verse stats'}">${statsCollapsed ? '+' : '–'}</button><span class="vm-label">Universe view modes:</span><button class="vm vmpill" data-vm="main" title="Main view — the regular canvas universe (one body per document)">MAIN</button><span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="viewMain"><span class="help-text" data-help-text="viewMain">${esc(helpTexts.viewMain)}</span><button class="help-edit-btn" data-help-edit="viewMain" title="Edit this explanation">✎ edit</button></div></span><button class="vm vmpill" data-vm="thematic" title="Thematic view — the ideas the documents share, distilled into theme bodies">THEMATIC</button><span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="viewThematic"><span class="help-text" data-help-text="viewThematic">${esc(helpTexts.viewThematic)}</span><button class="help-edit-btn" data-help-edit="viewThematic" title="Edit this explanation">✎ edit</button></div></span><button class="vm vmpill" data-vm="tag" title="Tags view — the labels on the documents, one body per tag (same as Show tags view in the tags pane)">TAG</button><span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="viewTag"><span class="help-text" data-help-text="viewTag">${esc(helpTexts.viewTag)}</span><button class="help-edit-btn" data-help-edit="viewTag" title="Edit this explanation">✎ edit</button></div></span><button class="vm taginv" data-tagpop="1" title="See Tag Inventory — every tag in this verse as pills on a glass card">See Tag Inventory</button><button class="vm pilltoggle" data-pilltoggle="1" title="${pillCollapsed ? 'Restore the projects pill' : 'Collapse the projects pill (view modes stay)'}">${pillCollapsed ? '▾' : '▴'}</button></span>` + `<span class="statrow${statsCollapsed ? ' collapsed' : ''}"><span class="statbits"><b id="stBodies">–</b> bodies · <b id="stLinks">–</b> tethers · system energy <b id="stKe">–</b> <span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="energy"><span class="help-text" data-help-text="energy">Total motion in the document universe. High "system energy" numbers mean bodies are flying fast — especially if more files ('bodies') are being added — and it settles as correlational orbits stabilize.</span><button class="help-edit-btn" data-help-edit="energy" title="Edit this explanation">✎ edit</button></div></span> · rim <b id="stRim">–</b> <span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="rim"><span class="help-text" data-help-text="rim">The edge of the visualized document universe. Files ('bodies') drifting past it are loners with no links — a single reference can pull them back in and connect them.</span><button class="help-edit-btn" data-help-edit="rim" title="Edit this explanation">✎ edit</button></div></span></span></span>`;
+    : `<span class="ugroup ugroupghost live" title="Empty universe — click Create a project to start your first project"><button class="tab tabghost" data-addtab="1" title="${esc(plusCaption('createTab'))}">Create a project</button></span>`) + `</span>` + `<span class="viewmodes"><button class="vm vmpill" data-vm="main" title="Main view — the regular canvas universe (one body per document)">MAIN</button><span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="viewMain"><span class="help-text" data-help-text="viewMain">${esc(helpTexts.viewMain)}</span><button class="help-edit-btn" data-help-edit="viewMain" title="Edit this explanation">✎ edit</button></div></span><button class="vm vmpill" data-vm="thematic" title="Thematic view — the ideas the documents share, distilled into theme bodies">THEMATIC</button><span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="viewThematic"><span class="help-text" data-help-text="viewThematic">${esc(helpTexts.viewThematic)}</span><button class="help-edit-btn" data-help-edit="viewThematic" title="Edit this explanation">✎ edit</button></div></span><button class="vm vmpill" data-vm="tag" title="Tags view — the labels on the documents, one body per tag (same as Show tags view in the tags pane)">TAG</button><span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="viewTag"><span class="help-text" data-help-text="viewTag">${esc(helpTexts.viewTag)}</span><button class="help-edit-btn" data-help-edit="viewTag" title="Edit this explanation">✎ edit</button></div></span><button class="vm taginv" data-tagpop="1" title="See Tag Inventory — every tag in this verse as pills on a glass card">See Tag Inventory</button></span><button class="vm pilltoggle" data-pilltoggle="1" title="${pillCollapsed ? 'Restore the projects pill' : 'Collapse the projects pill (view modes stay)'}">${pillCollapsed ? '▾' : '▴'}</button>`
   bar.classList.toggle('pillCollapsed', pillCollapsed);
   const pillDot = bar.querySelector('.glassDot'); if (pillDot) pillDot.onclick = glazeDotClick; // renderTabs rebuilds the pill, so re-wire its dot every render
   const modeBtn = bar.querySelector('#modeBtn'); if (modeBtn) modeBtn.onclick = () => flipWorkspaceMode(); // same: corner mode button is rebuilt too
@@ -2724,6 +3152,7 @@ function renderTabs() {
   try { syncViewModes(); } catch {}
   try { syncIntakeLog(); } catch {} // the VisiDocsverse pane shows THIS tab's last message, never another verse's
   try { placeTabBar(); } catch {} // keep the pill inside the free lane between the side panes
+  try { fillTabRow(); } catch {} // pad the live cluster with static add-tab frames, then re-clamp
 }
 function switchCanvas(id) {
   const t = vault.tabs.find(t => t.id === id);
@@ -2990,6 +3419,7 @@ function entangleSync() {
 }
 
 function updateStats() {
+  if (!$('#stBodies')) return; // stats row removed from the top pill: nothing to update
   { const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
   if (!uni) { set('#stBodies', 0); set('#stLinks', 0); set('#stKe', 0); set('#stRim', 0); return; }
   const s = uni.stats();
@@ -3701,7 +4131,31 @@ function openSrcPop(id, x, y, sticky) {
   const imgs = (d.images || []).filter(im => im && im.key);
   const body = $('#svpBody'), cap = $('#svpCap'), foot = $('#svpFoot');
   cap.hidden = true; cap.textContent = '';
-  if (words < 8 && imgs.length) {
+  const mkind0 = mediaKind(d.name, '');
+  if (mkind0 === 'image' && d.origKey) {
+    // standalone photo body: thumbnail from the kept original bytes
+    $('#svpSec').textContent = 'Image';
+    body.innerHTML = '<span style="color:var(--mut)">loading thumbnail…</span>';
+    const titleAtOpen = vault.titleOf(d);
+    (async () => {
+      try {
+        let url = mediaUrlCache.get(d.origKey);
+        if (!url) {
+          const rec = await origGet(d.origKey);
+          if (!rec || !rec.blob || !(rec.blob.size > 0)) throw 0;
+          url = URL.createObjectURL(rec.blob); mediaUrlCache.set(d.origKey, url);
+        }
+        if (box.hidden || $('#svpTitle').textContent !== titleAtOpen) return; // moved on
+        body.innerHTML = '';
+        const img = document.createElement('img');
+        img.onload = () => { try { if (!box.hidden) place(); } catch {} };
+        img.src = url; img.alt = titleAtOpen;
+        body.appendChild(img);
+      } catch { body.innerHTML = '<span style="color:var(--mut)">image kept on the original device — not in this backup</span>'; }
+    })();
+    if (words) { cap.hidden = false; cap.textContent = `${words} words of readable text`; }
+    foot.textContent = 'thumbnail preview · release to close';
+  } else if (words < 8 && imgs.length) {
     // picture-only body: miniaturized picture instead of words
     $('#svpSec').textContent = 'Image';
     body.innerHTML = '<span style="color:var(--mut)">loading thumbnail…</span>';
@@ -3727,7 +4181,8 @@ function openSrcPop(id, x, y, sticky) {
     foot.textContent = 'thumbnail preview · release to close';
   } else {
     const sec = srcSection(d.text);
-    $('#svpSec').textContent = sec.label;
+    const mk = mediaKind(d.name, '');
+    $('#svpSec').textContent = mk ? (mk === 'video' ? 'Video' : mk === 'audio' ? 'Audio' : 'Image') : sec.label;
     body.textContent = (sec.text || '(no readable text)') + (sec.more && sec.text ? '…' : '');
     foot.textContent = `${Math.min(sec.words, SRC_WORDS)} of ${d.words} words · release to close`;
   }
@@ -3753,6 +4208,359 @@ function openSrcPop(id, x, y, sticky) {
   return true;
 }
 function closeSrcPop() { const box = $('#srcPop'); if (box) box.hidden = true; srcStickyId = null; srcHoldHi(); srcClearHi(); try { syncEye(); } catch {} }
+// ---------- document carousel: curved glass coverflow of the Active body ----------
+// Reader-pane trigger (two-pages button under the stretch arrow). Clones the reader's document into ≥3 glass
+// panes on a curved track (center pane flat, sides swung back like the reference
+// coverflow), scrollable via arrows, wheel, drag and ←/→ keys. Video/audio
+// bodies are excluded (they play natively); everything else — prose, pictures,
+// OCR'd photos — rides in its original rendered format. Any click outside the
+// panes (the dim backdrop), ✕, Esc or re-pressing the toggle dismisses it.
+let carOpen = false, carDocId = null, carRaf = 0, carMoved = false, carIdx = 0, carPid = null, carSettleT = 0, carLive = false, carLiveT = 0, carZoom = 100; // carLive = track still gliding (center pane keeps its 3D pose until it rests); carZoom = pane enlargement %, 100-145 (header slider)
+let carPagesArr = null, carZoomOpen = false, carZoom2 = 100, carMediaFirst = false; // expander: chunk list for scroll-to-page, overlay state, overlay zoom % (session-only); media pane leads the track
+// split prose into ≥3 (max 10) page-sized chunks, paragraph-aware; short docs
+// still get 3 panes (wordiest page splits until they do).
+function carouselPages(text) {
+  const raw = String(text || '').replace(/^#[^\n]*\n+/, '').trim();
+  const words = raw ? raw.split(/\s+/).filter(Boolean) : [];
+  const paras = raw ? raw.split(/\n+/).map(s => s.trim()).filter(Boolean) : [];
+  const n = Math.max(3, Math.min(10, Math.ceil(words.length / 150) || 3));
+  if (!paras.length) return ['', '', ''].slice(0, n);
+  const per = Math.max(1, Math.ceil(words.length / n));
+  const pages = [];
+  let cur = [], curN = 0;
+  for (const p of paras) {
+    const wn = p.split(/\s+/).filter(Boolean).length;
+    if (cur.length && curN + wn > per && pages.length < n - 1) { pages.push(cur.join('\n\n')); cur = []; curN = 0; }
+    cur.push(p); curN += wn;
+  }
+  if (cur.length) pages.push(cur.join('\n\n'));
+  while (pages.length < Math.min(3, n)) {
+    let bi = 0;
+    for (let i = 1; i < pages.length; i++) if (pages[i].length > pages[bi].length) bi = i;
+    const w = pages[bi].split(/\s+/).filter(Boolean);
+    if (w.length < 2) break;
+    const half = Math.ceil(w.length / 2);
+    pages.splice(bi, 1, w.slice(0, half).join(' '), w.slice(half).join(' '));
+  }
+  return pages;
+}
+function openCarousel() {
+  const d = vault.byId(shownId);
+  if (!d) { toast('Open a document body first — the carousel reads the Active body'); return false; }
+  const wrap = $('#carWrap'), track = $('#carTrack');
+  if (!wrap || !track) return false;
+  carDocId = d.id;
+  $('#carTitle').textContent = vault.titleOf(d);
+  track.innerHTML = '';
+  const pages = carouselPages(d.text);
+  carPagesArr = pages;
+  const hasMedia = !!mediaKind(d.name, '');
+  carMediaFirst = hasMedia;
+  const hasText = !!String(d.text || '').trim();
+  const hasFigs = ((d.images || []).some(im => im && im.key));
+  // media docs with no readable text get no blank filler panes (pure audio =
+  // just the player; media + pictures but no words = player + one gallery page)
+  const textPages = hasMedia ? (hasText ? pages : (hasFigs ? [''] : [])) : pages;
+  const total = textPages.length + (hasMedia ? 1 : 0);
+  let paneNo = 0;
+  const phead = () => `<div class="car-phead"><span class="car-ptitle">${esc(vault.titleOf(d))}</span><span class="car-pnum">${++paneNo} / ${total}</span><button class="car-expand" title="Open this page full-size — the whole original document, zoomable (double-click works too)">⤢</button></div>`;
+  // pane 1: the original itself — photo original / video / audio player, like the reader
+  if (hasMedia) {
+    const mp = document.createElement('div');
+    mp.className = 'car-pane glass car-media';
+    mp.innerHTML = phead() + '<div class="car-text"></div>';
+    track.appendChild(mp);
+    try {
+      const t = mp.querySelector('.car-text');
+      hydrateMedia(t, d);
+    } catch {}
+  }
+  textPages.forEach((chunk) => {
+    const pane = document.createElement('div');
+    pane.className = 'car-pane glass';
+    pane.innerHTML = phead() + `<div class="car-text">${renderBody(chunk, null) || '<span style="color:var(--mut)">(this page is blank)</span>'}</div>`;
+    track.appendChild(pane);
+  });
+  // original-format pictures ride on the last pane, hydrated like the reader gallery
+  try {
+    const last = track.lastElementChild;
+    const figs = ((d.images || []).filter(im => im && im.key)).slice(0, 200);
+    const t = last && last.querySelector('.car-text');
+    if (t && figs.length) {
+      t.insertAdjacentHTML('beforeend', `<div class="imggal">` + figs.map(im => {
+        const dim = (im.w && im.h) ? ` · ${im.w}×${im.h}` : '';
+        return `<figure data-imgkey="${esc(im.key)}"><span class="imgph">loading image…</span><figcaption>${esc(im.cap || 'image')}${esc(dim)}</figcaption></figure>`;
+      }).join('') + `</div>`);
+      hydrateImages(track, d.images);
+    }
+    if (t) hydrateSheet(t, d); // spreadsheets preview as a table, original one click away
+  } catch {}
+  wrap.hidden = false;
+  carOpen = true;
+  try { applyCarZoom(); } catch {}
+  try { syncCarBtn(); } catch {}
+  requestAnimationFrame(() => { try { track.scrollLeft = 0; } catch {} carLayout(); });
+  return true;
+}
+function closeCarousel() {
+  const wrap = $('#carWrap');
+  carOpen = false;
+  carDocId = null;
+  try { if (wrap) wrap.querySelectorAll('video,audio').forEach(m => { try { m.pause(); } catch {} }); } catch {}
+  try { const zw = $('#carZoomWrap'); if (zw) zw.querySelectorAll('video,audio').forEach(m => { try { m.pause(); } catch {} }); } catch {}
+  if (wrap && !wrap.hidden) wrap.hidden = true;
+  try { syncCarBtn(); } catch {}
+}
+// pane-size slider (100-145%): scales pane width, text and height via --carZoom
+function applyCarZoom() {
+  const wrap = $('#carWrap');
+  if (wrap) wrap.style.setProperty('--carZoom', (carZoom / 100).toFixed(2));
+  const v = $('#carZoomVal');
+  if (v) v.textContent = carZoom + '%';
+  const zr = $('#carZoomRg');
+  if (zr && document.activeElement !== zr) zr.value = String(carZoom);
+}
+function setCarZoom(v) {
+  carZoom = Math.max(100, Math.min(145, Math.round(+v || 100)));
+  applyCarZoom(); saveUi();
+  if (carOpen) { // re-park on the same pane at the new pitch, then re-curve
+    try {
+      const track = $('#carTrack');
+      const first = track && track.querySelector('.car-pane');
+      if (track && first) {
+        const gap = parseFloat(getComputedStyle(track).columnGap) || 18;
+        track.scrollLeft = carIdx * (first.offsetWidth + gap);
+      }
+    } catch {}
+    carLayout();
+  }
+}
+// expand-pane overlay: the whole original document in reader format + gallery,
+// scrolled to the chunk the pane shows, with its own zoom (100-200%).
+function applyCarZoom2() {
+  const card = $('#carZoomCard');
+  if (card) card.style.setProperty('--czx', (carZoom2 / 100).toFixed(2));
+  const v = $('#carZoomVal2');
+  if (v) v.textContent = carZoom2 + '%';
+  const zr = $('#carZoomRg2');
+  if (zr && document.activeElement !== zr) zr.value = String(carZoom2);
+}
+function setCarZoom2(v) {
+  carZoom2 = Math.max(100, Math.min(200, Math.round(+v || 100)));
+  applyCarZoom2();
+}
+function openCarZoom(i) {
+  const d = vault.byId(carDocId) || vault.byId(shownId);
+  if (!d) { toast('Open a document body first'); return false; }
+  const wrap = $('#carZoomWrap'), body = $('#carZoomBody'), txt = $('#carZoomText');
+  if (!wrap || !body || !txt) return false;
+  $('#carZoomTitle').textContent = vault.titleOf(d);
+  txt.innerHTML = renderBody(d.text, d.images) || '';
+  try { hydrateImages(txt, d.images); } catch {}
+  try { hydrateMedia(txt, d); } catch {}
+  try { hydrateSheet(txt, d); } catch {}
+  try { const mg = txt.querySelector('.mediagal'); if (mg && txt.firstChild !== mg) txt.insertBefore(mg, txt.firstChild); } catch {} // originals lead here too
+  wrap.hidden = false;
+  carZoomOpen = true;
+  try { applyCarZoom2(); } catch {}
+  // land on the chunk this pane shows: the chunk head is matched against the
+  // rendered text node stream (markup spans split nodes, so single-node search
+  // fails) — every occurrence is collected and the one nearest this page's
+  // expected position wins, so repeated boilerplate can't misroute the jump.
+  try {
+    body.scrollTop = 0;
+    const chunks = carPagesArr || [];
+    const chunk = ((chunks[i] || '').replace(/\s+/g, ' ').trim())
+      .replace(/\*\*/g, '').replace(/\[\[|\]\]/g, '').replace(/\s+/g, ' ').trim();
+    const nodes = [];
+    {
+      const walker = document.createTreeWalker(txt, NodeFilter.SHOW_TEXT);
+      let n; while ((n = walker.nextNode())) { if (n.textContent) nodes.push(n); }
+    }
+    const parts = nodes.map(n => n.textContent.replace(/\s+/g, ' '));
+    const full = parts.join(' ').replace(/\s+/g, ' ').trim();
+    const probe = chunk.split(' ').slice(0, 8).join(' ').slice(0, 60);
+    if (probe.length > 15 && full && nodes.length) {
+      const want = (chunks.length > 1 ? (i / (chunks.length - 1)) : 0) * full.length;
+      let best = -1, bestD = Infinity, at = 0;
+      for (;;) { const f = full.indexOf(probe, at); if (f < 0) break; const dd = Math.abs(f - want); if (dd < bestD) { bestD = dd; best = f; } at = f + 1; if (at >= full.length) break; }
+      if (best >= 0) {
+        let acc = 0, hit = null;
+        for (let k = 0; k < nodes.length; k++) {
+          if (best < acc + parts[k].length + 1) { hit = nodes[k]; break; }
+          acc += parts[k].length + 1;
+        }
+        if (!hit) hit = nodes[nodes.length - 1];
+        const r = document.createRange();
+        try { r.selectNodeContents(hit); } catch { r.selectNode(hit, 0); }
+        const br = r.getBoundingClientRect(), cr = body.getBoundingClientRect();
+        if (br.height) body.scrollTop += Math.max(0, (br.top - cr.top) - Math.round(cr.height * 0.22));
+        // flash just the matched head words (not the whole mega-paragraph):
+        // locate the probe in this node's collapsed text, map the collapsed
+        // offsets back onto raw offsets (each whitespace run = 1 char), wrap.
+        try {
+          const raw = hit.textContent, cHit = raw.replace(/\s+/g, ' ');
+          let li = cHit.indexOf(probe), llen = probe.length;
+          if (li < 0 && probe.length > 24) { li = cHit.indexOf(probe.slice(0, 24)); llen = 24; }
+          if (li >= 0) {
+            const c2r = (cIdx) => { let c = 0, r = 0, inWs = false; while (r < raw.length && c < cIdx) { if (/\s/.test(raw[r])) { if (!inWs) { inWs = true; c++; } r++; } else { inWs = false; c++; r++; } } return r; };
+            const rng2 = document.createRange();
+            rng2.setStart(hit, c2r(li));
+            rng2.setEnd(hit, c2r(Math.min(cHit.length, li + Math.min(llen, 60))));
+            const sp = document.createElement('span');
+            sp.className = 'cz-spot';
+            rng2.surroundContents(sp);
+            setTimeout(() => { try { const p = sp.parentNode; if (p) { while (sp.firstChild) p.insertBefore(sp.firstChild, sp); p.removeChild(sp); } } catch {} }, 1700);
+          }
+        } catch { /* weird node shape — the scroll still landed */ }
+      }
+    }
+  } catch {}
+  try { $('#carZoomClose').focus({ preventScroll: true }); } catch {}
+  return true;
+}
+function closeCarZoom() {
+  if (!carZoomOpen) return false;
+  carZoomOpen = false;
+  const wrap = $('#carZoomWrap');
+  try { if (wrap) wrap.querySelectorAll('video,audio').forEach(m => { try { m.pause(); } catch {} }); } catch {}
+  if (wrap && !wrap.hidden) wrap.hidden = true;
+  return true;
+}
+function syncCarBtn() {
+  const b = $('#carPaneBtn');
+  if (!b) return;
+  b.classList.toggle('open', !!carOpen);
+  b.setAttribute('aria-pressed', carOpen ? 'true' : 'false');
+}
+// coverflow curve: each pane swings back with its distance from track center
+function carLayout() {
+  const track = $('#carTrack');
+  if (!track || !carOpen) return;
+  const r = track.getBoundingClientRect();
+  const mid = r.left + r.width / 2;
+  const panes = track.querySelectorAll('.car-pane');
+  let best = 0, bestDd = Infinity;
+  panes.forEach((p, i) => {
+    const pr = p.getBoundingClientRect();
+    const off = (pr.width > 0) ? (pr.left + pr.width / 2 - mid) / pr.width : 0;
+    const a = Math.max(-1.4, Math.min(1.4, off));
+    const deg = a * 42;
+    const z = -Math.min(Math.abs(a), 1.4) * 110;
+    const sc = 1 - Math.min(Math.abs(a) * 0.09, 0.28);
+    p.style.transform = `rotateY(${deg.toFixed(1)}deg) translateZ(${z.toFixed(0)}px) scale(${sc.toFixed(3)})`;
+    p.style.zIndex = String(100 - Math.round(Math.abs(a) * 20));
+    p.style.opacity = String(Math.abs(a) > 1.35 ? 0.25 : 1);
+    p.classList.toggle('car-center', Math.abs(a) < 0.5);
+    const dd = Math.abs(off);
+    if (dd < bestDd) { bestDd = dd; best = i; }
+  });
+  const cc = $('#carCount');
+  if (cc) cc.textContent = (best + 1) + ' / ' + panes.length;
+  carIdx = best; // arrows step from here — deterministic paging, no snap engine
+  // the rested center pane drops out of the 3D context (transform:none) so its
+  // text rasterizes flat and crisp — GPU-perspective layers blur body copy.
+  // While gliding it keeps the curve pose so paging never pops.
+  if (!carLive && bestDd < 0.5 && panes[best]) panes[best].style.transform = 'none';
+  // caption rides above the current pane (re-seated every layout pass,
+  // including mid-glide, so it tracks the nearest pane while paging)
+  try {
+    const tip = $('#carZoomTip');
+    const stage = $('#carStage');
+    if (tip && stage && panes[best]) {
+      const sr = stage.getBoundingClientRect();
+      const br2 = panes[best].getBoundingClientRect();
+      tip.style.display = '';
+      tip.style.left = Math.round(br2.left + br2.width / 2 - sr.left) + 'px';
+    } else if (tip) tip.style.display = 'none';
+  } catch {}
+}
+function carOnScroll() {
+  if (!carOpen) return;
+  carLive = true; // gliding: every pane stays in the 3D curve while moving
+  try { clearTimeout(carLiveT); } catch {}
+  carLiveT = setTimeout(() => { carLive = false; carLayout(); }, 220);
+  if (!carRaf) carRaf = requestAnimationFrame(() => { carRaf = 0; carLayout(); });
+  // settle: shortly after a glide ends (no finger down), park exactly on the
+  // nearest pane — the paginated feel, without fighting the scroll engine
+  try { clearTimeout(carSettleT); } catch {}
+  carSettleT = setTimeout(() => {
+    if (!carOpen || carPid !== null) return;
+    const track = $('#carTrack');
+    if (!track) return;
+    const first = track.querySelector('.car-pane');
+    if (!first) return;
+    const gap = parseFloat(getComputedStyle(track).columnGap) || 18;
+    const want = carIdx * (first.offsetWidth + gap);
+    if (Math.abs(track.scrollLeft - want) > 4) track.scrollLeft = want;
+  }, 200);
+}
+function carStep(dir) {
+  const track = $('#carTrack');
+  if (!track) return;
+  const panes = track.querySelectorAll('.car-pane');
+  if (!panes.length) return;
+  const first = panes[0];
+  const gap = parseFloat(getComputedStyle(track).columnGap) || 18;
+  const i = Math.max(0, Math.min(panes.length - 1, carIdx + dir));
+  track.scrollLeft = i * (first.offsetWidth + gap);
+}
+function wireCarousel() {
+  const wrap = $('#carWrap'), track = $('#carTrack');
+  if (!wrap || !track || track.dataset.carWired) return;
+  track.dataset.carWired = '1';
+  track.addEventListener('scroll', carOnScroll, { passive: true });
+  // sideways wheel glides the track instead of the page
+  track.addEventListener('wheel', (e) => {
+    if (!carOpen) return;
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); track.scrollLeft += e.deltaY; }
+  }, { passive: false });
+  // any click outside the panes (the dim backdrop / stage padding) dismisses
+  wrap.addEventListener('click', (e) => {
+    if (carMoved) return; // a drag just ended — not a dismiss click
+    if (!e.target.closest('.car-pane') && !e.target.closest('button') && !e.target.closest('input,label') && !e.target.closest('#carZoomTip')) closeCarousel();
+  });
+  // drag-to-scroll with direction lock (vertical drags still scroll a pane)
+  let dX = 0, dL = 0;
+  track.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    carMoved = false; dX = e.clientX; dL = track.scrollLeft; carPid = e.pointerId;
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!carOpen || carPid === null || e.pointerId !== carPid) return;
+    if (Math.abs(e.clientX - dX) > 8) { carMoved = true; track.scrollLeft = dL - (e.clientX - dX); }
+  });
+  window.addEventListener('pointerup', (e) => { if (e.pointerId === carPid) carPid = null; });
+  window.addEventListener('pointercancel', (e) => { if (e.pointerId === carPid) carPid = null; });
+  const pv = $('#carPrevB'), nx = $('#carNextB'), cx = $('#carClose');
+  if (pv) pv.onclick = (e) => { e.stopPropagation(); carStep(-1); };
+  if (nx) nx.onclick = (e) => { e.stopPropagation(); carStep(1); };
+  if (cx) cx.onclick = (e) => { e.stopPropagation(); closeCarousel(); };
+  const zr = $('#carZoomRg');
+  if (zr && !zr.dataset.wired) { zr.dataset.wired = '1'; zr.addEventListener('input', () => setCarZoom(+zr.value)); }
+  track.addEventListener('dblclick', (e) => {
+    const pane = e.target && e.target.closest ? e.target.closest('.car-pane') : null;
+    if (!pane) return;
+    openCarZoom([...track.querySelectorAll('.car-pane')].indexOf(pane) - (carMediaFirst ? 1 : 0));
+  });
+  track.addEventListener('click', (e) => {
+    const xp = e.target && e.target.closest ? e.target.closest('.car-expand') : null;
+    if (!xp) return;
+    e.stopPropagation();
+    const pane = xp.closest('.car-pane');
+    openCarZoom([...track.querySelectorAll('.car-pane')].indexOf(pane) - (carMediaFirst ? 1 : 0));
+  });
+  const zt = $('#carZoomTip');
+  if (zt) zt.addEventListener('dblclick', (e) => { e.stopPropagation(); openCarZoom(carIdx - (carMediaFirst ? 1 : 0)); });
+  const zj = $('#carZoomJump');
+  if (zj) zj.onclick = (e) => { e.stopPropagation(); openCarZoom(carIdx - (carMediaFirst ? 1 : 0)); };
+  const zw = $('#carZoomWrap'), zb = $('#carZoomBody'), zc2 = $('#carZoomClose'), zr2 = $('#carZoomRg2');
+  if (zc2) zc2.onclick = (e) => { e.stopPropagation(); closeCarZoom(); };
+  if (zw) zw.addEventListener('click', (e) => { if (e.target === zw) closeCarZoom(); });
+  if (zr2 && !zr2.dataset.wired) { zr2.dataset.wired = '1'; zr2.addEventListener('input', () => setCarZoom2(+zr2.value)); }
+  if (zb && !zb.dataset.wired) { zb.dataset.wired = '1'; zb.addEventListener('wheel', (e) => { if (e.ctrlKey) { e.preventDefault(); setCarZoom2(carZoom2 + (e.deltaY < 0 ? 10 : -10)); } }, { passive: false }); }
+  window.addEventListener('resize', () => { if (carOpen) carLayout(); });
+}
 // manual-spot plumbing: locate a creation anchor in the rendered reader text
 // and wrap it. Anchors are rich ({snip, at, path, off}): the DOM path is
 // tried first (verified against a snippet chunk), else the occurrence nearest
@@ -4315,12 +5123,13 @@ function placeFindSide() {
   const side = $('#findSide'), p = $('#docPanel');
   // the jump cluster must follow the pane even when the find bar is hidden
   if (!side || side.hidden || !p) { try { placeGotoSide(); } catch {} return; }
-  const r = p.getBoundingClientRect();
+  const px = p.offsetLeft, py = p.offsetTop, ph = p.offsetHeight;
   const w = 210;
   side.style.width = w + 'px';
-  side.style.left = Math.max(8, r.left - w - 8) + 'px';
+  side.style.left = Math.max(8, px - w - 8) + 'px';
   const h = side.offsetHeight || 80;
-  side.style.top = Math.max(8, Math.min(window.innerHeight - h - 8, r.top + r.height / 2 - h / 2)) + 'px';
+  side.style.top = Math.max(8, Math.min(window.innerHeight - h - 8, py + ph / 2 - h / 2)) + 'px';
+  rideTiltPlane(side);
   try { placeGotoSide(); } catch {} // the jump cluster stacks below the find box
 }
 // view-jump side cluster: one MAIN / THEMATIC / TAGS set for the shown doc,
@@ -4328,12 +5137,17 @@ function placeFindSide() {
 function placeGotoSide() {
   const box = $('#gotoSide'), p = $('#docPanel');
   if (!box || box.hidden || !p) return;
+  // FLAT ALWAYS: this card never joins the tilt plane — it stays axis-aligned
+  // in screen space, seated from the visual (bounding) edge, re-seated after
+  // the glide lands by setDocTilt's post-glide pass
   const r = p.getBoundingClientRect();
-  const w = 210;
+  const w = 250;
   box.style.width = w + 'px';
-  box.style.left = Math.max(8, r.left - w - 8) + 'px';
-  // park below the mid-height ‹ stretch arrow (arrow spans center±27) — never cover it
-  let top = r.top + r.height / 2 + 35;
+  // 26px clear of the pane edge: the ‹ arrow + tilt/carousel icon buttons ride
+  // the edge (carousel sticks 14px left of it), so 8px would slide under them
+  box.style.left = Math.max(8, r.left - w - 26) + 'px';
+  // park below the mid-height edge cluster (arrow ± tilt/jump/carousel icons) — never cover it
+  let top = r.top + r.height / 2 + 162;
   const fs = $('#findSide');
   if (fs && !fs.hidden && fs.offsetParent !== null) {
     const fr = fs.getBoundingClientRect();
@@ -4365,9 +5179,11 @@ function applyGotoPicked() {
 function placeTopBtn() {
   const b = $('#docTopBtn'), p = $('#docPanel');
   if (!b || b.hidden || !p) return;
-  const r = p.getBoundingClientRect();
-  b.style.left = Math.max(8, r.right - b.offsetWidth - 12) + 'px';
-  b.style.top = Math.max(8, Math.min(window.innerHeight - b.offsetHeight - 8, r.bottom - b.offsetHeight - 12)) + 'px';
+  const px = p.offsetLeft, py = p.offsetTop, pw = p.offsetWidth, ph = p.offsetHeight;
+  const bw = b.offsetWidth, bh = b.offsetHeight;
+  b.style.left = Math.max(8, px + pw - bw - 12) + 'px';
+  b.style.top = Math.max(8, Math.min(window.innerHeight - bh - 8, py + ph - bh - 12)) + 'px';
+  rideTiltPlane(b);
 }
 function syncTopBtn() {
   const b = $('#docTopBtn'), p = $('#docPanel');
@@ -4418,14 +5234,14 @@ function applyReaderFind() {
     while (walker.nextNode()) {
       const n = walker.currentNode;
       if (!n.nodeValue || !n.nodeValue.toLowerCase().includes(q)) continue;
-      if (n.parentElement && n.parentElement.closest && n.parentElement.closest('.imggal')) continue;
+      if (n.parentElement && n.parentElement.closest && (n.parentElement.closest('.imggal') || n.parentElement.closest('.mediagal'))) continue;
       nodes.push(n);
     }
-    for (const n of nodes) {
-      const text = n.nodeValue, low = text.toLowerCase();
-      const frag = document.createDocumentFragment();
-      let idx = 0, count = 0;
-      for (;;) {
+      for (const n of nodes) {
+        const text = n.nodeValue, low = text.toLowerCase();
+        const frag = document.createDocumentFragment();
+        let idx = 0, count = 0;
+        for (;;) {
         if (findSpans.length >= MAX_FIND_HITS) break;
         const p = low.indexOf(q, idx);
         if (p < 0) break;
@@ -4585,7 +5401,7 @@ function renderGeneral() {
     $('#docTitle').textContent = 'No open canvas';
     $('#docMeta').textContent = '';
     $('#docTags').innerHTML = '';
-    $('#docBody').innerHTML = `<span style="color:var(--mut)">${ovBlurb('ovNoCanvas')}</span>`;
+    $('#docBody').innerHTML = `<span class="ovNote">${ovBlurb('ovNoCanvas')}</span>`;
     $('#docLinks').innerHTML = '';
     try { syncDocActionButtons(); } catch {} // the find bar stays parked even here
     try { applyReaderFind(); } catch {} // rebuild highlights for the hint text
@@ -4600,7 +5416,7 @@ function renderGeneral() {
     const grounded = themes.reduce((s, th) => s + ((th.members && th.members.length) || 0), 0);
     $('#docMeta').textContent = `${themes.length} themes · ${grounded} grounded bodies · distilled from ${scope}`;
     $('#docTags').innerHTML = '';
-    $('#docBody').innerHTML = `<span style="color:var(--mut)">${themes.length ? ovBlurb('ovThematic') : ovBlurb('ovThematicEmpty')} ${ovBlurb('ovThematicRelease')}</span>`;
+    $('#docBody').innerHTML = `<span class="ovNote">${themes.length ? ovBlurb('ovThematic') : ovBlurb('ovThematicEmpty')} ${ovBlurb('ovThematicRelease')}</span>`;
     const sg = $('#docShared');
     if (sg) sg.innerHTML = '';
     $('#docLinks').innerHTML = (themes.length ? `<div class="bl-head">THEMES — ${themes.length}</div>` : '') +
@@ -4616,7 +5432,7 @@ function renderGeneral() {
     $('#docTitle').textContent = `◈ Project Tab: ${t.name}`;
     $('#docMeta').textContent = `${recs.length} tags · ${grounded} grounded bodies · click a tag to make it the center`;
     $('#docTags').innerHTML = '';
-    $('#docBody').innerHTML = `<span style="color:var(--mut)">${ovBlurb('ovTags')}</span>`;
+    $('#docBody').innerHTML = `<span class="ovNote">${ovBlurb('ovTags')}</span>`;
     $('#docLinks').innerHTML = `<div class="bl-head">TAGS — ${recs.length} <button class="viewall" data-tvexit="1" title="Leave the tags view">Exit tags view</button></div>` +
       [...recs].sort((a, b) => b.members.length - a.members.length || (a.id < b.id ? -1 : 1))
         .map(r => blRow(r.id, '◈', `${esc(r.label)}<span>grounds ${r.members.length} ${r.members.length === 1 ? 'body' : 'bodies'}</span>`, '', r.label)).join('');
@@ -4628,7 +5444,7 @@ function renderGeneral() {
       $('#docTitle').textContent = 'Empty canvas';
       $('#docMeta').innerHTML = '';
       $('#docTags').innerHTML = '';
-      $('#docBody').innerHTML = `<span style="color:var(--mut)">${ovBlurb('ovEmpty')}</span>`;
+      $('#docBody').innerHTML = `<span class="ovNote">${ovBlurb('ovEmpty')}</span>`;
       $('#docLinks').innerHTML = '';
     } else {
       const tethers = uni ? uni.edges.length : 0;
@@ -4636,7 +5452,7 @@ function renderGeneral() {
       $('#docTitle').textContent = `◌ Project Tab: ${t.name}`;
       $('#docMeta').textContent = `${docs.length} bodies · ${tethers} tethers · ${words} words · no active body`;
       $('#docTags').innerHTML = '';
-      $('#docBody').innerHTML = `<span style="color:var(--mut)">${ovBlurb('ovMain')}</span>`;
+      $('#docBody').innerHTML = `<span class="ovNote">${ovBlurb('ovMain')}</span>`;
       const sorted = [...docs].sort((a, b) => (b.words || 0) - (a.words || 0));
       const big = sorted.slice(0, 6);
       const rest = showAllBodies ? sorted.slice(6) : [];
@@ -4702,6 +5518,7 @@ function renderDoc() {
     `<button class="tagpill notesbtn${noteCount(d.id) ? '' : ' note-zero'}" data-notes="${d.id}" title="Notes for this body — one shared notepad (sticky square, this button and the Notes book tab all show the same entries)">${noteCount(d.id) ? NOTE_SVG_FILLED : NOTE_SVG_EMPTY}notes ·${noteCount(d.id)}</button>`;
   $('#docBody').innerHTML = renderBody(d.text, d.images);
   hydrateImages($('#docBody'), d.images);
+  hydrateMedia($('#docBody'), d);
   try { markManualSpots(d); } catch {} // persistent gold markers on manual-tag spots
   try { markNoteSpots(d); } catch {} // sent highlights stay marked while their note entry lives
   try { applyReaderFind(); } catch {} // in-body find highlights survive re-renders
@@ -4894,6 +5711,111 @@ async function hydrateImages(rootEl, images) {
   }
   for (const [k, u] of imgUrlCache) if (!live.has(k)) { try { URL.revokeObjectURL(u); } catch { /* already gone */ } imgUrlCache.delete(k); }
 }
+// media bodies (.mp4/.mov/.mp3/.wav/.jpg/.png): a native player (or the
+// picture itself) rides below the prose, fed by the original bytes in the
+// originals sidecar (shared across copies by origKey, like shared picture
+// keys). Backup-restored docs without bytes get the same honest placeholder
+// the picture gallery uses.
+const mediaUrlCache = new Map(); // origKey -> objectURL
+async function hydrateMedia(rootEl, d) {
+  if (!rootEl || !d || !mediaKind(d.name, '')) return;
+  const kind = mediaKind(d.name, '');
+  const box = document.createElement('div');
+  box.className = 'mediagal';
+  const cap = document.createElement('div');
+  cap.className = 'media-cap';
+  cap.textContent = 'loading media…';
+  box.appendChild(cap);
+  rootEl.appendChild(box);
+  if (!d.origKey) { cap.textContent = 'media kept on the original device — not in this backup'; return; }
+  try {
+    const rec = await origGet(d.origKey);
+    const blob = rec && rec.blob;
+    if (!blob || !(blob.size > 0)) { cap.textContent = 'media kept on the original device — not in this backup'; return; }
+    if (!vault.byId(d.id)) { box.remove(); return; } // deleted while the bytes were loading — never append a stale player
+    let url = mediaUrlCache.get(d.origKey);
+    if (!url) { url = URL.createObjectURL(blob); mediaUrlCache.set(d.origKey, url); }
+    const el = document.createElement(kind === 'video' ? 'video' : kind === 'audio' ? 'audio' : 'img');
+    if (kind === 'image') {
+      el.alt = d.name || 'image'; el.loading = 'lazy';
+    } else {
+      el.controls = true; el.preload = 'metadata';
+      if (kind === 'video') { try { el.playsInline = true; } catch {} }
+    }
+    el.src = url;
+    el.setAttribute('aria-label', d.name || (kind === 'video' ? 'video' : kind === 'audio' ? 'audio' : 'image'));
+    box.prepend(el);
+    const sz = fmtMediaSize(blob.size);
+    cap.textContent = (d.name || (kind === 'video' ? 'video' : 'audio')) + (sz ? ' · ' + sz : '');
+  } catch {
+    cap.textContent = 'could not load this media';
+  }
+}
+// spreadsheet bodies (.xls/.xlsx/.xlsm/.csv): first-sheet preview table on the
+// carousel's last pane + expander, parsed in-browser (SheetJS, capped), with
+// the original file one click away. Anything else (docs, slides, pdfs) shows
+// its extracted text + pictures; the original stays a download away.
+function sheetKind(name) {
+  const m = String(name || '').toLowerCase().match(/\.([a-z0-9]+)$/);
+  const e = m ? m[1] : '';
+  return (e === 'xls' || e === 'xlsx' || e === 'xlsm' || e === 'csv') ? e : '';
+}
+async function hydrateSheet(rootEl, d) {
+  if (!rootEl || !d || !sheetKind(d.name)) return;
+  const box = document.createElement('div');
+  box.className = 'sheetwrap';
+  const cap = document.createElement('div');
+  cap.className = 'sheet-cap';
+  cap.textContent = 'loading spreadsheet…';
+  box.appendChild(cap);
+  rootEl.appendChild(box);
+  if (!d.origKey) { cap.textContent = 'spreadsheet kept on the original device — not in this backup'; return; }
+  try {
+    const rec = await origGet(d.origKey);
+    const blob = rec && rec.blob;
+    if (!blob || !(blob.size > 0)) { cap.textContent = 'spreadsheet kept on the original device — not in this backup'; return; }
+    if (!vault.byId(d.id)) { box.remove(); return; } // deleted while loading
+    const wide = blob.size > 15 * 1048576;
+    let note = '';
+    if (!wide) {
+      try {
+        const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+        const wb = sheetKind(d.name) === 'csv'
+          ? XLSX.read(await blob.text(), { type: 'string', sheetRows: 60 })
+          : XLSX.read(await blob.arrayBuffer(), { type: 'array', sheetRows: 60 });
+        const wsName = wb.SheetNames[0];
+        const rows = wsName != null ? XLSX.utils.sheet_to_json(wb.Sheets[wsName], { header: 1, raw: true, blankrows: false }) : [];
+        if (rows.length) {
+          const widths = rows.map(r => r.length);
+          const maxC = Math.min(20, Math.max.apply(null, widths));
+          const table = document.createElement('table');
+          table.className = 'sheetgrid';
+          rows.slice(0, 50).forEach((r, ri) => {
+            const tr = document.createElement('tr');
+            for (let c = 0; c < maxC; c++) {
+              const cell = document.createElement(ri === 0 ? 'th' : 'td');
+              const v = r[c];
+              cell.textContent = (v == null || v === '') ? '' : (typeof v === 'number' ? String(Math.round(v * 100) / 100) : String(v));
+              tr.appendChild(cell);
+            }
+            table.appendChild(tr);
+          });
+          box.appendChild(table);
+          note = (wsName || 'Sheet1') + ' · ' + rows.length + ' rows' + (rows.length > 50 ? ' (first 50 shown)' : '') + (Math.max.apply(null, widths) > maxC ? ' · first ' + maxC + ' columns' : '');
+        }
+      } catch { /* preview failed — download row below still helps */ }
+    }
+    if (!note) note = wide ? 'spreadsheet too large to preview (' + fmtMediaSize(blob.size) + ')' : 'no readable rows in the first sheet';
+    cap.textContent = note;
+    let url = mediaUrlCache.get(d.origKey);
+    if (!url) { url = URL.createObjectURL(blob); mediaUrlCache.set(d.origKey, url); }
+    const dl = document.createElement('a');
+    dl.href = url; dl.download = d.name || 'spreadsheet';
+    dl.className = 'sheet-dl';
+    dl.textContent = '⤓ Download original (' + (d.name || 'file') + (fmtMediaSize(blob.size) ? ' · ' + fmtMediaSize(blob.size) : '') + ')';
+    box.appendChild(dl);
+  } catch { cap.textContent = 'could not load this spreadsheet'; }
+}
 // drop picture bytes nobody references anymore. Copies share keys, so scan
 // every open canvas first.
 async function purgeImages() {
@@ -4915,8 +5837,8 @@ async function purgeImages() {
 
 // ---------- intake: real folder select + files + drop ----------
 const OFFICE_MSG = 'Office libraries failed to load from the app bundle (reinstall may be needed).';
-const INTAKE_RE = /\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?)$/i;
-const INTAKE_LABEL = '.md / .txt / .csv / .pdf / .docx / .xlsx / .pptx';
+const INTAKE_RE = /\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?|mp4|mov|mp3|wav|jpe?g|png)$/i;
+const INTAKE_LABEL = '.md / .txt / .csv / .pdf / .docx / .xlsx / .pptx / .mp4 / .mov / .mp3 / .wav / .jpg / .png';
 function cleanName(f) {
   let n = (f && f.name) || '';
   if (!n && f && f.webkitRelativePath) n = String(f.webkitRelativePath).split('/').pop() || '';
@@ -4930,7 +5852,7 @@ function extOf(name) {
   return m ? '.' + m[1] : '(no extension)';
 }
 // original-file-type badge key from a doc's stored filename: pdf / word /
-// txt / ppt / xls (anything else gets no badge).
+// txt / ppt / xls / vid / aud (anything else gets no badge).
 function fileTypeKey(name) {
   const m = String(name || '').toLowerCase().match(/\.([a-z0-9]+)$/);
   const e = m ? m[1] : '';
@@ -4939,9 +5861,12 @@ function fileTypeKey(name) {
   if (e === 'txt' || e === 'md' || e === 'markdown' || e === 'csv') return 'txt';
   if (e === 'ppt' || e === 'pptx') return 'ppt';
   if (e === 'xls' || e === 'xlsx') return 'xls';
+  if (e === 'mp4' || e === 'mov') return 'vid';
+  if (e === 'mp3' || e === 'wav') return 'aud';
+  if (e === 'jpg' || e === 'jpeg' || e === 'png') return 'img';
   return '';
 }
-const FILE_TYPE_LABEL = { pdf: 'PDF', word: 'WORD', txt: 'TXT', ppt: 'PPT', xls: 'XLS' };
+const FILE_TYPE_LABEL = { pdf: 'PDF', word: 'WORD', txt: 'TXT', ppt: 'PPT', xls: 'XLS', vid: 'VID', aud: 'AUD', img: 'IMG' };
 function intakeAllowed(f) {
   const nm = cleanName(f);
   if (INTAKE_RE.test(nm)) return true;
@@ -4952,10 +5877,19 @@ function intakeAllowed(f) {
   if (ty.includes('presentationml') || ty === 'application/vnd.ms-powerpoint') return true;
   if (ty === 'application/pdf') return true;
   if (ty.indexOf('text/') === 0) return true;
+  if (ty.indexOf('video/') === 0) return true;
+  if (ty.indexOf('audio/') === 0) return true;
+  if (ty === 'image/jpeg' || ty === 'image/png') return true;
   return false;
 }
 async function readFileAsText(f) {
   const nm = cleanName(f);
+  // video + audio bodies: no transcript is extracted — the reader plays the
+  // file itself (bytes live in the originals sidecar). The text below is a
+  // plain-language manifest so filename words, tags and notes still tether,
+  // weigh and search the body like any other document.
+  const mkind = mediaKind(nm, (f && f.type) || '');
+  if (mkind) return await mediaDocText(f, nm, mkind);
   if (/\.pdf$/i.test(nm)) {
     try {
       const pdfjs = await import('./vendor/pdf.mjs');
@@ -5085,6 +6019,84 @@ async function readFileAsText(f) {
   if (/\.doc$/i.test(nm)) throw new Error('Legacy .doc — re-save it as .docx in Word, then import that.');
   if (/\.ppt$/i.test(nm)) throw new Error('Legacy .ppt — re-save it as .pptx in PowerPoint, then import that.');
   return await f.text();
+}
+
+// ---------- video + audio bodies (.mp4/.mov/.mp3/.wav) ----------
+// Extension (or MIME fallback) decides the player; anything else is not media.
+function mediaKind(name, mime) {
+  const m = String(name || '').toLowerCase().match(/\.([a-z0-9]+)$/);
+  const e = m ? m[1] : '';
+  if (e === 'mp4' || e === 'mov') return 'video';
+  if (e === 'mp3' || e === 'wav') return 'audio';
+  if (e === 'jpg' || e === 'jpeg' || e === 'png') return 'image';
+  const t = String(mime || '').toLowerCase().split(';')[0].trim();
+  if (t.indexOf('video/') === 0) return 'video';
+  if (t.indexOf('audio/') === 0) return 'audio';
+  if (t === 'image/jpeg' || t === 'image/png') return 'image';
+  return '';
+}
+function fmtMediaSize(n) {
+  if (!(n > 0)) return '';
+  if (n >= 1048576) return (Math.round(n / 104857.6) / 10) + ' MB';
+  if (n >= 1024) return Math.max(1, Math.round(n / 1024)) + ' KB';
+  return n + ' bytes';
+}
+function fmtMediaDur(s) {
+  if (!(s > 0) || !isFinite(s)) return '';
+  s = Math.round(s);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  const mm = h ? String(m).padStart(2, '0') : String(m), ss = String(r).padStart(2, '0');
+  return (h ? h + ':' : '') + mm + ':' + ss;
+}
+// Best-effort metadata probe (duration, video dimensions) off a throwaway
+// element. Codecs the browser can't play (some .mov) never resolve — the
+// manifest then reads "length unknown" and the import still succeeds.
+function probeMedia(f, kind) {
+  return new Promise((resolve) => {
+    let url = null;
+    try { url = URL.createObjectURL(f); } catch { resolve(null); return; }
+    const done = (info) => { try { URL.revokeObjectURL(url); } catch {} resolve(info || null); };
+    try {
+      const el = document.createElement(kind === 'video' ? 'video' : 'audio');
+      el.preload = 'metadata';
+      try { el.muted = true; } catch {}
+      const timer = setTimeout(() => done(null), 6000);
+      el.onloadedmetadata = () => { clearTimeout(timer); done({ dur: el.duration, w: el.videoWidth || 0, h: el.videoHeight || 0 }); };
+      el.onerror = () => { clearTimeout(timer); done(null); };
+      el.src = url;
+    } catch { done(null); }
+  });
+}
+async function mediaDocText(f, nm, kind) {
+  const disp = String(nm || 'untitled');
+  const ext = (disp.match(/\.([a-z0-9]+)$/i) || [])[1] || '';
+  if (kind === 'image') {
+    // standalone photo body: the picture shows below; its readable text
+    // joins through the same OCR pipeline embedded pictures use.
+    const fmt = /png$/i.test(ext) ? 'PNG' : 'JPEG';
+    let dims = '';
+    try {
+      const bmp = await createImageBitmap(f);
+      if (bmp && bmp.width > 0 && bmp.height > 0) dims = bmp.width + '×' + bmp.height;
+      try { bmp.close(); } catch {}
+    } catch {}
+    const bits = [fmtMediaSize(f && f.size), dims].filter(Boolean).join(' · ') || 'size unknown';
+    return `Image file "${disp}" (${fmt} image · ${bits}). The picture is shown below — its readable text joins in when the reader can make it out. Filename words, tags and notes still tether, weigh and search this body; the body's menu downloads the original file.`;
+  }
+  const typeName = ext ? ext.toUpperCase() + ' ' + kind : kind;
+  let probe = null;
+  try { probe = await probeMedia(f, kind); } catch { probe = null; }
+  const bits = [];
+  const sz = fmtMediaSize(f && f.size);
+  if (sz) bits.push(sz);
+  const du = probe ? fmtMediaDur(probe.dur) : '';
+  if (du) bits.push(du);
+  else bits.push('length unknown');
+  if (kind === 'video' && probe && probe.w > 0 && probe.h > 0) bits.push(probe.w + '×' + probe.h);
+  const noun = kind === 'video' ? 'Footage' : 'Recording';
+  return `${kind === 'video' ? 'Video' : 'Audio'} file "${disp}" (${typeName} · ${bits.join(' · ')}). ` +
+    `${noun} itself is not transcribed — filename words, tags and notes still tether, weigh and search this body. ` +
+    `Press play in the reader to ${kind === 'video' ? 'watch' : 'listen'} here; the body's menu downloads the original file.`;
 }
 
 // ---------- embedded images: Word / PowerPoint / PDF / sheets ----------
@@ -5515,6 +6527,14 @@ async function ingestFiles(files, ctx) {
           if (!(fit.w > 0 && fit.h > 0 && fit.w * fit.h < OCR_MIN_AREA)) ocrPics.push({ blob: fit.blob, cap: pic.cap || 'image' });
         }
       } catch (e) { console.warn('storing images failed for ' + cleanName(f) + ' — text still imports', (e && e.message) || e); imgMeta = []; ocrPics = []; }
+      // standalone photo bodies (.jpg/.png): the file itself is the picture —
+      // run it through the same OCR pipeline so photographed text counts.
+      if (!ocrPics.length && /\.(jpe?g|png)$/i.test(cleanName(f))) {
+        try {
+          const fit = await downscaleImage(f);
+          if (fit.blob && fit.blob.size > 0) ocrPics.push({ blob: fit.blob, cap: cleanName(f) });
+        } catch (e) { console.warn('photo OCR skipped for ' + cleanName(f) + ' — manifest still imports', (e && e.message) || e); }
+      }
       imgTotal += imgMeta.length;
       // read the words inside the pictures so they count: high-confidence OCR
       // text joins the doc in a marked section (words/tags/search/tethers —
@@ -5736,6 +6756,8 @@ function loop() {
       if (viewNotesSun && activeId && vault.byId(activeId) && !noteMarks.has(activeId)) noteMarks.set(activeId, 'empty');
     }
     ren.selId = canvasHiId || activeId; // the MAIN pill's canvas-only highlight wins while it stands; otherwise gold follows the reader's selection
+    try { syncMainTabBg(); } catch {} // MAIN folder tab mimics the canvas shade live (slider drags, mode flips, restores)
+    try { syncInkContrast(); } catch {} // find-box + empty-view ink tracks the layered pane color for contrast
     try { syncTagHi(); } catch {} // Tags view: gild every tag grounding the shown doc
     try {
       // intake landings halo their situating themes/tags in any lens view
@@ -5806,6 +6828,7 @@ async function boot() {
   cv.style.touchAction = 'none'; // single-finger drag must reach us on touch screens
   let downAt = 0, moved = false, lx = 0, ly = 0, downX = 0, downY = 0;
   let dragMode = null, downNode = null; // 'pan' | 'rotate' | 'select'
+  let camAutoTimer = 0; // gyre-resume handle: cleared on every fresh press so a stale 6s timer can never re-enable the drift mid-drag
   // marquee box-select rectangle (plain fixed div = pixel-crisp 1px edges)
   // with a DELETE caption living INSIDE the box: the box stays click-through
   // so canvas drags can still start inside it, while the caption takes clicks.
@@ -5883,7 +6906,8 @@ async function boot() {
       }
       dragMode = null; downNode = null;
       cv.style.cursor = 'grab';
-      setTimeout(() => { ren.cam.auto = true; }, 6000); // resume the slow gyre
+      try { clearTimeout(camAutoTimer); } catch {}
+      camAutoTimer = setTimeout(() => { ren.cam.auto = true; }, 6000); // resume the slow gyre
       return;
     }
     const quick = performance.now() - downAt < 500;
@@ -5928,10 +6952,12 @@ async function boot() {
     }
     dragMode = null; downNode = null;
     cv.style.cursor = 'grab';
-    setTimeout(() => { ren.cam.auto = true; }, 6000); // resume the slow gyre
+    try { clearTimeout(camAutoTimer); } catch {}
+    camAutoTimer = setTimeout(() => { ren.cam.auto = true; }, 6000); // resume the slow gyre
   };
   cv.addEventListener('pointerdown', (e) => {
     if (e.isPrimary === false) return;
+    try { clearTimeout(camAutoTimer); } catch {} // fresh gesture owns the camera: kill any pending gyre resume
     if (srcStickyId) closeSrcPop(); // pinned preview: any fresh canvas press dismisses it
     srcSuppress = false; // stale menu-swallows die on the next press
     if (e.button === 2 && uni) {
@@ -6182,19 +7208,24 @@ async function boot() {
     }
     const op = e.target.closest('[data-openproj]');
     if (op) { e.stopPropagation(); toggleOpenProjMenu(); return; }
-    // view-modes strip under the top tabs: Main / Thematic / Tag
+    // view-modes strip under the top tabs: Main / Thematic / Tag.
+    // Reverse-linked with Locate-in-document: while the reader's goto cluster
+    // is live, a top-pill tab performs the same locate its goto counterpart
+    // would (and takes the red pick), so the two rows stay connected either
+    // way. With no doc parked, it's the plain view switch as before.
     const vm = e.target.closest('[data-vm]');
-    if (vm) { e.stopPropagation(); goViewMode(vm.dataset.vm); return; }
-    const stt = e.target.closest('[data-statstoggle]');
-    if (stt) {
+    if (vm) {
       e.stopPropagation();
-      statsCollapsed = !statsCollapsed;
-      saveUi();
-      const bar = stt.closest('#tabBar');
-      const row = bar ? bar.querySelector('.statrow') : null;
-      if (row) row.classList.toggle('collapsed', statsCollapsed);
-      stt.textContent = statsCollapsed ? '+' : '–';
-      stt.title = statsCollapsed ? 'Show the verse stats' : 'Collapse the verse stats';
+      const mode = vm.dataset.vm;
+      const gs = $('#gotoSide');
+      const gid = (typeof shownId !== 'undefined') ? shownId : null;
+      if (gid && gs && !gs.hidden && (mode === 'main' || mode === 'thematic' || mode === 'tag')) {
+        const view = mode === 'tag' ? 'tags' : mode;
+        gotoViewFor(gid, view);
+        try { gotoPicked = { docId: gid, view }; applyGotoPicked(); } catch {}
+      } else {
+        goViewMode(mode);
+      }
       return;
     }
     // projects-pill collapse: everything goes except the view-modes row
@@ -6613,7 +7644,19 @@ async function boot() {
     if (!lp) return;
     const on = lp.classList.toggle('tilted');
     $('#paneTiltBtn').setAttribute('aria-pressed', on ? 'true' : 'false');
+    try { syncPinTabs(); } catch {} // swing the pin tabs onto the same 3D plane…
+    clearTimeout(lp._tiltT);
+    lp._tiltT = setTimeout(() => { try { syncPinTabs(); } catch {} }, 480); // …then re-seat once the .45s swing settles
   };
+  { // pin tabs re-seat exactly when the swing ends (timeout above is only the fallback)
+    const lp0 = $('#leftPanel');
+    if (lp0 && !lp0.dataset.tiltSeated) {
+      lp0.dataset.tiltSeated = '1';
+      lp0.addEventListener('transitionend', (e) => {
+        if (e && e.propertyName === 'transform') { try { syncPinTabs(); } catch {} }
+      });
+    }
+  }
   // tags-merge drag and drop: pills are draggable; dropping one pill onto
   // another merges the dragged tag into the receiving (primary) tag. The drop
   // target glows while hovered; dropping asks once, then rewrites every body.
@@ -6729,7 +7772,7 @@ async function boot() {
   } catch {}
   $('#fileBtn').onclick = async () => {
     if (!vault.tabs.length) { await noProjectPopup(); return; }
-    setLog('Waiting for file selection…'); toast('Choose .docx/.pdf/.md files…'); try { $('#fileInput').click(); } catch (e) { setLog('Picker blocked by the browser — try drag-drop instead'); }
+    setLog('Waiting for file selection…'); toast('Choose files to import…'); try { $('#fileInput').click(); } catch (e) { setLog('Picker blocked by the browser — try drag-drop instead'); }
   };
   $('#fileInput').onchange = (e) => {
     const fs = [...(e.target.files || [])]; e.target.value = '';
@@ -6748,6 +7791,8 @@ async function boot() {
   document.addEventListener('keydown', (e) => {
     // global "/" focuses search — but never when typing in a field (help editor, rename prompt inputs, etc.)
     if (e.key === '/' && document.activeElement !== inp && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')) { e.preventDefault(); inp.focus(); }
+    // carousel pages: ←/→ step panes while it stands (never inside a field)
+    if (carOpen && !carZoomOpen && (e.key === 'ArrowRight' || e.key === 'ArrowLeft') && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')) { e.preventDefault(); carStep(e.key === 'ArrowRight' ? 1 : -1); }
   });
   // drag & drop files anywhere — without this, dropping a file navigates the
   // whole page away to the PDF (looks like "nothing happened")
@@ -7409,7 +8454,7 @@ async function boot() {
   document.addEventListener('click', (e) => { if (!ctx.hidden && !ctx.contains(e.target)) closeCtx(); });
   document.addEventListener('click', (e) => { const m = $('#openProjMenu'); if (m && !m.hidden && !m.contains(e.target) && !e.target.closest('[data-openproj]')) m.hidden = true; });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { closeCtx(); hideOpenProjMenu(); selSet.clear(); hideBoxSel(); closeSrcPop(); $('#propsModal').hidden = true; try { $('#imgLight').hidden = true; } catch {} closeHelpEditor(); closeNoteEditor(); closeNotePop(); if (notesOpen) closeNotesPane(); if (pinOpenWord != null) setPin(null); const w2 = document.querySelector('#docShared'); document.querySelectorAll('.help-open').forEach(w => shutHelpPop(w)) }
+    if (e.key === 'Escape') { closeCtx(); hideOpenProjMenu(); selSet.clear(); hideBoxSel(); closeSrcPop(); if (!closeCarZoom()) closeCarousel(); $('#propsModal').hidden = true; try { $('#imgLight').hidden = true; } catch {} closeHelpEditor(); closeNoteEditor(); closeNotePop(); if (notesOpen) closeNotesPane(); if (pinOpenWord != null) setPin(null); const w2 = document.querySelector('#docShared'); document.querySelectorAll('.help-open').forEach(w => shutHelpPop(w)) }
     // box-selection shortcut: Delete/Backspace removes the shift-dragged
     // bodies outright (same confirm as the right-click menu)
     if ((e.key === 'Delete' || e.key === 'Backspace') && selSet.size && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')) {
@@ -7474,11 +8519,19 @@ async function boot() {
     toast(hoverPrev ? 'Hover highlight on — hovering a body lights up its row' : 'Hover highlight off');
   };
   syncHv();
+  // document carousel: curved glass coverflow of the Active body (reader-pane trigger)
+  try { wireCarousel(); } catch { /* overlay wiring waits for boot */ }
+  const carBtnEl = $('#carPaneBtn');
+  if (carBtnEl) carBtnEl.onclick = () => { if (carOpen) closeCarousel(); else openCarousel(); };
+  const origBtnEl = $('#origPaneBtn');
+  if (origBtnEl) origBtnEl.onclick = () => { openCarZoom(carOpen ? (carIdx - (carMediaFirst ? 1 : 0)) : -1); };
+  try { syncCarBtn(); } catch {}
   // body texture overlays: slider = opacity, button = on/off toggle
   ren.overlayAlpha = ovAlpha;
   ren.simpleOrb = simpleOrb;
   ren.stripOverlays = simpleOrb2;
   ren.triOrb = triOrb;
+  ren.docIcon = docIcon;
   fetch('src/overlays.json').then(r => r.json()).then(list => ren.loadOverlays(list)).catch(() => {});
   const ovSlider = $('#ovAlpha'), ovLbl = $('#ovMul'), ovBtnEl = $('#ovBtn');
   ovSlider.value = Math.round(ovAlpha * 100);
@@ -7715,7 +8768,7 @@ async function boot() {
   } catch {}
   // column collapse arrows (persisted, collapse = shrink up to a top tab)
   document.querySelectorAll('[data-collapse]').forEach(b => {
-    b.onclick = (e) => { e.stopPropagation(); setCollapsed(b.dataset.collapse, !document.getElementById(b.dataset.collapse)?.classList.contains('collapsed')); try { syncFindBar(); } catch {} try { syncTopBtn(); } catch {} try { syncNotesTab(); } catch {} try { syncTabBarZ(); } catch {} };
+    b.onclick = (e) => { e.stopPropagation(); setCollapsed(b.dataset.collapse, !document.getElementById(b.dataset.collapse)?.classList.contains('collapsed')); try { syncFindBar(); } catch {} try { syncTopBtn(); } catch {} try { syncNotesTab(); } catch {} try { sizeDocPanel(); } catch {} try { syncTabBarZ(); } catch {} };
   });
   if (leftCollapsed) setCollapsed('leftPanel', true);
   if (docCollapsed) setCollapsed('docPanel', true);
@@ -7744,7 +8797,11 @@ async function boot() {
     applyDocWidth();
     wireResize(document.getElementById('docResize'), -1); // left edge: drag left = widen
     { const dtb = document.getElementById('docTiltBtn'); if (dtb && !dtb.dataset.wired) { dtb.dataset.wired = '1'; dtb.onclick = () => { const p = document.getElementById('docPanel'); if (p) setDocTilt(!p.classList.contains('tiltedR')); }; } }
-    window.addEventListener('resize', () => { applyDocWidth(); try { placeTabBar(); } catch {} try { placeFindSide(); } catch {} try { placeTopBtn(); } catch {} try { syncNotesTab(); } catch {} try { if (notesOpen) applyNotesGeom(); } catch {} });
+    window.addEventListener('resize', () => { applyDocWidth(); try { placeTabBar(); } catch {} try { if (typeof autoDist !== 'undefined' && autoDist) applyMiniGeom(); } catch {} try { placeFindSide(); } catch {} try { placeTopBtn(); } catch {} try { syncNotesTab(); } catch {} try { if (notesOpen) applyNotesGeom(); } catch {} });
+    // late layout settlers (webfonts swap row metrics after first paint) —
+    // re-park the reader's bottom edge once they're in, or the pill-top read bakes in early
+    try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { try { sizeDocPanel(); } catch {} try { placeTabBar(); } catch {} }); } catch {}
+    window.addEventListener('load', () => { try { sizeDocPanel(); } catch {} try { placeTabBar(); } catch {} });
   } catch {}
   // verse minimap: header-drags to move, corner-drags to resize (both persist)
   try {
@@ -7797,6 +8854,12 @@ async function boot() {
     }
     window.addEventListener('resize', () => { if (autoDist) applyMiniGeom(); });
     syncMiniMap();
+  } catch {}
+  // pills: hand-drag either by any blank background to move it (fixed size,
+  // never stretchable; positions persist; double-click resets to the dock)
+  try {
+    wirePillDrag(document.getElementById('tabBar'), (x, y) => { if (x == null || y == null) { tabX = null; tabY = null; try { placeTabBar(); } catch {} return; } const bar = document.getElementById('tabBar'); if (tabY == null && bar) tabY = Math.round(bar.getBoundingClientRect().top); tabX = x; applyTabGeom(); }); // TOP pill: horizontal-only — height stays where docking put it
+    wirePillDrag(document.getElementById('hintBar'), (x, y) => { if (x == null || y == null) { hintX = null; hintY = null; try { placeTabBar(); } catch {} return; } const hb = document.getElementById('hintBar'); if (hintY == null && hb) hintY = Math.round(hb.getBoundingClientRect().top); hintX = x; applyHintGeom(); }); // BOTTOM pill: horizontal-only too — height stays where docking put it
   } catch {}
   // tags pop-out: header-drags to move the glass card anywhere (persists; double-click re-centers)
   try {
@@ -7989,6 +9052,7 @@ async function boot() {
     tipsCollapsed = !tipsCollapsed;
     saveUi();
     syncTipsBtn();
+    try { placeTabBar(); } catch {} // tips change the bottom pill's width: re-clamp the top pill to its right edge
     toast(tipsCollapsed ? 'Tips hidden — buttons stay' : 'Tips shown');
   };
   syncTipsBtn();
@@ -8041,12 +9105,25 @@ async function boot() {
   const triOrbBtn = $('#triOrbBtn');
   if (triOrbBtn) triOrbBtn.onclick = () => {
     triOrb = !triOrb;
+    if (triOrb) docIcon = false; // one shape at a time
     ren.triOrb = triOrb;
-    syncTriOrbBtn(); saveUi();
+    ren.docIcon = docIcon;
+    syncTriOrbBtn(); syncDocIconBtn(); saveUi();
     if (autoDist) drawMiniMap(); // verse map mirrors the new body shape at once
     toast(triOrb ? 'Triangles on — upside-down ▼ in orb colors and sizes' : 'Orbs restored');
   };
   syncTriOrbBtn();
+  const docIconBtn = $('#docIconBtn');
+  if (docIconBtn) docIconBtn.onclick = () => {
+    docIcon = !docIcon;
+    if (docIcon) triOrb = false; // one shape at a time
+    ren.docIcon = docIcon;
+    ren.triOrb = triOrb;
+    syncDocIconBtn(); syncTriOrbBtn(); saveUi();
+    if (autoDist) drawMiniMap(); // verse map mirrors the new body shape at once
+    toast(docIcon ? 'Document icons on — plain white pages, same sizes and selection' : 'Orbs restored');
+  };
+  syncDocIconBtn();
   // (Thematic now lives in the Universe view modes row — same docs + same
   // physics, recomposed by themes/tags. From the general state it distills
   // the WHOLE visidocsverse; leaving the view always drops the whole view.)
@@ -8440,13 +9517,13 @@ async function boot() {
       activeTabId: vault.activeTabId,
       vault: vault.docs.map(d => ({ ...d, links: [...(d.links || [])], tags: [...(d.tags || [])], noteLog: Array.isArray(d.noteLog) && d.noteLog.length ? cloneNoteLog(d.noteLog) : undefined })), // legacy compat: active canvas docs
       settings: {
-        rotOn, rotMul, speedMul: rotMul, autoDist, simpleOrb, simpleOrb2, triOrb,
-        miniX, miniY, miniW, miniH, miniFolded, tvpX, tvpY, tvpW, tvpH, glossX, glossY, glossW, glossH, glossOpen, glossDockV1: true,
+        rotOn, rotMul, speedMul: rotMul, autoDist, simpleOrb, simpleOrb2, triOrb, docIcon,
+        miniX, miniY, miniW, miniH, miniFolded, tvpX, tvpY, tvpW, tvpH, tabX, tabY, hintX, hintY, vw: window.innerWidth, vh: window.innerHeight, pillMinW, clusterW, glossX, glossY, glossW, glossH, glossOpen, glossDockV1: true,
         ovAlpha, ovLast, lbScale, lbLast, sizeScale, sizeLast, spinOn, spinSpeed, compressScale, compressLast, bgShade,
         backdrop, backdropAlpha, backdropLast, paneAlpha, paneLast,
         glazeLeft, glazeDoc, glazeCloud, glazeMini, glazeGloss, glazeTabBar, glazeHintBar,
         leftCollapsed, docCollapsed, docWidth, hoverPrev, hideUngr, statsCollapsed, pillCollapsed, tipsCollapsed, pinnedTerms: [...pinnedTerms], lensThematic, lensTags,
-        viewNotesAll, viewNotesSun, notesOpen, notesAuto,
+        viewNotesAll, viewNotesSun, notesOpen, notesAuto, carZoom,
         topicSim: vault.topicSim, topicShared: vault.topicShared,
         topicMaxDf: vault.topicMaxDf, topicTopK: vault.topicTopK,
         topicIdfFloor: vault.topicIdfFloor,
@@ -8607,6 +9684,7 @@ async function boot() {
       if (glossOpen) { glossX = null; glossY = null; } // restored-open panes restart at the dock
       if (typeof s.docWidth === 'number' && s.docWidth >= 260 && s.docWidth <= 1200) docWidth = s.docWidth;
       else if (s.docWidth === 0) docWidth = 0;
+      fitPaneWidthToScreen(s.vw); // backup from another display: re-fit the reader width here
       if (s.leftCollapsed === true) leftCollapsed = true; else if (s.leftCollapsed === false) leftCollapsed = false;
       if (s.docCollapsed === true) docCollapsed = true; else if (s.docCollapsed === false) docCollapsed = false;
       if (s.hoverPrev === true) hoverPrev = true; else if (s.hoverPrev === false) hoverPrev = false;
@@ -8614,10 +9692,16 @@ async function boot() {
       if (s.statsCollapsed === true) statsCollapsed = true; else if (s.statsCollapsed === false) statsCollapsed = false;
       if (s.pillCollapsed === true) pillCollapsed = true; else if (s.pillCollapsed === false) pillCollapsed = false;
       if (s.tipsCollapsed === true) tipsCollapsed = true; else if (s.tipsCollapsed === false) tipsCollapsed = false;
-      if (Array.isArray(s.pinnedTerms)) pinnedTerms = s.pinnedTerms.filter(w => typeof w === 'string' && w);
+      if (typeof s.tabX === 'number' && typeof s.tabY === 'number') { tabX = s.tabX; tabY = s.tabY; }
+      if (typeof s.hintX === 'number' && typeof s.hintY === 'number') { hintX = s.hintX; hintY = s.hintY; }
+      fitPillsToScreen(s.vw, s.vh); // backup from another screen: land proportionally here
+      if (typeof s.pillMinW === 'number' && s.pillMinW >= 240 && s.pillMinW <= 4000) pillMinW = s.pillMinW;
+      if (typeof s.clusterW === 'number' && s.clusterW >= 80 && s.clusterW <= 4000) clusterW = s.clusterW;
+      if (Array.isArray(s.pinnedTerms)) pinnedTerms = s.pinnedTerms.filter(w => typeof w === 'string' && w).slice(0, MAX_PINS);
       if (s.viewNotesAll === false) viewNotesAll = false; else if (s.viewNotesAll === true) viewNotesAll = true;
       if (s.viewNotesSun === false) viewNotesSun = false; else if (s.viewNotesSun === true) viewNotesSun = true;
       if (s.viewNotes === false) { viewNotesAll = false; viewNotesSun = false; }
+      if (typeof s.carZoom === 'number' && s.carZoom >= 100 && s.carZoom <= 145) carZoom = Math.round(s.carZoom);
       if (s.notesAuto === false) notesAuto = false; else if (s.notesAuto === true) notesAuto = true;
       if (s.notesOpen === true) notesOpen = true; else if (s.notesOpen === false) notesOpen = false;
       for (const k of ['topicSim', 'topicShared', 'topicMaxDf', 'topicTopK', 'topicIdfFloor']) {

@@ -3,6 +3,13 @@
 Web adaptation of the Tauri spec: no Rust/React — vanilla JS + Canvas 2D with a
 custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.v1`).
 
+## Standing user rules
+- Glossary auto-update: every change that adds, renames, moves, or removes a
+  user-facing control, label, or behavior must also update the in-app glossary
+  (`#glossBody` in `index.html`) in the same edit — definitions, control
+  lookalikes (`.gi` icons), and term coverage. Never leave the glossary
+  describing an older UI.
+
 ## Files
 - `index.html` — shell + CSS + boot (`src/app.js`)
 - `src/vault.js` — local doc store, intake, mass = words + refs, links/tags parse
@@ -34,7 +41,8 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
 
 ## Intake formats
 - `.md/.markdown/.txt/.csv` plain text · `.pdf` (pdf.js) · `.docx` (mammoth) ·
-  `.xlsx/.xls` (SheetJS, per-sheet CSV) · `.pptx` (slide text) · legacy
+  `.xlsx/.xls` (SheetJS, per-sheet CSV) · `.pptx` (slide text) · video
+  `.mp4/.mov` · audio `.mp3/.wav` · photos `.jpg/.png` (read by OCR) · legacy
   `.doc/.ppt` rejected with a re-save message · exact-duplicate text skipped.
   All format engines are vendored in `src/vendor/` (pdf.js + worker, mammoth,
   SheetJS, fflate, tesseract + English data) — intake works fully offline.
@@ -64,6 +72,16 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   selection, release, lens/tab/Return move, or upload. In Main the first file
   still crowns as the sun, but every uploaded file halos on the canvas and
   stays gold in the inventory list (Back returns to it).
+- Video/audio bodies (`.mp4`/`.mov`/`.mp3`/`.wav`) and photo bodies
+  (`.jpg`/`.png`): no transcript is extracted — the reader shows the file
+  itself below its manifest (a native `<video>`/`<audio>` player, or the
+  picture; all fed by the kept original bytes), and the body's menu downloads
+  the original. The manifest names the file, format, size, length and
+  (photo/video) dimensions, so filename words, tags and notes still tether,
+  weigh and search the body; badges read VID (purple) / AUD (teal) / IMG
+  (rose). Standalone photos additionally run through the same OCR pipeline as
+  embedded pictures, so photographed text joins the body under a marked
+  "Pictures' text" section.
 - Originals are kept: each upload's full bytes are filed in the
   `visidocsverse-orig` IndexedDB sidecar (this browser only, >100MB files
   skipped), so the body's menu downloads the genuine original file. Bodies
@@ -159,6 +177,18 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   shrink that column upward into a slim top tab (▼ restores it). Persisted in
   `visidocsverse.ui` and in cloud backups / master files.
 
+## Pills (top and bottom)
+- The top pill (project tabs, Universe view modes, stats) wears a book-tab shape with a gold glowing edge (flat top, rounded bottom corners, mirroring the bottom pill's Tips tab), and the bottom pill
+  (canvas controls + tips) each keep their own natural size — never stretched
+  to match each other. The top pill's right edge never passes the bottom
+  pill's right edge, so the pair always stays vertically aligned on the right:
+  docked, the top pill wraps to the bottom pill's width on their shared left
+  edge; hand-moved, it slides back left instead. Drag either by any blank
+  background to move it (grab hand; buttons and controls are unaffected); the
+  position persists in `visidocsverse.ui` and backups, and the right edge
+  always stays inside the screen. Double-click a pill's background to send it
+  back to the dock beside the left pane. The top pill also never shrinks below its seated width — with zero tabs the ghost cluster itself goes live (red frame) holding a "Create a project" tab plus "add tab" placeholders across the full row, and with projects the live cluster fills past the last tab with the same static frames (click one to add a tab to that cluster; with no projects it starts the first one). No cluster frame ever shrinks: deleting a tab backfills its space with a placeholder, and every cluster shares one fixed frame width. The cluster sits centered in the pill width in a static frame that never stretches sideways; it only grows downward by wrapping.
+
 ## Tethers toggle (bottom pill)
 - ◉ Tethers button in the bottom hint pill: shows/hides the tether lines
   between bodies — bodies themselves always stay put. It drives the same
@@ -205,6 +235,14 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   white under Plain Body) and the same size as the orb it replaces (photo
   overlays clip to the triangle). Combines with any color mode. Persisted in
   `visidocsverse.ui`.
+- ○ "Body to" + document-icon button after Orb to ▼: shape swap — every document
+  and tag body renders as a plain white page icon with a folded corner (gold
+  when focused), ruled with three text lines, area-matched to the orb it replaces; photo textures,
+  gradients and glow stay off while labels, tethers, sticky squares and
+  selection rings stay as they are; while Rotation spins, pages flip edge-on
+  like cards. Theme bodies keep their orbs (only
+  available in MAIN and TAG view modes). Shape-exclusive with Orb to ▼. The verse-map minimap mirrors the pages.
+  Toggling off restores the orbs. Persisted in `visidocsverse.ui`.
 - ○/◉ Fit button first in the pill row: a TOGGLE that frames the bodies actually
   visible screen — recenters pan, dollies out until every current body
   projects inside the visible region plus drift slack (never zooms in on a
@@ -328,24 +366,25 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   while the Tags view stands (TAGS jump or a parked member row), every tag
   grounding that document lights gold together — the jump still seats and pans
   on the first (alphabetical) one, and its toast names it plus how many more.
-- Universe view modes: the discrete row under the top tabs — Main | Thematic | Tag
+- Universe view modes: the discrete row under the top tabs — MAIN, Thematic and Tag alike as manila folder tabs (fill tracks the canvas shade live with gold ink, bases plugged through the pill's bottom edge with gold outlines joined continuous to the pill's; unselected tabs dim)
   as golden pills, each carrying its own "?" explicator (hover/tap to read,
   ✎ to rewrite). Main shows every document body as itself; Thematic redraws the canvas around
   the ideas the documents share; Tag redraws it around the labels on the
-  documents. The live view is highlighted gold. Directly under it, tight
-  against the pill, a stats row reads bodies · tethers · system energy · rim
-  (each ? keeps its editable explanation); – collapses it to a + toggle and
-  back. A ▴ arrow after See Tag Inventory collapses the whole projects pill
-  to just the view-modes row (▾ restores it). All three persist like the
-  other pill settings. See the glossary's Main (Universe) view, thematic
-  view, tags view, and Universe view modes entries.
+  documents. The live view is highlighted gold. A ▴ arrow after See Tag Inventory
+  collapses the whole projects pill to just the view-modes row (▾ restores it);
+  the collapse persists like the other pill settings. See the glossary's Main
+  (Universe) view, thematic view, tags view, and Universe view modes entries.
 - Glossary of Terms: a thin vertical book tab riding the Visi|Docsverse pane's
   right border (gold while open) toggles a tall draggable, resizable
   glass pane docked beside the left panel (always reopens at its dock) — 25+ A–Z in-app definitions (verse, sun, body,
-  mass, backlinks, shared ground, center of gravity, system energy, rim,
+  mass, backlinks, shared ground, center of gravity,
   orbital mechanics, general/active view, thematic tag, delete tag, merge
   tags, rename tag, Main view, thematic view, tags view, view modes) plus a
   side-by-side comparison of the tags view vs the thematic view.
+  Terms for on-screen controls carry miniature lookalikes of the real thing
+  beside the term name — the reader-edge buttons, the Main/Thematic/Tag
+  pills, tag pills with the gold M, the Notes tab, sticky-note squares, and
+  the like — so the definition points at exactly what to press.
   Geometry, visibility, and the glass dot persist like the verse map.
   In the editor preview, every term carries an ✎ edit button — wording is
   personal (kept in this browser's localStorage only) and never rides cloud
@@ -356,7 +395,8 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   own slim book tab stacked under the glossary tab — clicking a pin tab
   opens a small glass pane with just that term (gold tab while open,
   unpin/✕ in the pane header, Esc closes; pins persist like other settings
-  and ride backups).
+  and ride backups). Only two pins fit under the tab — a third pin is
+  refused with a reminder to unpin one first.
 - General state: off-click into empty space releases the sun (◌ Document
   universe view mode: MAIN) — no active body, the canvas center holds gravity, and the
   reader shows a live overview (counts + largest bodies as drill-down rows).
@@ -376,8 +416,8 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   that exact document's text (same rules as the reader's + #tag). Every
   document row also carries a small file-type badge in the title box's
   top-right corner (above the ×): PDF red, WORD blue, TXT grey, PPT orange,
-  XLS green — taken from the document's original filename extension
-  (.doc counts as WORD, .md/.csv as TXT). The title
+  XLS green, VID purple, AUD teal, IMG rose — taken from the document's original filename extension
+  (.doc counts as WORD, .md/.csv as TXT, .mp4/.mov as VID, .mp3/.wav as AUD, .jpg/.png as IMG). The title
   box ONLY parks the document in the pane (gold, sun, camera and even the lens
   stay exactly as they are; kicker reads READING — CANVAS UNCHANGED). Theme/
   tag rows keep the old left dot box instead (it ONLY puts that body on the
@@ -561,7 +601,7 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   files (`tabs[].suppressedTags`), and apply to merged/copied arrivals too.
 
 ## Verse associations (link canvases)
-- The top bar is labeled Active Visi|Docsverse Projects; the first/starting tab is
+- The top bar reads Visi|Docsverse Projects with no open project and Active Visi|Docsverse Projects once the first exists; the first/starting tab is
   the ★ main verse. Right-click any tab for its associations menu: a
   checkable list of every other verse by full name (✓ linked, ○ unlinked,
   ★ main, isolated verses marked). Tapping a verse links or unlinks it —
@@ -585,7 +625,7 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   side panes (never under the left panel, the reader, or their protruding
   Glossary/Notes book tabs), re-centering
   whenever panes collapse, resize or drag. Once the tab rows themselves
-  reach 35% of the screen's pixel height (label, view-mode and stats rows
+  reach 35% of the screen's pixel height (label and view-mode rows
   excluded), new creates are refused with a
   save-and-close prompt instead of taller rows. Linked tabs share uploads, copies, deletes and
   twin lockstep; copies made before an unlink stay untouched wherever they
@@ -623,6 +663,14 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   is written, so the workspace can always be diagnosed and restored.
 
 ## Reader pane
+- Carousel (two-pages button under the reader's stretch arrow): re-reads the Active body as a
+  curved left/right-scrollable coverflow of glass panes floating over the
+  canvas. The reader's text is cloned into at least 3 page panes (3–10 by word
+  count, paragraph-aware; the body's pictures ride the last page in their
+  original format). The center pane sits flat with a gold frame while the sides
+  swing back in 3D; arrows, wheel, drag and ←/→ keys all page, and the header
+  counts pages. Any click outside the panes, ✕ or Esc closes it (the toggle
+  re-opens). A header slider enlarges the panes up to 45% (pane width, text and height scale together; persisted). Double-click a pane (or its ⤢ button — or the jump-to-original icon above the carousel trigger) to open the whole original document over the carousel — full reader format with pictures, own 100–200% zoom (slider or Ctrl+scroll), scrolled to that page; Esc returns. Photo/video/audio originals lead on the first page; extracted text and tagged pictures follow on later pages, and spreadsheets preview as a table with the original one click away.
 - Top of the pane is a SHARED GROUND hover menu (topic-tethered bodies +
   shared terms, up to 12); hover the label to open, tap it on touch, Esc or a
   selection closes it. Explicit [[links]] stay inline below as before.
@@ -668,7 +716,7 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
 ## "?" explicators (editable in the editor, locked on desktop)
 - All twenty helpers are editable: the left-pane Search (? beside the search bar),
   SHARED GROUND (? in the reader pane),
-  mass (? in the doc meta line), system energy + rim (? in the top pill's stats row),
+  mass (? in the doc meta line),
   GROUNDED DOCUMENTS ("BODIES") (? in the tag pane's grounded-members header,
   shared key) + GROUNDED BODIES (? in the theme pane's grounded-members header) +
   UNGROUNDED (? in the theme pane's ungrounded-guests header) + MAIN / THEMATIC /
