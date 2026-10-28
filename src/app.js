@@ -6147,7 +6147,10 @@ async function readFileAsText(f) {
       const pdfjs = await import('./vendor/pdf.mjs');
       const lib = pdfjs.getDocument ? pdfjs : (pdfjs.default || {});
       if (lib?.GlobalWorkerOptions && !lib.GlobalWorkerOptions.workerSrc) {
-        lib.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdf.worker.js', import.meta.url).href;
+        // Page-origin URL (same reason as the OCR worker): the pdf worker
+        // must be same-origin with the page and live, not a possibly stale
+        // cross-origin copy resolved through the module base.
+        lib.GlobalWorkerOptions.workerSrc = new URL('src/vendor/pdf.worker.js', location.href).href;
       }
       const getDocument = lib.getDocument;
       if (!getDocument) throw new Error('PDF engine did not load.');
@@ -6518,7 +6521,7 @@ async function extractPdfImages(buf) {
   const lib = pdfjs.getDocument ? pdfjs : (pdfjs.default || {});
   if (!lib.getDocument) return [];
   if (lib?.GlobalWorkerOptions && !lib.GlobalWorkerOptions.workerSrc) {
-    try { lib.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdf.worker.js', import.meta.url).href; } catch { /* same worker the text path uses */ }
+    try { lib.GlobalWorkerOptions.workerSrc = new URL('src/vendor/pdf.worker.js', location.href).href; } catch { /* same worker the text path uses */ }
   }
   const OPS = lib.OPS || {};
   const IMG_OPS = new Set([OPS.paintImageXObject, OPS.paintInlineImageXObject, OPS.paintJpegXObject, OPS.paintImageMaskXObject].filter(v => typeof v === 'number'));
@@ -6608,17 +6611,32 @@ async function ocrPictures(pics) { // [{blob, cap}] -> [{cap, text}] (high-confi
   const found = [];
   try {
     const { createWorker } = await import('./vendor/tesseract.mjs');
-    // absolute local URLs: the worker resolves its core/lang files against
-    // these, and relative paths would mis-resolve inside the worker
-    const tessBase = new URL('./vendor/tess/', import.meta.url).href;
+    // Absolute, page-origin URLs: the worker resolves its core/lang files
+    // against these, and relative paths would mis-resolve inside the worker.
+    // Page-origin (location.href), NOT import.meta.url: modules resolve
+    // through the bare domain while the page — and every worker — lives on
+    // the generator subdomain, so import.meta URLs are cross-origin
+    // (importScripts flakes with an uncatchable NetworkError banner) and can
+    // serve a stale saved copy. Page-relative URLs are live and same-origin.
+    const tessBase = new URL('src/vendor/tess/', location.href).href;
     // The engine start has no built-in timeout and has parked whole intakes
     // here (status stuck at "reading…"): race it, fail OCR fast on timeout,
     // keep the text import. A late-resolving worker is terminated, never leaked.
     let startTimedOut = false;
     const startP = createWorker('eng', undefined, {
       logger: () => {},
-      // default blob shim: it importScripts()s workerPath below, which must
-      // be an absolute same-origin URL (relative paths mis-resolve inside it)
+      // Swallow the library's uncaught re-throw: on a load-job failure
+      // tesseract rejects the job promise (which we handle below) AND, when
+      // no errorHandler is set, throws the error uncaught out of its
+      // onmessage handler — that uncaught throw is the scary engine banner.
+      // A noop handler keeps load failures on the handled path: OCR is
+      // skipped with a console warning and the app runs on without pictures.
+      errorHandler: () => {},
+      // Direct worker, NO blob shim (workerBlobURL:false): tesseract's
+      // default wraps workerPath in a Blob whose importScripts() intermittently
+      // fails to load under the preview service worker (uncaught NetworkError
+      // banner). A same-origin direct worker loads reliably instead.
+      workerBlobURL: false,
       workerPath: tessBase + 'worker.min.js',
       langPath: tessBase,
       corePath: tessBase,
