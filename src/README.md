@@ -128,8 +128,8 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   leaves the general view; click the body to focus it for real. The highlight
   lingers ~1.4s after the cursor leaves the body, and gliding onto the lit row
   holds it — so you can travel from the orb to the reader pane and click the
-  row to open that exact document. On = ◉, off = ○, same pill-button
-  styling as the rest of the row.
+  row to open that exact document. On/off shows through the tab's .on fill,
+  same pill-button styling as the rest of the row.
   Persisted in `visidocsverse.ui` as hoverPrev, included in cloud backups /
   master files (`settings.hoverPrev`).
 
@@ -140,6 +140,16 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   camera pans only when the pick is off-screen, and only just enough to
   bring it into view; hover only ever lights rows. The physical sun changes
   solely through explicit sun controls.
+- Reader-driven locates glide instead of snapping: picking a document from
+  the reader to find it on the canvas eases the pan when its body already
+  projects on-screen (a calm drift for near-center nudges), and snaps fast
+  only when the body sits off the screen edge. Right-click empty canvas in
+  any view mode for "Snap to center: ON/OFF" — off stops every automatic
+  recenter on picks (rows still light gold, orbs stay where they are).
+  Persisted in `visidocsverse.ui` and in cloud backups / master files
+  (`settings.snapCenter`). Any fresh canvas gesture (press, drag,
+  double-click recenter, Fit, reset, Return, lens/tab switch) cancels the
+  glide and hands the camera back immediately.
 
 ## Background shade
 - Left panel Shade row (under Labels): slider 0–100% for canvas background
@@ -178,6 +188,13 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   `visidocsverse.ui` and in cloud backups / master files.
 
 ## Pills (top and bottom)
+- The bottom pill's hanging book tabs (every function tab plus all three split-tab
+  frames) wear the live canvas fill — the same white → #11161f shade mix the
+  renderer paints at the canvas center — so they always read as cut from the
+  canvas below, tracking the background slider continuously (not just the
+  light/dark flip). Resting tabs match; the active tab keeps its canvas fill
+  with only a red frame/underline (no blue fill) so toggled states still
+  read; hover keeps its blue tint.
 - The top pill (project tabs, Universe view modes, stats) wears a book-tab shape with a gold glowing edge (flat top, rounded bottom corners, mirroring the bottom pill's Tips tab), and the bottom pill
   (canvas controls + tips) each keep their own natural size — never stretched
   to match each other. The top pill's right edge never passes the bottom
@@ -190,11 +207,16 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   back to the dock beside the left pane. The top pill also never shrinks below its seated width — with zero tabs the ghost cluster itself goes live (red frame) holding a "Create a project" tab plus "add tab" placeholders across the full row, and with projects the live cluster fills past the last tab with the same static frames (click one to add a tab to that cluster; with no projects it starts the first one). No cluster frame ever shrinks: deleting a tab backfills its space with a placeholder, and every cluster shares one fixed frame width. The cluster sits centered in the pill width in a static frame that never stretches sideways; it only grows downward by wrapping.
 
 ## Tethers toggle (bottom pill)
-- ◉ Tethers button in the bottom hint pill: shows/hides the tether lines
+- Tethers partition (left half of the Tethers|2 split tab): shows/hides the tether lines
   between bodies — bodies themselves always stay put. It drives the same
   setting as the left-panel Tether row, so both stay in sync. (The hint pill
   hides on narrow phone screens, so this shortcut is desktop-wide only.)
-- ◉ Distribute button next to Tethers: auto-distribute pins every body in a
+- "2" partition after Tethers: dotted tethers — the same lines drawn as
+  spaced round dots instead of solid strokes (airy 8px+ spacing that grows
+  with tether thickness, so fat tethers don't crowd). Independent of
+  show/hide and thickness; toggling off restores solid lines. Persisted in
+  `visidocsverse.ui`.
+- Distribute partition (left half of the snug split tab next to Tethers): auto-distribute pins every body in a
   fit-to-canvas orb (sun at the center, other bodies on mass-ranked fibonacci
   shells, scaled to an ellipse matching the viewport) and freezes orbital
   motion — pan/zoom/orbit still work, but bodies hold still with zero drift.
@@ -206,7 +228,7 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   top-down map of every body (gold sun, blue rest, white ring on the
   active body, auto-fit framing, body count in the header) so the full verse
   stays visible while the main view is close. Its header – collapses the map to a slim bar (+ restores, geometry and state persist in backups); header-drags move it, corner ⤴ resizes it. The markers mirror the main
-  canvas body shape — dots normally, upside-down ▼ triangles while Orb to ▼
+  canvas body shape — dots normally, upside-down ▼ triangles while Body to ▼
   is on — and the main canvas rotation: markers are plotted in the camera's
   own frame, so drag-rotating the view revolves the map with it (right on the
   map is right in the view). Header-drags to move,
@@ -221,29 +243,29 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   plunging (the stepper never overrides it; mid-drag the pointer owns it).
   The sun keeps its center-homing glide; distribute drops stay owned by the
   pinned orb.
-- ○ Plain Body button after Distribute: renders every body as a flat white
+- Plain Body partition after Distribute: renders every body as a flat white
   disc with a thin black outline — gradient shading, glow halos and
   photo-texture overlays are all skipped (labels, tethers, selection rings
   stay). Toggling off restores the textured orbs. Persisted in
   `visidocsverse.ui`.
-- ○ Plain Body 2 button after Plain Body: keeps the original blue orbs
+- "2" partition after Plain Body: keeps the original blue orbs
   (gradients + glow halos) but strips only the photo-texture overlays.
   Mutually exclusive with Plain Body — turning one on turns the other off.
   Toggling off restores the photo overlays. Persisted in `visidocsverse.ui`.
-- ○ Orb to ▼ button after Plain Body 2: shape swap — every body renders as an
+- Body to ▼ partition after the "2" partition: shape swap — every body renders as an
   upside-down triangle with the same fill (gold sun / blue gradient / flat
   white under Plain Body) and the same size as the orb it replaces (photo
   overlays clip to the triangle). Combines with any color mode. Persisted in
   `visidocsverse.ui`.
-- ○ "Body to" + document-icon button after Orb to ▼: shape swap — every document
+- Document-icon partition after Body to ▼: shape swap — every document
   and tag body renders as a plain white page icon with a folded corner (gold
   when focused), ruled with three text lines, area-matched to the orb it replaces; photo textures,
   gradients and glow stay off while labels, tethers, sticky squares and
   selection rings stay as they are; while Rotation spins, pages flip edge-on
   like cards. Theme bodies keep their orbs (only
-  available in MAIN and TAG view modes). Shape-exclusive with Orb to ▼. The verse-map minimap mirrors the pages.
+  available in MAIN and TAGS view modes). Shape-exclusive with Body to ▼. The verse-map minimap mirrors the pages.
   Toggling off restores the orbs. Persisted in `visidocsverse.ui`.
-- ○/◉ Fit button first in the pill row: a TOGGLE that frames the bodies actually
+- Fit partition (right half of the Distribute|Fit split tab): a TOGGLE that frames the bodies actually
   visible screen — recenters pan, dollies out until every current body
   projects inside the visible region plus drift slack (never zooms in on a
   close-up), and lifts any orb that would render as a speck up to a 10px
@@ -324,20 +346,23 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   even slot so rays never herd across the circle — and every collision
   test is exact (text centerlines as capsules, icons and orbs as circles).
   There are no connecting lines.
-  Left-click an icon to keep the theme as sun and light up that document's row
-  in the reader's bodies inventory (grounded bodies plus the ungrounded files
-  riding that orb, in their own section below) — and the row stays lit gold
-  for as long as the selection stands (no fade); right-click an icon for "Remove
+  Left-click an icon while its seed theme is the selected sun to reveal that
+  document's position in the reader's bodies inventory: the theme inventory
+  is restored first (a parked doc pin drops, a collapsed pane reopens),
+  then the row lights gold and centers (grounded bodies plus the ungrounded
+  files riding that orb, in their own section below) — and the row stays lit
+  gold for as long as the selection stands (no fade); right-click an icon for "Remove
   from this canvas" (canvas-only, same confirm as the body menu). Right-click
   the seed orb again for "Remove associated documents from view"; right-click
   empty canvas to show every theme's documents at once (with/without labels)
   or "Clear all associated documents from view". Empty-canvas right-click also
   offers "Remove ungrounded documents from view" (toggle; count shown) — lifts
   the palest ungrounded icons off the canvas while the reader's UNGROUNDED
-  inventory keeps them; persisted like the other view flags. The bottom pill's Labels
-  button (next to Hover peek) flips the name labels on every associated
-  document currently in view — orb labels are untouched and stay on the
-  left-panel Labels row; with nothing in view the button explains how to
+  inventory keeps them; persisted like the other view flags. The thematic right-click
+  menus (theme orb and empty canvas) also offer "Document labels: ON/OFF —
+  tap to hide/show associated-document names" — the toggle moved off the
+  bottom pill; orb labels are untouched and stay on the
+  left-panel Labels row; with nothing in view the menu explains how to
   show documents first. Files grounded in no theme are still shown, palest
   of all, each riding the single orb whose terms hit its text hardest (or
   the largest orb when nothing hits) — every file in the project displays.
@@ -346,7 +371,7 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   tight row atop the pill buttons. Overlay state is session-only and keyed by
   scope (whole-Visi|Docsverse vs one canvas), so tab switches can never show
   another verse's icons.
-- "See Tag Inventory" — the gold tag beside the Tag view mode in the top pill —
+- "See Tags Inventory" — the gold tag beside the TAGS view mode in the top pill —
   opens every tag in the verse as its original pill on a near-transparent
   glass card — true frosted milk-white glass (milky gradient, 26px
   backdrop blur + saturate/brightness lift, hairline bright edge, etched
@@ -370,7 +395,7 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   as golden pills, each carrying its own "?" explicator (hover/tap to read,
   ✎ to rewrite). Main shows every document body as itself; Thematic redraws the canvas around
   the ideas the documents share; Tag redraws it around the labels on the
-  documents. The live view is highlighted gold. A ▴ arrow after See Tag Inventory
+  documents. The live view is highlighted gold. A ▴ arrow after See Tags Inventory
   collapses the whole projects pill to just the view-modes row (▾ restores it);
   the collapse persists like the other pill settings. See the glossary's Main
   (Universe) view, thematic view, tags view, and Universe view modes entries.
@@ -720,7 +745,7 @@ custom 3D projection renderer. Vault persists in `localStorage` (`visidocsverse.
   GROUNDED DOCUMENTS ("BODIES") (? in the tag pane's grounded-members header,
   shared key) + GROUNDED BODIES (? in the theme pane's grounded-members header) +
   UNGROUNDED (? in the theme pane's ungrounded-guests header) + MAIN / THEMATIC /
-  TAG (? beside each Universe-view-mode pill in the top pill) + the three
+  TAGS (? beside each Universe-view-mode pill in the top pill) + the three
   bottom-pill tip rows (inline ✎ in each row, editing the row's HTML) + the
   seven reader overview blurbs (inline ✎ after the muted text in every
   inventory view: Main, Thematic, empty-Thematic, sun-release, Tags,

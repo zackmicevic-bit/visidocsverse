@@ -68,7 +68,7 @@ export class Renderer {
   constructor(canvas) {
     this.cv = canvas;
     this.ctx = canvas.getContext('2d');
-    this.cam = { yaw: 0.6, pitch: 0.42, dist: 620, auto: true, px: 0, py: 0 };
+    this.cam = { yaw: 0.6, pitch: 0.42, dist: 620, auto: true, px: 0, py: 0, tx: 0, ty: 0, tz: 0 };
     this.focal = 700;
     this.fitFloor = 10; // Fit guarantees every orb renders at least this radius (px)
     this.hover = null;
@@ -91,6 +91,7 @@ export class Renderer {
     this.triOrb = false; // triangle mode: upside-down triangles instead of discs (same fill, same size)
     this.docIcon = false; // document-icon mode: plain white page glyphs instead of discs (same size; theme bodies stay round)
     this.tetherScale = 1; // tether thickness multiplier (0 = hidden, 1 = current, 2 = double)
+    this.tetherDotted = false; // dotted tethers ("2" pill partition): spaced round dots instead of solid lines
     this.tetherColor = '#82aaff'; // tether tint (user palette; shared-ground links auto-contrast off it)
     this.selSet = null; // marquee-selected body ids (Set, owned by app.js) — ring highlight
     this.hotSet = null; // extra gold bodies (Set, owned by app.js) — Tags view lights every grounding tag
@@ -105,7 +106,7 @@ export class Renderer {
     this.cv.style.height = (r.height || 400) + 'px';
     this.dpr = dpr;
   }
-  resetView() { this.cam.yaw = 0.6; this.cam.pitch = 0.42; this.cam.dist = 620; this.cam.px = 0; this.cam.py = 0; }
+  resetView() { this.cam.yaw = 0.6; this.cam.pitch = 0.42; this.cam.dist = 620; this.cam.px = 0; this.cam.py = 0; this.cam.tx = 0; this.cam.ty = 0; this.cam.tz = 0; }
   recenterView() {
     // steer the universe center onto the center of the VISIBLE screen slice
     // of the canvas (see fitView for why the viewport overlap, not the
@@ -199,10 +200,13 @@ export class Renderer {
     return { fitted: true, compressed: 1, boosted, dist0, dist1: this.cam.dist };
   }
   project(x, y, z) {
-    // orbit camera: yaw around Y, pitch, then perspective
+    // orbit camera: yaw around Y, pitch, then perspective — swung about the
+    // camera target (the live formation anchor from tick()), never the world
+    // origin, so a drifted formation rotates in place instead of arcing away
     const { yaw, pitch, dist } = this.cam;
+    const tx = this.cam.tx || 0, ty = this.cam.ty || 0, tz = this.cam.tz || 0;
     const cy = Math.cos(yaw), sy = Math.sin(yaw);
-    let X = x * cy - z * sy, Z = x * sy + z * cy, Y = y;
+    let X = (x - tx) * cy - (z - tz) * sy, Z = (x - tx) * sy + (z - tz) * cy, Y = (y - ty);
     const cp = Math.cos(pitch), sp = Math.sin(pitch);
     const Y2 = Y * cp - Z * sp, Z2 = Y * sp + Z * cp;
     const depth = Z2 + dist;
@@ -327,12 +331,18 @@ export class Renderer {
         // stairs (thin slider settings), so hairlines keep a continuous core
         const haloW = Math.max((hot ? 3 : 2.6) * tw, hot ? 1.8 : 1.5);
         const coreW = Math.max((hot ? 1.6 : 1.3) * tw, hot ? 1.0 : 0.75);
+        // dotted tethers ("2" partition): round dots (lineCap is already
+        // round), airy spacing that grows with the halo so fat tethers
+        // don't crowd — same dash phase on both passes so they stay aligned
+        const dotted = !!this.tetherDotted;
+        if (dotted) ctx.setLineDash([0.01, Math.max(8, haloW * 2.5)]);
         ctx.strokeStyle = sunTopic ? `rgba(${sgc},0.22)` : hot ? tint(0.28) : tint(0.18);
         ctx.lineWidth = haloW;
         ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
         ctx.strokeStyle = sunTopic ? `rgba(${sgc},0.95)` : hot ? tint(0.95) : coreTint(0.85);
         ctx.lineWidth = coreW;
         ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+        if (dotted) ctx.setLineDash([]);
       }
       ctx.globalAlpha = 1;
     }
