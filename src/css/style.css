@@ -1,0 +1,1975 @@
+/* VisiDocsVerse — standalone offline build (GitHub / DCP Setup Maker).
+   Dark-cosmic theme: base #0d0f12, gold accents #e2c99b.
+   Multi-layered 3D box-shadows (halo + drop + top bevel + inset press) live
+   in the .lux rules below — untouched from the app, only the :root base was
+   pinned to #0d0f12. No web fonts, no CDNs, no remote imports. */
+:root { --bg:#0d0f12; --glass:rgba(20,26,36,.72); --line:rgba(120,150,200,.16); --txt:#dbe4f5; --mut:#7d8aa3; --acc:#5f9dff; --sun:#ffce6b; }
+  * { box-sizing:border-box; }
+  body { text-align:left; background:var(--bg); color:var(--txt); font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; margin:0; overflow:hidden; }
+ #app { position:fixed; inset:0; }
+  /* accidental-highlight guard: a stray drag (or Select-all) must never wash
+     the whole workspace blue. The app chrome is unselectable by default —
+     intentional text selection lives only in the prose allowlist below. */
+  #app { user-select:none; -webkit-user-select:none; -moz-user-select:none; }
+  #docBody, #docTitle, #docMeta, #glossBody, .svp-body, .ne-text, .np-text, .car-text,
+  input, textarea, select, [contenteditable="true"] { user-select:text; -webkit-user-select:text; -moz-user-select:text; }
+  #uniCv { position:absolute; inset:0; cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none; }
+  .glass { background:var(--glass); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); border:1px solid var(--line); border-radius:14px; box-shadow:0 18px 50px rgba(0,0,0,.5); }
+  #leftPanel { position:absolute; top:16px; left:16px; width:264px; padding:14px 15px; z-index:10; }
+  #leftPanel h1 { margin:0; font-size:17px; letter-spacing:.14em; display:flex; align-items:center; gap:4px; }
+  #titleLogo { height:24px; width:auto; flex:0 0 auto; }
+  /* fixed brand lock: the globe + wordmark always render in the original
+     gold, in every mode — no contrast flipping, no invert filter */
+  #leftPanel h1 span { color:#ffce6b; }
+  #leftPanel h1 .visi { color:#ffce6b; font-weight:300; }
+  #leftPanel h1 .pipe { margin:0 1px; color:#ffce6b; }
+  #leftPanel .sub { font-size:11px; color:var(--secink, var(--mut)); margin:2px 0 12px; letter-spacing:.04em; }
+  #searchInput { width:100%; background:rgba(10,14,20,.7); border:1px solid var(--line); color:var(--txt); border-radius:9px; padding:8px 10px; font-size:13px; outline:none; }
+  #searchInput:focus { border-color:var(--acc); }
+  .searchwrap { display:flex; align-items:center; gap:6px; }
+  .searchwrap #searchInput { flex:1 1 auto; min-width:0; width:auto; }
+  .searchwrap .sg-help { flex:0 0 auto; }
+  #searchPop { margin-top:6px; display:flex; flex-direction:column; gap:3px; max-height:220px; overflow:auto; }
+  #searchPop button { background:none; border:0; color:var(--txt); text-align:left; font-size:12.5px; padding:6px 8px; border-radius:7px; cursor:pointer; }
+  #searchPop button:hover { background:rgba(95,157,255,.15); }
+  #searchPop button span { color:var(--mut); font-size:11px; display:block; }
+  #statsEl { display:none; } /* retired: the top-pill stats row has been removed entirely */
+  .rowbtns { display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; }
+  /* intake grid: Folder + Files share two equal columns, Open spans both
+     (= exactly their combined width) while the ? keeps its own corner */
+  .rowbtns.projgrid { display:grid; grid-template-columns:1fr 1fr auto; gap:8px 6px; align-items:center; }
+  .rowbtns.projgrid #folderBtn, .rowbtns.projgrid #fileBtn { min-width:0; }
+  .rowbtns.projgrid #openProjBtn { grid-column:1 / 3; width:100%; }
+  /* 3D tilt toggle for the left pane: 30° counter-clockwise (seen from
+     above) about the pane's own vertical middle; transition glides it */
+  #leftPanel { transition:transform .45s ease; transform-origin:50% 50%; }
+  #leftPanel.tilted { transform:perspective(1100px) rotateY(30deg); }
+  /* pane-tilt toggle: rides the Personalization header row, right end */
+  .sec-label.pers-label { display:flex; align-items:center; justify-content:space-between; }
+  .sec-label.pers-label #paneTiltBtn { padding:2px 9px; font-size:13px; line-height:1.3; }
+  .sec-label.pers-label #paneTiltBtn[aria-pressed="true"] { background:rgba(95,157,255,.35); }
+  .btn { background:rgba(95,157,255,.12); color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer; }
+  .btn:hover { background:rgba(95,157,255,.25); }
+  /* beat the UA `button:not([disabled]){color:inherit}` rule (0,1,1) so themed
+     buttons actually use their ink instead of inheriting whatever surrounds them */
+  button.btn, button.bl-row, button.ctx-item { color:var(--txt); }
+  /* marquee box-select rectangle: plain 1px div = pixel-crisp edges */
+  #marquee { position:fixed; border:1px solid var(--acc); background:rgba(95,157,255,.12); z-index:5; pointer-events:none; }
+  #marquee[hidden] { display:none; }
+  /* DELETE caption living inside the box-select rectangle: the box itself is
+     click-through (pointer-events:none) so canvas drags still start inside it,
+     but the caption re-enables clicks for the one-touch delete */
+  #marqueeDel { position:absolute; left:50%; bottom:4px; transform:translateX(-50%); font-size:10px; letter-spacing:.14em; color:#ff9d9d; background:rgba(20,10,10,.78); border:1px solid rgba(255,120,120,.65); border-radius:6px; padding:2px 10px; cursor:pointer; pointer-events:auto; white-space:nowrap; }
+  #marqueeDel:hover { background:rgba(120,20,20,.9); color:#fff; }
+  #marqueeDel[hidden] { display:none; }
+  body.light-canvas #marqueeDel { background:rgba(255,235,235,.94); color:#b00000; border-color:rgba(176,0,0,.6); }
+  .sec-sep { height:1px; background:rgba(140,170,220,.35); margin:12px 0 10px; }
+  .sec-label { font-size:10px; letter-spacing:.14em; color:var(--secink, var(--mut)); margin:0 0 8px; text-transform:uppercase; } /* JS-kept contrast ink (syncInkContrast) */
+  #docPanel { position:absolute; top:16px; right:16px; width:min(380px,90vw); max-height:calc(100vh - 28px); overflow:visible; z-index:21; } /* reader paints above the top pill (z20), below the bottom pill (z25) */
+  /* inner scroller: the pane itself no longer scrolls (overflow:visible) so the
+     rail riders can live inside it and ride the tilt transform rigidly.
+     The scroller carries the pane's old padding, so its track sits at the
+     pane's far right, clear of the content (Back button et al) as before. */
+  #docScroll { overflow:auto; box-sizing:border-box; max-height:100%; padding:16px 18px; }
+  /* reader pane stretch arrow — slim ‹ track on the pane's left edge */
+  #docResize { position:absolute; z-index:22; width:20px; height:54px; transition:transform .45s ease; display:flex; align-items:center; justify-content:center; font-size:14px; color:var(--mut); background:rgba(16,22,32,.96); border:1px solid var(--line); border-radius:10px; cursor:ew-resize; user-select:none; -webkit-user-select:none; touch-action:none; opacity:.55; overflow:visible; }
+  #docResize:hover { opacity:1; color:#9cc2ff; border-color:#9cc2ff; }
+  body.light-canvas #docResize { background:rgba(255,255,255,.93); color:#5a6b8c; border-color:rgba(30,45,75,.28); }
+  /* fatter invisible hit zone around the arrow (clicks still land on #docResize) */
+  #docResize::after { content:''; position:absolute; top:-8px; bottom:-8px; left:-20px; right:-6px; cursor:ew-resize; }
+  /* reader-pane 3D tilt: 30° clockwise (seen from above) about the pane's own
+     vertical middle; rides above the stretch arrow with a clear gap */
+  #docPanel { transition:transform .45s ease; transform-origin:50% 50%; }
+  #docPanel.tiltedR { transform:perspective(1100px) rotateY(-30deg); }
+  /* rail riders live INSIDE the pane now, so the tilt transform carries them
+     rigidly — one shared rotation, zero chase/lag in any mode. They straddle
+     the outer left rim (half on the canvas, half in the gutter) so they never
+     cover the rows' eye/+#tag side stacks, which start 19px inside the border.
+     Seats are pure CSS (pane middle, like the flat display); JS only
+     shows/hides them. */
+  #docPanel > #docResize { left:-13px; top:calc(50% - 27px); transition:none; }
+  #docPanel > #docTiltBtn { left:-14px; top:calc(50% - 79px); transition:none; }
+  #docPanel > #origPaneBtn { left:-16px; top:calc(50% + 41px); transition:none; }
+  #docPanel > #carPaneBtn { left:-16px; top:calc(50% + 89px); transition:none; }
+  /* tilted reader: drop the top-right corner controls a bit lower, clear of
+     the foreshortened top edge; they glide back on untilt (class-driven) */
+  #docPanel .collapseBtn, #docPanel .glassDot { transition:top .45s ease; }
+  #docPanel.tiltedR .collapseBtn { top:16px; }
+  #docPanel.tiltedR .glassDot { top:19px; }
+  #docTiltBtn { position:absolute; z-index:22; width:22px; height:26px; transition:transform .45s ease; display:flex; align-items:center; justify-content:center; font-size:13px; color:#ffce6b; background:rgba(16,22,32,.96); border:1px solid var(--line); border-radius:8px; cursor:pointer; user-select:none; -webkit-user-select:none; opacity:.75; }
+  #docTiltBtn:hover { opacity:1; color:#ffe9b8; border-color:#ffce6b; }
+  body.light-canvas #docTiltBtn { background:rgba(255,255,255,.93); color:#8a6a1f; border-color:rgba(30,45,75,.28); }
+  /* tilted (aria-pressed=true) keeps the unselected look — no color/background change in either mode */
+  #docTiltBtn[aria-pressed="true"] { color:#ffce6b; border-color:var(--line); background:rgba(16,22,32,.85); box-shadow:none; opacity:.75; }
+  body.light-canvas #docTiltBtn[aria-pressed="true"] { color:#8a6a1f; border-color:rgba(30,45,75,.28); background:rgba(255,255,255,.93); box-shadow:none; }
+  /* document-carousel trigger: icon button parked under the reader stretch arrow (mirrors the tilt toggle above it) */
+  #carPaneBtn { position:absolute; z-index:22; width:26px; height:34px; transition:transform .45s ease; display:flex; align-items:center; justify-content:center; color:#ffce6b; background:rgba(16,22,32,.96); border:1px solid var(--line); border-radius:8px; cursor:pointer; user-select:none; -webkit-user-select:none; opacity:.75; padding:0; }
+  #carPaneBtn:hover { opacity:1; color:#ffe9b8; border-color:#ffce6b; }
+  body.light-canvas #carPaneBtn { background:rgba(255,255,255,.93); color:#000000; border-color:rgba(30,45,75,.28); }
+  #carPaneBtn[aria-pressed="true"] { color:#ffce6b; border-color:rgba(255,210,75,.6); background:rgba(255,206,107,.22); opacity:1; box-shadow:0 0 8px rgba(255,210,75,.35); }
+  body.light-canvas #carPaneBtn[aria-pressed="true"] { color:#000000; border-color:#000000; background:rgba(150,100,10,.18); }
+  #carPaneBtn svg { width:18px; height:21px; display:block; }
+  /* jump-to-original trigger: same rail treatment, parked just above the carousel icon */
+  #origPaneBtn { position:absolute; z-index:22; width:26px; height:34px; transition:transform .45s ease; display:flex; align-items:center; justify-content:center; color:#ffce6b; background:rgba(16,22,32,.96); border:1px solid var(--line); border-radius:8px; cursor:pointer; user-select:none; -webkit-user-select:none; opacity:.75; padding:0; }
+  #origPaneBtn:hover { opacity:1; color:#ffe9b8; border-color:#ffce6b; }
+  body.light-canvas #origPaneBtn { background:rgba(255,255,255,.93); color:#000000; border-color:rgba(30,45,75,.28); }
+  #origPaneBtn svg { width:18px; height:21px; display:block; }
+  #docPanel .kicker { font-size:10px; letter-spacing:.14em; color:var(--kickink, var(--sun)); } /* JS-kept contrast ink (syncInkContrast) */
+  #docPanel h2 { margin:4px 0 6px; font-size:19px; }
+  #docMeta { font-size:11px; color:var(--mut); margin-bottom:10px; }
+  #docBody { font-size:13.5px; line-height:1.75; color:#c4cfdf; white-space:pre-wrap; transition:box-shadow .18s ease, background-color .18s ease; }
+  .ovNote { color:var(--ovink, var(--mut)); } /* empty-view helper text: JS-kept contrast ink (syncInkContrast) */
+  #docBody.tag-drop-hi { box-shadow:0 0 0 2px rgba(255,210,75,.85), 0 0 22px rgba(255,210,75,.35); border-radius:8px; background:rgba(255,210,75,.07); }
+  #docBody.tag-drop-armed { box-shadow:0 0 0 2px rgba(140,170,220,.55), 0 0 14px rgba(140,170,220,.2); border-radius:8px; }
+  #docBody.tag-drop-need { box-shadow:0 0 0 2px rgba(255,110,110,.7), 0 0 14px rgba(255,110,110,.25); border-radius:8px; }
+  #docBody .wl { color:#9cc2ff; border-bottom:1px dotted #9cc2ff; cursor:pointer; }
+  #docBody .tag { color:#8fd0a8; cursor:pointer; }
+  .spot-flash { background:rgba(255,210,75,.45); border-radius:3px; box-shadow:0 0 0 2px rgba(255,210,75,.3); }
+  .spot-mark { background:rgba(255,210,75,.26); border-radius:3px; box-shadow:0 0 0 1px rgba(255,210,75,.35); }
+  /* in-body find: search-result term + manual find-bar highlights */
+  #findBar { display:flex; align-items:center; gap:6px; margin:0 0 8px; }
+  #findInput { flex:1; min-width:0; background:rgba(10,14,20,.8); border:1px solid var(--line); color:var(--txt); border-radius:20px; padding:2px 9px; font-size:11px; outline:none; }
+  #findInput::placeholder, #findInput2::placeholder { color:var(--findink, var(--mut)); opacity:1; } /* JS-kept contrast ink (syncInkContrast) */
+  #findCount { font-size:11px; color:var(--mut); white-space:nowrap; min-width:36px; text-align:center; }
+  #findSide { position:absolute; z-index:22; transition:transform .45s ease; display:flex; flex-direction:column; gap:6px; width:210px; background:rgba(10,15,24,.88); border:1px solid rgba(140,170,220,.38); border-radius:14px; padding:8px 10px; box-shadow:0 8px 28px rgba(0,0,0,.5); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
+  #findSide[hidden] { display:none; }
+  #findSideRow { display:flex; align-items:center; gap:6px; }
+  #findInput2 { width:100%; box-sizing:border-box; background:rgba(10,14,20,.8); border:1px solid var(--line); color:var(--txt); border-radius:20px; padding:2px 9px; font-size:11px; outline:none; }
+  #findCount2 { font-size:11px; color:var(--mut); white-space:nowrap; min-width:36px; text-align:center; }
+  body.light-canvas #findSide { color:#233044; background:rgba(255,255,255,.93); border-color:rgba(30,45,75,.28); box-shadow:0 8px 28px rgba(30,45,75,.2); }
+  /* back-to-top tab: parked at the reader pane's bottom-right while scrolled */
+  #docTopBtn { position:absolute; z-index:22; transition:transform .45s ease; background:rgba(10,15,24,.88); border:1px solid rgba(140,170,220,.38); color:var(--txt); border-radius:20px; padding:4px 12px; font-size:11px; cursor:pointer; box-shadow:0 8px 28px rgba(0,0,0,.5); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
+  #docTopBtn[hidden] { display:none; }
+  #docTopBtn:hover { background:rgba(95,157,255,.28); }
+  body.light-canvas #docTopBtn { color:#233044; background:rgba(255,255,255,.93); border-color:rgba(30,45,75,.28); box-shadow:0 8px 28px rgba(30,45,75,.2); }
+  /* glossary back-to-top tab: same recipe, parked at the glossary pane's bottom-right (clear of its resize grip) */
+  #glossTopBtn { position:absolute; z-index:24; background:rgba(10,15,24,.88); border:1px solid rgba(140,170,220,.38); color:var(--txt); border-radius:20px; padding:4px 12px; font-size:11px; cursor:pointer; box-shadow:0 8px 28px rgba(0,0,0,.5); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
+  #glossTopBtn[hidden] { display:none; }
+  #glossTopBtn:hover { background:rgba(95,157,255,.28); }
+  body.light-canvas #glossTopBtn { color:#233044; background:rgba(255,255,255,.93); border-color:rgba(30,45,75,.28); box-shadow:0 8px 28px rgba(30,45,75,.2); }
+  /* notes back-to-top tab: same recipe, parked at the notes pane's bottom-right */
+  #notesTopBtn { position:absolute; z-index:24; background:rgba(10,15,24,.88); border:1px solid rgba(140,170,220,.38); color:var(--txt); border-radius:20px; padding:4px 12px; font-size:11px; cursor:pointer; box-shadow:0 8px 28px rgba(0,0,0,.5); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
+  #notesTopBtn[hidden] { display:none; }
+  #notesTopBtn:hover { background:rgba(95,157,255,.28); }
+  body.light-canvas #notesTopBtn { color:#233044; background:rgba(255,255,255,.93); border-color:rgba(30,45,75,.28); box-shadow:0 8px 28px rgba(30,45,75,.2); }
+  #docBody .find-hit { background:rgba(255,210,75,.30); border-radius:3px; }
+  #docBody .find-hit.cur { background:rgba(255,210,75,.9); color:#141414; }
+  /* reader picture gallery (Word/PPT/PDF embeds live below the prose) */
+  #docBody .imggal { display:grid; gap:10px; margin:12px 0 4px; }
+  #docBody .imggal figure { margin:0; background:rgba(255,255,255,.03); border:1px solid var(--line); border-radius:8px; padding:8px; }
+  #docBody .imggal img { display:block; max-width:100%; height:auto; border-radius:6px; cursor:zoom-in; }
+  #docBody .imggal figcaption { font-size:11px; color:var(--mut); margin-top:6px; }
+  #docBody .imggal .imgph { font-size:12px; color:var(--mut); }
+  /* reader media player (video/audio bodies play below the prose, bytes from the originals sidecar) */
+  #docBody .mediagal { display:grid; gap:8px; margin:12px 0 4px; background:rgba(255,255,255,.03); border:1px solid var(--line); border-radius:8px; padding:8px; }
+  #docBody .mediagal video { display:block; max-width:100%; max-height:320px; border-radius:6px; background:#000; }
+  #docBody .mediagal img { display:block; max-width:100%; max-height:320px; border-radius:6px; }
+  #docBody .mediagal audio { display:block; width:100%; }
+  #docBody .mediagal .media-cap { font-size:11px; color:var(--mut); }
+  /* document carousel: curved glass coverflow of the Active body on the canvas */
+  #carWrap { --carZoom:1; position:fixed; inset:0; z-index:206; display:flex; align-items:center; justify-content:center; background:rgba(3,5,9,.55); backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px); }
+  #carWrap[hidden] { display:none; }
+  #carInner { width:min(1200px,96vw); max-height:94vh; display:flex; flex-direction:column; gap:10px; }
+  #carHead { display:flex; align-items:center; gap:10px; padding:0 4px; }
+  #carTitle { font-size:14px; font-weight:700; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #carCount { font-size:11px; color:var(--mut); white-space:nowrap; }
+  #carClose { background:rgba(95,157,255,.12); color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:3px 12px; font-size:12px; cursor:pointer; }
+  #carZoomLab { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--mut); white-space:nowrap; cursor:pointer; }
+  #carZoomVal { min-width:36px; text-align:right; font-variant-numeric:tabular-nums; }
+  #carZoomRg { width:90px; accent-color:#ffce6b; cursor:pointer; }
+  #carClose:hover { background:rgba(255,91,91,.25); border-color:rgba(255,120,120,.5); }
+  #carStage { position:relative; perspective:1400px; perspective-origin:50% 38%; }
+  #carTrack { display:flex; gap:18px; overflow-x:auto; overflow-y:visible; padding:26px max(18px, calc(50% - min(calc(180px * var(--carZoom)), 39vw))); align-items:stretch; scrollbar-width:thin; }
+  .car-pane { flex:0 0 auto; width:min(calc(360px * var(--carZoom)),78vw); max-height:min(calc(62vh * var(--carZoom)),88vh); min-height:220px; overflow-y:auto; border-radius:14px; padding:14px 16px; transform-style:preserve-3d; will-change:transform; }
+  .car-pane.car-center { border-color:rgba(255,206,107,.5); box-shadow:0 18px 50px rgba(0,0,0,.5), 0 0 24px rgba(255,206,107,.15); }
+  .car-phead { display:flex; align-items:baseline; gap:8px; margin-bottom:8px; }
+  .car-ptitle { font-size:10.5px; letter-spacing:.1em; color:var(--sun); font-weight:700; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .car-pnum { font-size:10.5px; color:var(--mut); white-space:nowrap; }
+  .car-text { font-size:calc(13px * var(--carZoom)); line-height:1.7; color:#c4cfdf; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .car-text .wl { color:#9cc2ff; border-bottom:1px dotted #9cc2ff; cursor:pointer; }
+  .car-text .tag { color:#8fd0a8; cursor:pointer; }
+  .car-text .imggal { display:grid; gap:10px; margin:12px 0 4px; }
+  .car-text .imggal figure { margin:0; background:rgba(255,255,255,.03); border:1px solid var(--line); border-radius:8px; padding:8px; }
+  .car-text .imggal img { display:block; max-width:100%; height:auto; border-radius:6px; }
+  .car-text .imggal figcaption { font-size:11px; color:var(--mut); margin-top:6px; }
+  .car-text .imggal .imgph { font-size:12px; color:var(--mut); }
+  .car-text .mediagal { display:grid; gap:8px; margin:12px 0 4px; background:rgba(255,255,255,.03); border:1px solid var(--line); border-radius:8px; padding:8px; }
+  .car-text .mediagal video { display:block; max-width:100%; max-height:320px; border-radius:6px; background:#000; }
+  .car-text .mediagal audio { display:block; width:100%; }
+  .car-text .mediagal .media-cap { font-size:11px; color:var(--mut); }
+  .car-text .sheetwrap { display:grid; gap:8px; margin:12px 0 4px; background:rgba(255,255,255,.03); border:1px solid var(--line); border-radius:8px; padding:8px; }
+  .car-text .sheet-cap { font-size:11px; color:var(--mut); }
+  .car-text .sheetgrid { border-collapse:collapse; font-size:11.5px; display:block; max-height:320px; overflow:auto; }
+  .car-text .sheetgrid th, .car-text .sheetgrid td { border:1px solid var(--line); padding:3px 8px; text-align:left; white-space:nowrap; max-width:220px; overflow:hidden; text-overflow:ellipsis; }
+  .car-text .sheetgrid th { background:rgba(255,206,107,.12); color:var(--sun); position:sticky; top:0; }
+  .car-text .sheet-dl { font-size:12px; color:#9cc2ff; }
+  .car-arrow { position:absolute; top:50%; transform:translateY(-50%); z-index:5; width:40px; height:56px; display:flex; align-items:center; justify-content:center; font-size:22px; color:var(--txt); background:rgba(16,22,32,.8); border:1px solid var(--line); border-radius:12px; cursor:pointer; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); opacity:.8; }
+  .car-arrow:hover { opacity:1; color:#9cc2ff; border-color:#9cc2ff; }
+  #carPrevB { left:2px; }
+  #carNextB { right:2px; }
+  body.light-canvas .car-arrow { color:#233044; background:rgba(255,255,255,.9); border-color:rgba(30,45,75,.28); }
+  #carHint { text-align:center; font-size:10.5px; color:var(--mut); }
+  /* caption riding above the current (center) pane */
+  #carZoomTip { position:absolute; top:5px; left:50%; transform:translateX(-50%); z-index:6; display:inline-flex; align-items:center; gap:6px; font-size:10.5px; letter-spacing:.04em; color:var(--mut); text-shadow:0 1px 6px rgba(0,0,0,.9); white-space:nowrap; cursor:default; pointer-events:auto; }
+  /* jump icon docked to the caption: same gold page+arrow as the reader-edge trigger, one click to the original */
+  #carZoomJump { display:inline-flex; align-items:center; justify-content:center; background:none; border:none; padding:2px; margin:0; color:#ffce6b; cursor:pointer; opacity:.85; }
+  #carZoomJump:hover { opacity:1; color:#ffe9b8; }
+  #carZoomJump svg { width:12px; height:14px; display:block; }
+  body.light-canvas #carZoomJump { color:#8a6a1f; }
+  body.light-canvas #carZoomTip { color:#eef2fa; text-shadow:0 1px 6px rgba(0,0,0,.9); }
+  .car-expand { background:rgba(95,157,255,.12); color:var(--txt); border:1px solid var(--line); border-radius:6px; padding:0 7px; font-size:12px; line-height:1.7; cursor:pointer; opacity:.45; }
+  .car-pane:hover .car-expand { opacity:1; }
+  .car-expand:hover { background:rgba(95,157,255,.3); border-color:#9cc2ff; }
+  /* expand-pane overlay: the whole original document (reader format + gallery), zoomable */
+  #carZoomWrap { position:fixed; inset:0; z-index:208; display:flex; align-items:center; justify-content:center; background:rgba(3,5,9,.72); backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px); }
+  #carZoomWrap[hidden] { display:none; }
+  #carZoomCard { width:min(880px,94vw); max-height:92vh; display:flex; flex-direction:column; border-radius:16px; overflow:hidden; }
+  #carZoomHead { display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--line); }
+  #carZoomTitle { font-size:14px; font-weight:700; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #carZoomSub { font-size:10.5px; letter-spacing:.12em; color:var(--sun); font-weight:700; white-space:nowrap; }
+  #carZoomLab2 { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--mut); white-space:nowrap; cursor:pointer; }
+  #carZoomVal2 { min-width:36px; text-align:right; font-variant-numeric:tabular-nums; }
+  #carZoomRg2 { width:90px; accent-color:#ffce6b; cursor:pointer; }
+  #carZoomClose { background:rgba(95,157,255,.12); color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:3px 12px; font-size:12px; cursor:pointer; }
+  #carZoomClose:hover { background:rgba(255,91,91,.25); border-color:rgba(255,120,120,.5); }
+  #carZoomBody { overflow-y:auto; padding:18px 22px 26px; }
+  #carZoomText { font-size:calc(14px * var(--czx,1)); }
+  .cz-spot { animation:czFlash 1.6s ease-out; border-radius:4px; }
+  @keyframes czFlash { 0% { background:rgba(255,206,107,.4); } 100% { background:transparent; } }
+  /* reader picture lightbox: click a gallery image to zoom, click out / Esc to close */
+  #imgLight { position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.82); cursor:zoom-out; padding:4vmin; box-sizing:border-box; }
+  #imgLight[hidden] { display:none; }
+  #imgLight img { max-width:92vw; max-height:92vh; border-radius:8px; }
+  .tagpill { display:inline-block; position:relative; background:rgba(143,208,168,.12); border:1px solid rgba(143,208,168,.35); color:#9fe0b8; border-radius:0 999px 999px 0; padding:2px 16px 2px 9px; font-size:11px; margin:0 4px 4px 0; cursor:pointer; }
+  .tagpill.demo { cursor:default; }
+  /* luggage-tag hole: empty ring near the chamfered end */
+  .tagpill::after { content:''; position:absolute; top:50%; right:5px; transform:translateY(-50%); width:5px; height:5px; border:1px solid; border-radius:50%; pointer-events:none; }
+  .tvp-tags .tagpill::after { width:6px; height:6px; }
+  /* the notes button wears the tagpill class but isn't a tag — elongated rectangular sticky note */
+  .tagpill.notesbtn { border-radius:0; }
+  .tagpill.notesbtn::after { display:none; }
+  .tags-cap { display:inline-block; font-size:10px; letter-spacing:.14em; color:var(--mut); font-weight:700; margin:0 6px 4px 0; vertical-align:middle; }
+  .tagpill.notesbtn { border-radius:0; padding:3px 22px 3px 12px; background:rgba(233,195,60,.16); border-color:rgba(233,195,60,.55); color:#f2d24b; font-weight:700; }
+  .tagpill.notesbtn.note-zero { background:rgba(150,150,150,.12); border-color:rgba(150,150,150,.4); color:#9a9a9a; }
+  .tagpill.notesbtn .bl-note-ic { vertical-align:-2.5px; margin-right:5px; }
+  .tagpill .mmark { color:#ffd24b; font-weight:800; margin-left:5px; font-size:10.5px; }
+  /* sun linkage: the canvas-selected tag glows gold in the ALL TAGS card */
+  .tagpill.sunlit { background:rgba(255,206,107,.30); border-color:#ffce6b; color:#ffe9bb; box-shadow:0 0 12px rgba(255,206,107,.55); }
+  .tvp-frost .tagpill.sunlit { background:rgba(233,195,60,.45); border-color:#8a6a1f; color:#3a2c00; box-shadow:0 0 10px rgba(154,98,0,.4); }
+  .notefilter { display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--secink, var(--mut)); margin:0 0 10px; }
+  .notefilter label { display:flex; align-items:center; gap:4px; cursor:pointer; }
+  .notefilter input { accent-color:#e9c33c; }
+  #notePop { position:absolute; top:46px; right:12px; width:min(280px,82vw); z-index:6; padding:10px 12px; }
+  #notePop[hidden] { display:none; }
+  .np-head { display:flex; align-items:baseline; gap:10px; margin-bottom:6px; }
+  .np-title { font-size:12px; font-weight:700; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .np-cap { font-size:11px; color:var(--acc); cursor:pointer; border-bottom:1px dotted var(--acc); white-space:nowrap; }
+  .np-cap.danger { color:#ff8f8f; border-color:#ff8f8f; }
+  .np-text { font-size:12.5px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; background:rgba(233,195,60,.08); border:1px solid rgba(233,195,60,.3); border-radius:6px; padding:8px; }
+  .np-area { width:100%; box-sizing:border-box; min-height:64px; font:inherit; font-size:12.5px; resize:vertical; color:#000; background:#fff; }
+  .np-count { font-size:10.5px; color:var(--mut); text-align:right; }
+  #noteEdit { position:fixed; z-index:60; width:250px; padding:10px 12px; }
+  #noteEdit[hidden] { display:none; }
+  #noteEdit h4 { margin:0 0 6px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #noteEdit textarea { width:100%; box-sizing:border-box; min-height:64px; font:inherit; font-size:12.5px; resize:vertical; color:#000; background:#fff; }
+  .tagpill.auto { background:rgba(122,162,255,.12); border-color:rgba(122,162,255,.4); color:#a8c1ff; }
+  /* tags-view pop-out: true frosted-glass card over the live canvas, click out / Esc to close.
+     Frosted milk-white + dark font on a white canvas, dark smoked glass + white font on a black canvas.
+     Frost recipe (matches the reference): milky translucent gradient, heavy backdrop blur +
+     saturate/brightness lift, hairline bright edge, top-edge highlight, faint etched grain, soft deep shadow. */
+  #tagPop { position:fixed; inset:0; z-index:210; display:flex; align-items:center; justify-content:center; padding:4vmin; box-sizing:border-box; pointer-events:none; cursor:default; }
+  #tagPop[hidden] { display:none; }
+  .tvp-card { width:min(600px,92vw); max-height:94vh; display:flex; flex-direction:column; border-radius:10px; padding:26px 30px 22px; box-sizing:border-box; position:relative; overflow:hidden; pointer-events:auto; cursor:default; }
+  .tvp-frost { background:linear-gradient(155deg, rgba(255,255,255,.58), rgba(255,255,255,.34) 42%, rgba(250,252,255,.46) 72%, rgba(255,255,255,.60)); -webkit-backdrop-filter:blur(26px) saturate(1.6) brightness(1.07); backdrop-filter:blur(26px) saturate(1.6) brightness(1.07); border:1px solid rgba(255,255,255,.8); box-shadow:0 30px 80px rgba(30,45,75,.30), 0 2px 14px rgba(30,45,75,.14), inset 0 1px 0 rgba(255,255,255,.95), inset 0 0 28px rgba(255,255,255,.22); color:#0d1117; }
+  .tvp-frost::before { content:''; position:absolute; inset:0; pointer-events:none; opacity:.055; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .tvp-clear { background:linear-gradient(155deg, rgba(22,30,46,.62), rgba(10,14,22,.40) 45%, rgba(16,24,40,.52)); -webkit-backdrop-filter:blur(24px) saturate(1.3) brightness(.96); backdrop-filter:blur(24px) saturate(1.3) brightness(.96); border:1px solid rgba(220,232,255,.38); box-shadow:0 30px 80px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.28), inset 0 0 28px rgba(140,175,230,.08); color:#f2f6ff; }
+  .tvp-clear::before { content:''; position:absolute; inset:0; pointer-events:none; opacity:.05; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .tvp-head { display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom:14px; position:relative; cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none; }
+  .tvp-head:active { cursor:grabbing; }
+  .tvp-head .tvp-title { font-size:17px; font-weight:800; letter-spacing:.1em; color:inherit; text-align:center; }
+  .tvp-head .tvp-x { position:absolute; right:-6px; top:-8px; background:none; border:none; cursor:default; font-size:15px; line-height:1; color:inherit; opacity:.6; padding:6px; }
+  .tvp-head .tvp-x:hover { opacity:1; }
+  #tvpGrip { position:absolute; right:8px; bottom:6px; z-index:5; cursor:nwse-resize; font-size:15px; line-height:1; opacity:.55; padding:6px 4px 2px 8px; touch-action:none; user-select:none; -webkit-user-select:none; }
+  #tvpGrip:hover { opacity:1; }
+  .tvp-tags { overflow:auto; line-height:2.1; margin-bottom:16px; flex:1 1 auto; min-height:0; scrollbar-width:thin; text-align:center; position:relative; }
+  .tvp-tags .tagpill { font-size:12px; }
+  /* frosted-light pills: thin dark outline + dark text like the reference's boxed guide rows */
+  .tvp-frost .tagpill { background:rgba(255,255,255,.42); border:1px solid rgba(15,22,34,.62); color:#101725; }
+  .tvp-frost .tagpill:hover { background:rgba(255,255,255,.85); }
+  .tvp-frost .tagpill.auto { background:rgba(255,255,255,.34); border-color:rgba(30,60,140,.6); color:#1b2f6b; }
+  .tvp-frost .tagpill.auto:hover { background:rgba(255,255,255,.8); }
+  .tvp-empty { font-size:12.5px; letter-spacing:0; opacity:.75; }
+  /* tag delete + merge affordances: × per pill (shows on hover), dashed-gold
+     drop target while dragging, dimmed drag source, thin static tips at the foot */
+  .tvp-tags .tagpill, .tvp-tags .tagpill:active { cursor:default; }
+  .tvp-tags .tagpill .tvp-x { display:inline-block; margin-left:7px; padding:0 4px; border-radius:6px; font-size:11px; font-weight:700; opacity:0; cursor:default; }
+  .tvp-tags .tagpill:hover .tvp-x, .tvp-tags .tagpill:focus-within .tvp-x { opacity:.75; }
+  .tvp-tags .tagpill .tvp-x:hover { opacity:1; background:rgba(255,120,120,.28); }
+  .tvp-frost .tagpill .tvp-x:hover { background:rgba(176,0,0,.14); }
+  .tvp-frost .tagpill .tvp-x { color:#000; }
+  body.light-canvas .tvp-tags .tagpill .tvp-x { color:#000; }
+  body.light-canvas .tvp-head .tvp-x { color:#000; }
+  .tvp-tags .tagpill.drop-hi { outline:2px dashed var(--sun); outline-offset:2px; transform:scale(1.08); }
+  .tvp-tags .tagpill.drag-src { opacity:.35; }
+  .tvp-tips { margin:12px auto 0; max-width:520px; font-size:10.5px; font-weight:300; line-height:1.65; letter-spacing:.02em; text-align:left; display:grid; grid-template-columns:auto 1fr; gap:4px 8px; align-self:center; overflow-y:auto; min-height:0; flex:0 1 auto; }
+  .tvp-tips .tvp-term { color:var(--sun); font-weight:600; white-space:nowrap; }
+  .tvp-frost .tvp-tips .tvp-term { color:#8a6a1f; }
+  .tvp-tips .tvp-exp { opacity:.65; }
+  .tvp-tips .tvp-confirms { display:block; margin:4px auto 0; }
+  /* tagging guide: dev-editable glass pane opened from the tags card */
+  #tagGuidePane { position:fixed; inset:0; z-index:220; display:flex; align-items:center; justify-content:center; padding:4vmin; box-sizing:border-box; pointer-events:none; }
+  #tagGuidePane[hidden] { display:none; }
+  #tagGuideBtn { margin-top:12px; white-space:normal; text-align:center; line-height:1.5; }
+  .tgp-head { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .tgp-head .help-edit-btn { margin-top:0; flex:0 0 auto; }
+  .tgp-title { font-size:14px; font-weight:800; letter-spacing:.06em; color:inherit; }
+  .tgp-x { margin-left:auto; background:none; border:none; cursor:pointer; font-size:15px; line-height:1; color:inherit; opacity:.6; padding:6px; flex:0 0 auto; }
+  .tgp-x:hover { opacity:1; }
+  .tgp-body { overflow:auto; min-height:0; font-size:12.5px; line-height:1.65; }
+  .tgp-body p { margin:0 0 10px; }
+  .tgp-body p:last-child { margin-bottom:0; }
+  .tvp-go { align-self:center; background:rgba(255,255,255,.3); border:1px solid currentColor; color:inherit; border-radius:20px; padding:8px 22px; font-size:12px; font-weight:700; letter-spacing:.08em; cursor:pointer; opacity:.95; white-space:nowrap; position:relative; }
+  /* view-source preview: transient glass card, same frost recipe as the tags pane */
+  #srcPop { position:fixed; inset:0; z-index:215; pointer-events:none; }
+  #srcPop[hidden] { display:none; }
+  .svp-card { position:absolute; width:min(360px,92vw); max-height:70vh; pointer-events:auto; }
+  .svp-head { display:flex; align-items:center; gap:8px; margin-bottom:8px; position:relative; padding-right:20px; }
+  .svp-head .svp-x { position:absolute; right:-6px; top:-8px; background:none; border:none; cursor:default; font-size:15px; line-height:1; color:inherit; opacity:.6; padding:6px; }
+  .svp-head .svp-x:hover { opacity:1; }
+  .svp-kicker { font-size:10px; letter-spacing:.14em; color:var(--sun); font-weight:700; }
+  .tvp-frost .svp-kicker { color:#8a6a1f; }
+  .svp-sec { font-size:10px; font-weight:700; letter-spacing:.08em; border:1px solid currentColor; border-radius:12px; padding:1px 8px; opacity:.85; white-space:nowrap; }
+  .svp-rel { margin-left:auto; font-size:10px; color:var(--mut); white-space:nowrap; }
+  .svp-title { font-size:15px; font-weight:700; margin:0 0 8px; overflow-wrap:anywhere; }
+  .svp-body { font-size:12.5px; line-height:1.65; overflow:auto; min-height:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .svp-body img { display:block; max-width:100%; max-height:240px; border-radius:8px; }
+  .svp-cap { font-size:11px; color:var(--mut); margin-top:6px; }
+  .svp-cap[hidden] { display:none; }
+  .svp-foot { margin-top:10px; font-size:10.5px; color:var(--mut); }
+  /* general-view row flash while its body is previewed */
+  .bl-row.src-hi { border-color:var(--sun); box-shadow:0 0 0 1px var(--sun), 0 0 14px rgba(255,206,107,.45); background:rgba(255,206,107,.12); }
+  body.light-panes .bl-row.src-hi { border-color:#8a6a1f; box-shadow:0 0 0 1px #8a6a1f, 0 0 14px rgba(138,106,31,.4); background:rgba(233,195,60,.22); }
+  .tvp-go:hover { opacity:1; background:rgba(255,255,255,.55); }
+  .tvp-clear .tvp-go { background:rgba(140,175,230,.08); }
+  .tvp-clear .tvp-go:hover { background:rgba(140,175,230,.22); }
+  /* glossary of terms: thin vertical book tab riding the VisiDocsverse pane's
+     right border opens a draggable, resizable minimap-style glass pane */
+  #glossTab { position:absolute; top:132px; right:-25px; width:25px; height:172px; display:flex; align-items:center; justify-content:center; padding:0; background:rgba(20,26,32,.88); border:1px solid rgba(140,170,220,.35); border-left:none; border-radius:0 9px 9px 0; color:var(--acc); cursor:pointer; z-index:5; box-shadow:3px 3px 12px rgba(0,0,0,.45); }
+  #glossTab span { display:block; writing-mode:vertical-rl; transform:rotate(180deg); font-size:12px; letter-spacing:.24em; white-space:nowrap; }
+  #glossTab:hover { color:#9cc2ff; border-color:#9cc2ff; }
+  #glossTab.open { color:#ffd24b; border-color:rgba(255,210,75,.6); }
+  body.light-canvas #glossTab { background:rgba(255,255,255,.92); color:#4a6a9c; }
+  body.light-canvas #glossTab.open { color:#9a6200; border-color:rgba(154,98,0,.55); }
+  /* pinned glossary terms: one slim book tab per pin, stacked under the
+     glossary tab on the left panel's right border; each opens the same
+     pinned-term pane parked beside the panel */
+  .g-pin { float:right; margin:0 0 4px 8px; background:rgba(95,157,255,.10); color:var(--mut); border:1px solid var(--line); border-radius:7px; padding:1px 8px; font-size:10px; letter-spacing:.04em; cursor:pointer; white-space:nowrap; }
+  .g-pin:hover { color:#9cc2ff; border-color:#9cc2ff; }
+  .g-pin.on { color:#ffd24b; border-color:rgba(255,210,75,.6); }
+  .pinTab { position:absolute; width:25px; display:flex; align-items:center; justify-content:center; padding:6px 0; background:rgba(20,26,32,.88); border:1px solid rgba(140,170,220,.35); border-radius:0 9px 9px 0; color:var(--acc); cursor:pointer; z-index:26; box-shadow:3px 3px 12px rgba(0,0,0,.45); } /* NO transform transition: the preview/compositor can freeze CSS transitions, stranding tabs mid-swing — they snap instantly to the panel's plane instead. app-level (not a panel child): the panel's backdrop-filter stacking context would trap them under the docked glossary pane */
+  .pinTab span { display:block; writing-mode:vertical-rl; transform:rotate(180deg); font-size:9px; letter-spacing:.12em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-height:100%; }
+  .pinTab:hover { color:#9cc2ff; border-color:#9cc2ff; }
+  .pinTab.open { color:#ffd24b; border-color:rgba(255,210,75,.6); }
+  body.light-canvas .pinTab { background:rgba(255,255,255,.92); color:#4a6a9c; }
+  body.light-canvas .pinTab.open { color:#9a6200; border-color:rgba(154,98,0,.55); }
+  #pinPane { position:absolute; z-index:24; width:320px; display:flex; flex-direction:column; border-radius:14px; overflow:hidden; }
+  #pinPane[hidden] { display:none; }
+  #pinHead { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 10px 6px 12px; font-size:10.5px; letter-spacing:.12em; color:var(--sun); flex:0 0 auto; }
+  #pinTitle { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #pinBtns { display:flex; align-items:center; gap:6px; flex:0 0 auto; }
+  #pinUnpin { background:none; border:1px solid var(--line); color:var(--mut); border-radius:6px; font-size:10px; letter-spacing:.04em; padding:1px 8px; cursor:pointer; white-space:nowrap; }
+  #pinUnpin:hover { color:#ff9d9d; border-color:rgba(255,120,120,.5); }
+  #pinClose { background:none; border:none; color:inherit; cursor:default; font-size:13px; line-height:1; opacity:.7; padding:0 0 0 4px; }
+  #pinClose:hover { opacity:1; }
+  #pinBody { display:block; flex:1 1 auto; min-height:0; overflow:auto; padding:2px 14px 14px; font-size:12.5px; line-height:1.6; color:var(--txt); }
+  #glossPane { position:absolute; z-index:23; display:flex; flex-direction:column; border-radius:14px; overflow:hidden; }
+  #glossPane[hidden] { display:none; }
+  #glossHead { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 10px 6px 12px; font-size:10.5px; letter-spacing:.12em; color:var(--acc); cursor:grab; user-select:none; -webkit-user-select:none; touch-action:none; flex:0 0 auto; }
+  #glossHead:active { cursor:grabbing; }
+  #glossClose { background:none; border:none; color:inherit; cursor:default; font-size:13px; line-height:1; opacity:.7; padding:0 0 0 8px; }
+  #glossClose:hover { opacity:1; }
+  #glossPane .glassDot { top:8px; right:36px; }
+  #glossBody { display:block; flex:1 1 auto; min-height:0; overflow:auto; padding:2px 14px 14px; font-size:12.5px; line-height:1.6; color:var(--txt); scrollbar-width:thin; }
+  .g-term { margin:9px 0; }
+  .g-word { color:var(--acc); font-weight:700; }
+  .gi { display:inline-flex; align-items:center; gap:5px; margin-left:7px; vertical-align:1px; white-space:nowrap; }
+  .gi svg { display:block; }
+  .gi-edge { width:22px; height:29px; display:inline-flex; align-items:center; justify-content:center; color:#ffce6b; background:rgba(16,22,32,.85); border:1px solid var(--line); border-radius:7px; }
+  .gi-edge svg { width:15px; height:18px; }
+  .gi-edge.sm { width:20px; height:23px; border-radius:6px; font-size:12px; font-weight:700; }
+  .gi-glyph { display:inline-flex; align-items:center; justify-content:center; min-width:17px; height:17px; padding:0 3px; color:#ffce6b; border:1px solid rgba(255,206,107,.4); border-radius:6px; font-size:11.5px; font-weight:700; background:rgba(255,206,107,.07); }
+  .gi-btn { display:inline-block; color:var(--txt); border:1px solid rgba(140,170,220,.45); background:rgba(10,15,24,.6); border-radius:12px; padding:0 9px; font-size:10.5px; line-height:1.7; white-space:nowrap; }
+  .gi-vm { display:inline-block; color:var(--sun); border:1px solid rgba(255,206,107,.55); border-radius:20px; padding:0 10px; font-size:10.5px; font-weight:700; line-height:1.7; }
+  .gi-kbd { display:inline-block; border:1px solid rgba(140,170,220,.5); border-bottom-width:2px; border-radius:5px; padding:0 6px; font:700 11px/1.6 monospace; color:var(--txt); background:rgba(10,15,24,.6); }
+  .gi-pillE { display:inline-block; background:rgba(143,208,168,.12); border:1px solid rgba(143,208,168,.35); color:#9fe0b8; border-radius:20px; padding:0 9px; font-size:10.5px; line-height:1.7; }
+  .gi-pillA { display:inline-block; background:rgba(122,162,255,.12); border:1px solid rgba(122,162,255,.4); color:#a8c1ff; border-radius:20px; padding:0 9px; font-size:10.5px; line-height:1.7; }
+  .gi-m { color:#ffd24b; font-weight:800; margin-left:4px; font-size:10px; }
+  .gi-doc { display:inline-flex; align-items:center; }
+  .gi-doc svg { width:11px; height:13px; display:block; }
+  .gi-tab { display:inline-block; writing-mode:vertical-rl; transform:rotate(180deg); font-size:8.5px; letter-spacing:.18em; color:var(--acc); border:1px solid rgba(140,170,220,.35); border-radius:5px; padding:5px 2px; background:rgba(20,26,32,.88); }
+  .gi-sq { display:inline-block; width:11px; height:11px; background:#f2d24b; border-radius:2px; box-shadow:0 0 4px rgba(242,210,75,.6); }
+  .gi-sq.hollow { background:none; border:2px solid rgba(242,210,75,.75); width:8px; height:8px; box-shadow:none; border-radius:2px; }
+  body.light-canvas .gi-edge { background:rgba(255,255,255,.93); color:#8a6a1f; border-color:rgba(30,45,75,.28); }
+  body.light-canvas .gi-glyph { color:#8a6a1f; border-color:rgba(138,106,31,.5); background:rgba(150,100,10,.08); }
+  body.light-canvas .gi-vm { color:#8a6a1f; border-color:rgba(154,98,0,.55); }
+  .g-comp { margin:10px 0; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .g-comp table { width:100%; border-collapse:collapse; font-size:11.5px; line-height:1.5; }
+  .g-comp th { text-align:left; font-size:10.5px; letter-spacing:.06em; color:var(--acc); padding:7px 9px; background:rgba(95,157,255,.12); border-bottom:1px solid var(--line); }
+  .g-comp td { padding:7px 9px; border-bottom:1px solid rgba(120,150,200,.1); vertical-align:top; }
+  .g-comp tr:last-child td { border-bottom:none; }
+  .g-comp td.gf { font-weight:700; color:var(--sun); white-space:nowrap; }
+  .g-vs { margin:14px 0 4px; border:1px solid rgba(140,170,220,.35); border-radius:10px; padding:10px 12px; background:rgba(95,157,255,.07); }
+  .g-vs-head { font-size:10.5px; letter-spacing:.12em; color:var(--acc); font-weight:700; margin-bottom:6px; }
+  .g-vs-row { margin:5px 0; }
+  .g-vs-row b { color:var(--txt); }
+  #glossResize { position:absolute; right:1px; bottom:0; width:22px; height:22px; display:flex; align-items:center; justify-content:center; font-size:13px; color:var(--mut); cursor:nwse-resize; user-select:none; -webkit-user-select:none; touch-action:none; z-index:2; }
+  #glossResize:hover { color:#9cc2ff; }
+  /* notes book tab + pane: thin vertical tab on the reader's left edge opens
+     a fixed (never draggable) glass pane parked left of the reader — 30%
+     narrower than the glossary dock. Opacity/transform transitions make the
+     reader<->notes trip smooth both ways. */
+  #notesTab { position:absolute; z-index:11; width:25px; height:120px; transition:transform .45s ease; display:flex; align-items:center; justify-content:center; padding:0; background:rgba(20,26,32,.88); border:1px solid rgba(140,170,220,.35); border-right:none; border-radius:9px 0 0 9px; color:var(--acc); cursor:pointer; box-shadow:-3px 3px 12px rgba(0,0,0,.45); }
+  #notesTab[hidden] { display:none; }
+  #notesTab span { display:block; writing-mode:vertical-rl; transform:rotate(180deg); font-size:12px; letter-spacing:.24em; white-space:nowrap; }
+  #notesTab:hover { color:#9cc2ff; border-color:#9cc2ff; }
+  #notesTab.open { color:#ffd24b; border-color:rgba(255,210,75,.6); }
+  body.light-canvas #notesTab { background:rgba(255,255,255,.92); color:#4a6a9c; }
+  body.light-canvas #notesTab.open { color:#9a6200; border-color:rgba(154,98,0,.55); }
+  #notesPane { position:absolute; z-index:23; display:flex; flex-direction:column; border-radius:14px; overflow:hidden; opacity:0; transform:translateX(14px); transition:opacity .24s ease, transform .24s ease; }
+  #notesPane[hidden] { display:none; }
+  #notesPane.show { opacity:1; transform:none; }
+  #notesHead { display:flex; align-items:center; gap:8px; padding:8px 10px 6px 12px; font-size:10.5px; letter-spacing:.12em; color:var(--acc); flex:0 0 auto; }
+  #notesTitle { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #notesHeadCount { font-size:10.5px; color:var(--mut); letter-spacing:.02em; white-space:nowrap; }
+  #notesClose { background:none; border:none; color:inherit; cursor:pointer; font-size:13px; line-height:1; opacity:.7; padding:0 0 0 4px; }
+  #notesClose:hover { opacity:1; }
+  #notesAutoRow { display:flex; align-items:center; gap:6px; padding:0 12px 6px; font-size:11.5px; color:var(--mut); flex:0 0 auto; }
+  #notesAutoRow input { accent-color:#e9c33c; }
+  #notesList { flex:1 1 auto; min-height:60px; overflow:auto; padding:2px 12px 8px; display:flex; flex-direction:column; gap:8px; scrollbar-width:thin; }
+  .ne { background:rgba(233,195,60,.07); border:1px solid rgba(233,195,60,.3); border-radius:8px; padding:7px 9px; }
+  .ne-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px; }
+  .ne-num { font-size:10px; letter-spacing:.08em; color:var(--mut); }
+  .ne-x { background:none; border:none; color:var(--mut); cursor:pointer; font-size:13px; line-height:1; padding:0 2px; }
+  .ne-x:hover { color:#ff9d9d; }
+  .ne-text { font-size:12.5px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .ne.pinned { cursor:pointer; }
+  .ne.pinned:hover { border-color:rgba(233,195,60,.7); }
+  /* persistent sent-highlight marks (only while their entry lives) + jump flash */
+  .note-mark { background:rgba(233,195,60,.38); border-radius:3px; }
+  .note-flash { background:rgba(255,210,75,.65); border-radius:3px; box-shadow:0 0 0 2px rgba(255,210,75,.5); }
+  .ne-empty { font-size:12px; color:var(--mut); line-height:1.6; }
+  #notesComposer { flex:0 0 auto; padding:8px 12px 12px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:6px; }
+  #notesArea { width:100%; box-sizing:border-box; min-height:70px; font:inherit; font-size:12.5px; resize:vertical; color:#000; background:#fff; border-radius:8px; border:1px solid var(--line); padding:8px; }
+  #notesCount { font-size:10.5px; color:var(--mut); text-align:right; }
+  #notesSaveWrap { display:flex; justify-content:center; margin-top:-2px; }
+  .bl-head { font-size:10px; letter-spacing:.12em; color:var(--mut); margin:14px 0 6px; }
+  .bl-head .viewall { background:none; border:none; padding:0 0 0 8px; margin:0; cursor:pointer; font:inherit; font-size:10px; letter-spacing:.12em; color:#ffc357; }
+  .bl-head .viewall:hover { text-decoration:underline; }
+  .bl-row { display:block; width:100%; text-align:left; background:rgba(95,157,255,.08); border:1px solid var(--line); color:var(--txt); border-radius:8px; padding:7px 10px; margin:5px 0; cursor:pointer; font-size:12.5px; }
+  .bl-row:hover { background:rgba(95,157,255,.18); }
+  .bl-row span { display:block; color:#8fd0a8; font-size:11px; margin-top:2px; }
+  .bl-row .rest-dot { display:inline; color:#ffc357; }
+  /* split inventory rows: document rows get an eye-preview + reserved-slot
+     stack on the left, theme/tag rows a dot box (canvas) + title box (pane) */
+  .bl-wrap { display:flex; align-items:stretch; gap:3px; margin:5px 0; }
+  .bl-wrap .bl-col { flex:1 1 auto; min-width:0; width:auto; display:flex; flex-direction:column; gap:3px; }
+  .bl-wrap .bl-row { margin:0; width:100%; }
+  /* view-jump side cluster: MAIN / THEMATIC / TAGS for the shown document,
+     docked left of the reader like the side find bar (stacked below it).
+     Mini folder tabs: same book-tab language as the pill (canvas fill, gold
+     ink, bottomless, tilted, bases plugged through the card's bottom edge). */
+  #gotoSide { position:absolute; z-index:22; display:flex; flex-direction:column; gap:6px; width:250px; background:rgba(10,15,24,.88); border:1px solid rgba(140,170,220,.38); border-radius:14px; padding:8px 8px 0; box-shadow:0 8px 28px rgba(0,0,0,.5); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
+  #gotoSide[hidden] { display:none; }
+  #gotoSideCap { font-size:10px; letter-spacing:.14em; color:var(--mut); }
+  #gotoSideRow { display:flex; gap:3px; }
+  #gotoSideRow button { position:relative; flex:1 1 0; min-width:0; box-sizing:border-box; font-size:10.5px; font-weight:800; letter-spacing:.04em; line-height:1.5; text-align:center; color:#ffce6b; background:none; border:none; box-shadow:none; transform:translateY(8px); padding:4px 0 5px; cursor:pointer; white-space:nowrap; }
+  #gotoSideRow button::before { content:''; position:absolute; inset:0; z-index:-1; background:var(--maintabbg, #11161f); border:1px solid rgba(255,200,100,.55); border-bottom:none; border-radius:9px 9px 0 0; transform:perspective(60px) rotateX(12deg); transform-origin:50% 100%; box-shadow:0 -2px 9px rgba(0,0,0,.4); }
+  #gotoSideRow button:hover { color:#ffe1a1; }
+  #gotoSideRow button:hover::before { filter:brightness(1.25); }
+  #gotoSideRow button.picked { color:#fff; }
+  #gotoSideRow button.picked::before { border-color:#ff3b3b; box-shadow:0 0 8px rgba(255,59,59,.5); }
+  body.light-canvas #gotoSide { color:#000; background:rgba(255,255,255,.93); border-color:rgba(30,45,75,.28); box-shadow:0 8px 28px rgba(30,45,75,.2); }
+  body.light-canvas #gotoSideCap { color:#000; }
+  body.light-canvas #gotoSideRow button { color:#8a6a1f; }
+  body.light-canvas #gotoSideRow button::before { background:var(--maintabbg, #f4f6fa); border-color:rgba(154,98,0,.55); }
+  body.light-canvas #gotoSideRow button:hover { color:#5a3c00; }
+  body.light-canvas #gotoSideRow button.picked { color:#000; }
+  body.light-canvas #gotoSideRow button.picked::before { border-color:#ff3b3b; }
+  .bl-dot { flex:0 0 auto; width:34px; background:rgba(95,157,255,.08); border:1px solid var(--line); color:var(--txt); border-radius:8px; padding:7px 0; cursor:pointer; font-size:12.5px; line-height:1.2; display:flex; align-items:center; justify-content:center; }
+  .bl-dot:hover { background:rgba(95,157,255,.18); }
+  .bl-dot .rest-dot { display:inline; color:#ffc357; }
+  .bl-dot.dot-on { border-color:#ff3b3b; box-shadow:0 0 8px rgba(255,59,59,.5); }
+  /* document-row side stack: 👁 previews the doc, lower box is a reserved slot */
+  .bl-side { flex:0 0 auto; width:34px; display:flex; flex-direction:column; gap:3px; }
+  .bl-eye, .bl-slot { flex:1 1 0; min-height:0; background:rgba(95,157,255,.16); border:1px solid rgba(140,170,220,.5); color:var(--txt); border-radius:8px; padding:2px 0; cursor:pointer; font-size:12px; line-height:1.2; display:flex; align-items:center; justify-content:center; } /* side stack reads at a glance in both modes */
+  .bl-eye:hover { background:rgba(95,157,255,.28); }
+  .bl-eye.eye-on { border-color:var(--sun); box-shadow:0 0 8px rgba(255,206,107,.5); }
+  .bl-slot { border-style:dashed; cursor:pointer; font-size:10px; line-height:1.1; padding:1px 0; }
+  /* +#tag slot provenance (both modes): user-made explicit tags keep the dashed maker frame, gold while live; system-associated tags (auto/manual) ground it solid */
+  .bl-slot.slot-user { border-style:dashed; border-color:rgba(233,195,60,.75); color:#f2d24b; background:rgba(233,195,60,.10); }
+  .bl-slot.slot-solid { border-style:solid; border-color:rgba(140,170,220,.7); background:rgba(95,157,255,.22); }
+  body.light-panes .bl-eye, body.light-panes .bl-slot { background:rgba(95,157,255,.14); border-color:rgba(90,110,140,.6); } /* same visibility lift on pale panes */
+  body.light-panes .bl-slot.slot-user { color:#8a6a1f; border-color:rgba(138,106,31,.6); background:rgba(233,195,60,.18); }
+  body.light-panes .bl-slot.slot-solid { border-color:rgba(90,110,140,.7); background:rgba(95,157,255,.18); }
+  .bl-note { flex:0 0 auto; width:30px; background:rgba(233,195,60,.10); border:1px solid rgba(233,195,60,.45); color:#f2d24b; border-radius:8px; padding:7px 0; cursor:pointer; font-size:12.5px; line-height:1.2; display:flex; align-items:center; justify-content:center; }
+  .bl-note:hover { background:rgba(233,195,60,.25); }
+  .bl-note svg { display:block; }
+  .bl-note.note-open { border-color:#ff3b3b; box-shadow:0 0 8px rgba(255,59,59,.5); }
+  /* empty note box: outline sticky for docs with no notes yet (same behavior) */
+  .bl-note.empty { border-color:rgba(140,160,190,.4); background:rgba(140,160,190,.06); }
+  .bl-note.empty:hover { background:rgba(140,160,190,.16); }
+  body.light-panes .bl-note.empty { border-color:rgba(120,140,165,.5); background:rgba(120,140,165,.08); }
+  /* inventory × : small remove box over the title box's bottom-right corner */
+  .bl-wrap { position:relative; }
+  .bl-x { position:absolute; right:5px; bottom:5px; z-index:2; font-size:12px; line-height:1; color:var(--mut); background:rgba(10,15,24,.65); border:1px solid transparent; border-radius:6px; padding:1px 6px; cursor:pointer; }
+ .bl-x:hover { color:#ff9d9d; background:rgba(255,91,91,.15); border-color:rgba(255,120,120,.5); }
+  .bl-wrap:has(.bl-note) .bl-x { right:44px; } /* clear the 30px note box + breathing room */
+  .bl-wrap:has(.bl-x) .bl-row { padding-right:34px; } /* title never runs under the × */
+  /* original-file-type badge: standardized label over the title box's top-right corner (above the ×) */
+  .bl-ft { position:absolute; right:5px; top:5px; z-index:2; font-size:9px; font-weight:700; letter-spacing:.4px; line-height:1.5; padding:1px 5px; border:1px solid; border-radius:4px; pointer-events:none; }
+  .bl-wrap:has(.bl-note) .bl-ft { right:44px; } /* clear the 30px note box + breathing room, same as the × */
+  .bl-wrap:has(.bl-ft) .bl-row { padding-right:58px; } /* title never runs under the badge (or the × below it) */
+  .ft-pdf { color:#ff8f8f; border-color:rgba(255,107,107,.55); background:rgba(255,107,107,.12); }
+  .ft-word { color:#8fb8ff; border-color:rgba(120,165,255,.55); background:rgba(120,165,255,.12); }
+  .ft-txt { color:#a9b6c6; border-color:rgba(160,175,195,.5); background:rgba(160,175,195,.10); }
+  .ft-ppt { color:#ffb27a; border-color:rgba(255,170,100,.55); background:rgba(255,170,100,.12); }
+  .ft-xls { color:#8fd0a8; border-color:rgba(110,200,145,.55); background:rgba(110,200,145,.12); }
+  .ft-vid { color:#d3a6ff; border-color:rgba(190,120,255,.55); background:rgba(190,120,255,.12); }
+  .ft-aud { color:#7fe3d0; border-color:rgba(110,220,200,.55); background:rgba(110,220,200,.12); }
+  .ft-img { color:#f2a7c3; border-color:rgba(240,140,180,.55); background:rgba(240,140,180,.12); }
+  body.light-panes .bl-head .viewall, body.light-panes .bl-row .rest-dot, body.light-panes .bl-dot .rest-dot { color:#9a6200; }
+  body.light-panes .bl-note { color:#8a6a1f; border-color:rgba(138,106,31,.55); background:rgba(233,195,60,.18); }
+  /* reader pane scrollbar: wide easy-grab thumb for long body lists */
+  #docScroll { scrollbar-width:auto; scrollbar-color:rgba(140,170,220,.55) transparent; }
+  #docScroll::-webkit-scrollbar { width:12px; }
+  #docScroll::-webkit-scrollbar-track { background:transparent; }
+  #docScroll::-webkit-scrollbar-thumb { background:rgba(140,170,220,.45); border-radius:8px; border:3px solid transparent; background-clip:content-box; min-height:48px; }
+  #docScroll::-webkit-scrollbar-thumb:hover { background:rgba(160,195,245,.7); background-clip:content-box; border:3px solid transparent; }
+  #docShared { position:relative; margin:2px 0 10px; min-height:18px; }
+  #docShared:empty { display:none; }
+  .sg-label { display:inline-block; font-size:10px; letter-spacing:.12em; color:#8fd0a8; border-bottom:1px dotted #8fd0a8; cursor:pointer; padding:2px 0; }
+  .sg-menu { position:absolute; left:0; top:100%; width:min(320px,72vw); max-height:280px; overflow:auto; background:rgba(16,22,32,.97); border:1px solid var(--line); border-radius:10px; box-shadow:0 18px 50px rgba(0,0,0,.55); padding:6px; z-index:30; margin-top:6px;
+    visibility:hidden; opacity:0; transform:translateY(-4px);
+    transition:opacity .22s ease, transform .22s ease, visibility 0s linear .45s; }
+  .sg-menu::before { content:''; position:absolute; top:-10px; left:0; right:0; height:10px; }
+  .sg-label:hover ~ .sg-menu, .sg-menu:hover, #docShared.open .sg-menu { visibility:visible; opacity:1; transform:none; transition-delay:0s; }
+  .sg-empty { font-size:12px; color:var(--mut); padding:8px 10px; }
+  .sg-help { display:inline-block; width:15px; height:15px; line-height:13px; text-align:center; font-size:10px; color:var(--mut); border:1px solid var(--line); border-radius:50%; cursor:pointer; margin-left:6px; vertical-align:1px; }
+  .sg-help:hover, .sg-help:focus { color:#9cc2ff; border-color:#9cc2ff; }
+  .sg-help-pop { visibility:hidden; opacity:0; transform:translateY(-4px); transition:opacity .18s ease, transform .18s ease, visibility 0s linear .6s; position:absolute; left:0; top:100%; width:min(300px,72vw); background:rgba(16,22,32,.97); border:1px solid var(--line); border-radius:10px; box-shadow:0 18px 50px rgba(0,0,0,.55); padding:10px 12px; z-index:31; margin-top:6px; font-size:12px; line-height:1.3; color:var(--txt); white-space:normal; }
+  .tabbar-label .sg-help-pop { left:50%; width:min(250px,86vw); text-align:left; transform:translateX(-50%) translateY(-4px); }
+  .tabbar-label .hw.help-open .sg-help-pop { transform:translateX(-50%); }
+  .sg-help-pop::before { content:''; position:absolute; top:-10px; left:0; right:0; height:10px; }
+ #docShared.help-open .sg-help-pop, .hw.help-open .sg-help-pop { visibility:visible; opacity:1; transform:none; transition-delay:0s; }
+  .hw { position:relative; display:inline-block; }
+  #docMeta { position:relative; }
+  #docMeta > .sg-help-pop { left:0; right:0; width:auto; }
+  #docLinks .bl-head { position:relative; }
+  #docLinks .bl-head .hw { position:static; }
+  #docLinks .bl-head .sg-help-pop { left:0; right:0; width:auto; }
+  #docMeta.help-open .sg-help-pop { visibility:visible; opacity:1; transform:none; transition-delay:0s; }
+  .hw.right .sg-help-pop { left:auto; right:-6px; }
+  #hintBar .hw { vertical-align:1px; }
+  #hintBar .sg-help-pop { top:auto; bottom:100%; margin-top:0; margin-bottom:8px; transform:translateY(4px); text-align:left; white-space:normal; }
+  #hintBar .sg-help-pop::before { top:auto; bottom:-10px; }
+  .sg-help-pop .help-text { display:block; white-space:pre-line; }
+  .help-edit-btn { display:none; margin-top:8px; background:rgba(95,157,255,.12); color:var(--txt); border:1px solid var(--line); border-radius:7px; padding:0 7px; font-size:12px; line-height:1.3; cursor:pointer; }
+  .help-edit-btn:hover { background:rgba(95,157,255,.28); }
+  body.help-can-edit .help-edit-btn { display:inline-block; }
+  .ovblurb { line-height:1.3; } /* overview blurbs: single-spaced, edit button at text height */
+  .ovblurb .help-edit-btn { margin-top:0; vertical-align:baseline; }
+  .hb-tiprow .help-text { display:contents; }
+  .hb-tiprow .help-edit-btn { margin:0; padding:1px 7px; font-size:10px; align-self:center; } /* flush with the row's right edge under the justified spread */
+  #helpEditModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:230; width:min(420px,92vw); padding:18px 20px; }
+  #helpEditModal h3 { margin:0 0 10px; font-size:15px; }
+  #helpEditText { width:100%; min-height:130px; background:rgba(10,14,20,.8); border:1px solid var(--line); color:var(--txt); border-radius:9px; padding:10px 12px; font-size:13px; line-height:1.6; font-family:inherit; resize:vertical; }
+  #helpEditText:focus { outline:none; border-color:var(--acc); }
+  #helpEditHint { font-size:11px; color:var(--mut); margin-top:8px; line-height:1.5; }
+  #hintBar { position:absolute; bottom:14px; left:50%; transform:translateX(-50%); width:max-content; max-width:96vw; font-size:11.5px; color:#aebdd6; background:rgba(10,15,24,.85); border:1px solid rgba(140,170,220,.38); padding:6px 30px 5px 14px; border-radius:14px; z-index:25; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); box-shadow:0 8px 28px rgba(0,0,0,.5); display:flex; flex-direction:column; align-items:center; gap:1px; }
+  #hintBar .hb-btns { display:flex; align-items:flex-start; justify-content:center; flex-wrap:wrap; gap:6px; row-gap:4px; max-width:100%; margin-top:-7px; } /* book-tab row: pulled up 7px (6px top padding + 1px border) so every tab's topless top edge plugs through the pill's top line — the slot Tips used to ride alone */
+  #hintBar .hb-return { position:absolute; bottom:100%; left:50%; transform:translateX(-50%); margin:0 0 18px; z-index:26; } /* Return floats as its own glass pane above the pill, centered — 18px clears the tabs' 1px protrusion + halos in both modes */
+  /* bottom-pill function tabs: every tab wears the Tips hanging book-tab
+     shape — topless top edge plugged through the pill's top line, rounded
+     bottom corners. Tips keeps its natural width, as does the snug
+     Distribute|Fit split; every other tab shares one equalized width
+     (JS syncHbTabs: widest natural wins).
+     (The old solo-Tips absolute ride is gone: Tips now hangs first in this row.) */
+  #hintBar .hb-sep { color:var(--mut); opacity:.55; font-size:11px; user-select:none; -webkit-user-select:none; }
+  #hintBar .hb-sep.thick { opacity:1; font-size:14px; font-weight:900; }
+  #hintBar .hb-tips { font-size:10.5px; display:flex; flex-direction:column; align-items:stretch; gap:0; max-width:100%; width:100%; margin-top:7px; }
+  #hintBar.notips .hb-tips { display:none; } /* tips collapsed: buttons row stays */
+  .hb-tiprow { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; white-space:normal; text-align:left; line-height:1.5; } /* justified + distributed: phrases spread edge-to-edge across the pill in both modes */
+  .tt-w { color:#e6edfa; } .tt-g { color:var(--sun); } .tt-sep { color:var(--mut); margin:0 5px; }
+  body.light-canvas .tt-w { color:#233044; }
+  body.light-canvas .tt-g { color:#8a6a1f; }
+  /* (bottom-pill logo retired — the emblem now sits in the top title) */
+  #isoBtn, #autoBtn, #fitBtn, #simpleOrbBtn, #simpleOrb2Btn, #triOrbBtn, #docIconBtn, #vividBtn, #tipsBtn, #hvBtn { background:var(--hbtabbg, rgba(10,15,24,.85)); color:#e6edfa; border:1px solid rgba(140,170,220,.45); border-top:none; border-radius:0 0 9px 9px; padding:7px 12px 4px; font-size:11px; cursor:pointer; white-space:nowrap; text-align:center; box-sizing:border-box; }
+  #isoBtn:hover, #autoBtn:hover, #fitBtn:hover, #simpleOrbBtn:hover, #simpleOrb2Btn:hover, #triOrbBtn:hover, #docIconBtn:hover, #vividBtn:hover, #tipsBtn:hover, #hvBtn:hover { background:rgba(95,157,255,.38); }
+  #tipsBtn.open { border-color:#ff5b5b; box-shadow:0 0 8px rgba(255,91,91,.45); } /* tips shown: red border while non-collapsed */
+  #isoBtn.on, #autoBtn.on, #fitBtn.on, #simpleOrbBtn.on, #simpleOrb2Btn.on, #triOrbBtn.on, #docIconBtn.on, #hvBtn.on, #vividBtn.on { color:#fff; border-color:#ff5b5b; box-shadow:0 0 8px rgba(255,91,91,.45); }
+  #returnBtn { position:relative; display:inline-flex; align-items:center; gap:10px; padding:9px 26px 14px; border-radius:9999px; background:rgba(10,15,24,.85); border:1px solid rgba(140,170,220,.45); color:#e6edfa; font-family:'Segoe UI', system-ui, -apple-system, sans-serif; font-size:13px; font-weight:600; letter-spacing:.28em; cursor:pointer; white-space:nowrap; box-shadow:0 8px 28px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.25); -webkit-backdrop-filter:blur(12px) saturate(1.25); transition:all .2s ease-in-out; }
+  #returnBtn::before { content:''; position:absolute; inset:3px; border-radius:9999px; background:radial-gradient(120% 90% at 18% 0%, rgba(255,255,255,.06), rgba(255,255,255,0) 45%); pointer-events:none; }
+  #returnBtn::after { content:''; position:absolute; left:14%; right:14%; bottom:7px; height:0; border-top:1px dotted rgba(140,170,220,.5); pointer-events:none; }
+  #returnBtn:hover { background:rgba(95,157,255,.28); border-color:rgba(140,170,220,.8); color:#fff; }
+  body.light-canvas #hintBar { color:#233044; background:rgba(255,255,255,.93); border-color:rgba(30,45,75,.28); box-shadow:0 8px 28px rgba(30,45,75,.2); }
+  body.light-canvas #isoBtn, body.light-canvas #autoBtn, body.light-canvas #fitBtn, body.light-canvas #simpleOrbBtn, body.light-canvas #simpleOrb2Btn, body.light-canvas #triOrbBtn, body.light-canvas #docIconBtn, body.light-canvas #vividBtn, body.light-canvas #tipsBtn, body.light-canvas #hvBtn { background:var(--hbtabbg, rgba(255,255,255,.93)); color:#1a2a4a; border-color:rgba(35,80,180,.4); }
+  body.light-canvas #isoBtn:hover, body.light-canvas #autoBtn:hover, body.light-canvas #fitBtn:hover, body.light-canvas #simpleOrbBtn:hover, body.light-canvas #simpleOrb2Btn:hover, body.light-canvas #triOrbBtn:hover, body.light-canvas #docIconBtn:hover, body.light-canvas #vividBtn:hover, body.light-canvas #tipsBtn:hover, body.light-canvas #hvBtn:hover { background:rgba(35,80,180,.24); }
+  body.light-canvas #tipsBtn.open { border-color:#ff5b5b; box-shadow:0 0 8px rgba(255,91,91,.45); }
+  body.light-canvas #isoBtn.on, body.light-canvas #autoBtn.on, body.light-canvas #fitBtn.on, body.light-canvas #simpleOrbBtn.on, body.light-canvas #simpleOrb2Btn.on, body.light-canvas #triOrbBtn.on, body.light-canvas #docIconBtn.on, body.light-canvas #hvBtn.on, body.light-canvas #vividBtn.on { color:#1a2a4a; border-color:#ff5b5b; box-shadow:0 0 8px rgba(255,91,91,.45); }
+  #vividBtn.on, body.light-canvas #vividBtn.on { color:#FFF3D6; border-color:rgba(226,201,155,.85); background:rgba(50,42,32,.9); box-shadow:0 0 10px rgba(226,201,155,.4); }
+  /* tied to workspace luxury: frozen on, dimmed, no pointer */
+  #vividBtn:disabled { opacity:.45; cursor:not-allowed; }
+  #vividBtn:disabled:hover { background:var(--hbtabbg, rgba(10,15,24,.85)); }
+  /* split book tab (Plain Body | 2, Distribute | Fit): the outer span wears the
+     hanging-tab frame; the two partitions split it with one divider. Specificity note:
+     #hintBar .splitab > button (1,1,1) outranks the id-only tab rules above,
+     so the frame owns all paint and the partitions stay flat until lit. */
+  #hintBar .splitab { display:inline-flex; align-items:stretch; justify-content:center; padding:0; background:var(--hbtabbg, rgba(10,15,24,.85)); border:1px solid rgba(140,170,220,.45); border-top:none; border-radius:0 0 9px 9px; overflow:hidden; box-sizing:border-box; }
+  #hintBar .splitab > button { flex:0 0 auto; background:none; border:none; border-radius:0; box-shadow:none; padding:7px 10px 4px; font-size:11px; cursor:pointer; white-space:nowrap; }
+  #hintBar .splitab > button.split-l { padding-left:12px; border-right:1px solid rgba(140,170,220,.45); }
+  #hintBar .splitab > button.split-r { padding-right:12px; }
+  #hintBar .splitab > button:hover { background:rgba(95,157,255,.22); }
+  /* active partition: filled + a red inset underline along the tab's bottom —
+     the split-tab echo of the full tabs' red .on frame */
+  #hintBar .splitab > button.on { color:#fff; border-color:#ff5b5b; box-shadow:inset 0 -2px 0 #ff5b5b; }
+  body.light-canvas #hintBar .splitab { background:var(--hbtabbg, rgba(255,255,255,.93)); border-color:rgba(35,80,180,.4); }
+  body.light-canvas #hintBar .splitab > button.split-l { border-right-color:rgba(35,80,180,.4); }
+  body.light-canvas #hintBar .splitab > button:hover { background:rgba(35,80,180,.14); }
+  body.light-canvas #hintBar .splitab > button.on { color:#1a2a4a; box-shadow:inset 0 -2px 0 #ff5b5b; }
+  /* snug split tab (Distribute | Fit): both partitions hug their text at
+     natural width with the same edge padding as every other tab; the frame
+     wraps them, divider off-center. Excluded from the JS width equalization
+     below so it never stretches or squeezes. */
+  /* tab labels read in caps (Tips keeps its own casing): transform only, so
+     button text, titles and JS wiring stay exactly as they are. */
+  #hintBar #returnBtn, #hintBar .hb-btns > button:not(#tipsBtn), #hintBar .hb-btns > .splitab > button { text-transform:uppercase; }
+  /* pills are hand-draggable by any blank background (grab hand); controls keep their own cursors */
+  #tabBar, #hintBar { cursor:grab; }
+  #tabBar button, #hintBar button, #tabBar input, #hintBar input { cursor:pointer; }
+  #tabBar .glassDot, #hintBar .glassDot { cursor:pointer; }
+  /* light canvas: white page glyphs vanish on the pale buttons — black ink instead (ON keeps white on dark blue) */
+  body.light-canvas #docIconBtn svg path:first-child { fill:#000000; stroke:#000000; }
+  body.light-canvas #docIconBtn svg path:nth-child(2) { fill:#ffffff; }
+  body.light-canvas #docIconBtn svg path:nth-child(3) { stroke:#ffffff; }
+  body.light-canvas #docIconBtn.on svg path:first-child { fill:#ffffff; stroke:#000000; }
+  body.light-canvas #docIconBtn.on svg path:nth-child(2) { fill:#c7d0dd; }
+  body.light-canvas #docIconBtn.on svg path:nth-child(3) { stroke:#7c8798; }
+  body.light-canvas #hintBar #returnBtn { background:linear-gradient(165deg, rgba(255,255,255,.85), rgba(250,243,228,.75) 45%, rgba(232,214,178,.8)); border-color:rgba(154,98,0,.7); color:#7a5200; text-shadow:0 0 6px rgba(255,255,255,.6); box-shadow:0 0 10px rgba(150,100,10,.3), inset 0 1px 0 rgba(255,255,255,.7); }
+  body.light-canvas #hintBar #returnBtn::after { border-top-color:rgba(154,98,0,.5); }
+  body.light-canvas #hintBar #returnBtn:hover { background:linear-gradient(165deg, rgba(255,255,255,.95), rgba(255,250,238,.85) 45%, rgba(240,224,190,.88)); border-color:#8a6a1f; color:#5a3f00; box-shadow:0 0 14px rgba(150,100,10,.42), inset 0 1px 0 rgba(255,255,255,.8); }
+  /* top pill in light mode: same white-glass treatment as the bottom pill */
+  body.light-canvas #tabBar { color:#233044; }
+  body.light-canvas #tabBar.glass {
+    background:
+      linear-gradient(115deg, rgba(255,255,255,.05), rgba(255,255,255,.01) 30%, rgba(255,255,255,0) 48%, rgba(255,255,255,.02) 74%, rgba(255,255,255,.04)),
+      linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0) 26%),
+      rgba(255,255,255,.93);
+    border-color:rgba(154,98,0,.55);
+    box-shadow:0 18px 50px rgba(30,45,75,.2), inset 0 1px 0 rgba(255,255,255,.28), 0 0 10px rgba(150,100,10,.35);
+  }
+  body.light-canvas #tabBar.noglass {
+    background:rgba(255,255,255,.93);
+    border-color:rgba(154,98,0,.55);
+    box-shadow:0 18px 50px rgba(30,45,75,.2), 0 0 10px rgba(150,100,10,.35);
+  }
+  body.light-canvas #tabBar .tabbar-label { color:#5a6b8c; }
+  body.light-canvas #tabBar .tab { background:rgba(35,80,180,.12); border-color:rgba(35,80,180,.4); color:#1a2a4a; }
+  body.light-canvas #tabBar .tab:hover { color:#0a1430; background:rgba(35,80,180,.24); border-color:rgba(35,80,180,.7); }
+  body.light-canvas #tabBar .tab.active { color:#fff; background:rgba(200,40,40,.78); border-color:rgba(200,40,40,.9); }
+  body.light-canvas #tabBar .tab.iso { color:#5a6b8c; border-color:rgba(120,140,165,.55); }
+  body.light-canvas #tabBar .tab.iso:hover { color:#1a2a4a; background:rgba(120,140,165,.14); }
+  body.light-canvas #tabBar .tab.iso.active { color:#fff; background:rgba(200,40,40,.78); border-color:rgba(200,40,40,.9); }
+  body.light-canvas #tabBar .tab.iso.tinted { color:#1a2a4a; }
+  body.light-canvas #tabBar .tab.iso.tinted.active { color:#fff; background:rgba(200,40,40,.78); }
+  body.light-canvas #tabBar .tabadd { color:#8a6a1f; }
+  body.light-canvas #tabBar .tabadd-out { color:#7a5c14; } /* standalone "+": deeper bronze for light canvas */
+  body.light-canvas #tabBar .tab.tabghost { color:#5a6b8c; border-color:rgba(35,80,180,.45); }
+  body.light-canvas #tabBar .tab.tabghost:hover { color:#0a1430; border-color:#8a6a1f; background:rgba(150,100,10,.14); }
+  body.light-canvas #tabBar .ugroup.ugroupghost { border-color:rgba(35,80,180,.45); }
+  body.light-canvas #tabBar .tabx { color:#5a6b8c; }
+  body.light-canvas #tabBar .tabsave { color:var(--saveink, #8a6a1f); }
+  body.light-canvas #tabBar .ugroup { border-color:rgba(35,80,180,.5); }
+  body.light-canvas #tabBar .ugroup.live { border-color:rgba(200,40,40,.8); box-shadow:0 0 10px rgba(200,40,40,.3); }
+  body.light-canvas #tabBar .ugroup > .uconn { background:rgba(200,40,40,.85); box-shadow:0 0 3px rgba(200,40,40,.4); }
+  body.light-canvas #tabBar .vm { color:#5a6b8c; }
+  body.light-canvas #tabBar .vm:hover { color:#0a1430; }
+  body.light-canvas #tabBar .vm.on { color:#8a6a1f; }
+  body.light-canvas #tabBar .vm.vmpill, body.light-canvas #tabBar .vm.taginv { color:#8a6a1f; }
+  body.light-canvas #tabBar .modeBtn { background:rgba(35,80,180,.12); color:#1a2a4a; border-color:rgba(35,80,180,.4); }
+  body.light-canvas #tabBar .modeBtn:hover { background:rgba(35,80,180,.24); }
+  body.dropping #app { outline:2px dashed var(--acc); outline-offset:-10px; }
+  body.dropping #hintBar { color:var(--txt); border-color:var(--acc); }
+  #toastEl { position:fixed; bottom:130px; left:50%; transform:translateX(-50%) translateY(10px); background:#1c2940; border:1px solid var(--line); color:#fff; font-size:13px; padding:9px 16px; border-radius:10px; opacity:0; transition:.25s; z-index:50; pointer-events:none; }
+  #toastEl.show { opacity:1; transform:translateX(-50%) translateY(0); }
+  .pickhide { position:fixed; left:8px; top:8px; width:4px; height:4px; opacity:0.01; pointer-events:none; }
+  .rotrow { display:flex; align-items:center; gap:8px; margin-top:8px; min-width:0; }
+  .rotrow .btn { white-space:nowrap; flex-shrink:0; width:94px; padding:4px 6px; text-align:center; }
+  .rotrow input[type="range"] { flex:1 1 auto; min-width:0; width:0; accent-color:var(--acc); cursor:pointer; }
+  /* gold toggles ride ONLY with luxury mode: the old blue returns the moment lux is off */
+  .lux input[type="range"] { accent-color:#E8C97A; background:transparent; } /* transparent kills the white input box: knob rides a thin native line, same as standard mode */
+  .lux input[type="range"]::-webkit-slider-thumb { -webkit-appearance:none; appearance:none; width:15px; height:15px; border-radius:50%; margin-top:-5.5px; border:1px solid #6b4d15; background:radial-gradient(circle at 35% 30%, #FFF6E0 0%, #F2D98F 35%, #C79A4B 72%, #6b4d15 100%); box-shadow:0 0 9px rgba(226,201,155,.7), inset 0 1px 1px rgba(255,255,255,.65); cursor:pointer; }
+  .lux input[type="range"]::-webkit-slider-runnable-track { height:4px; border-radius:2px; background:rgba(255,255,255,.16); }
+  .lux input[type="range"]::-moz-range-track { height:4px; border-radius:2px; background:rgba(255,255,255,.16); }
+  .lux input[type="range"]::-moz-range-progress { height:4px; border-radius:2px; background:linear-gradient(90deg, #8a6a1f, #E8C97A); }
+  /* locked shade row (left-pane luxury freezes shade at black): dimmed, tagged, no pointer */
+  .rotrow.shade-locked #bgMul::after { content:' · locked'; opacity:.65; }
+  .lux input[type="range"]::-moz-range-thumb { width:15px; height:15px; border-radius:50%; border:1px solid #6b4d15; background:radial-gradient(circle at 35% 30%, #FFF6E0 0%, #F2D98F 35%, #C79A4B 72%, #6b4d15 100%); box-shadow:0 0 9px rgba(226,201,155,.7), inset 0 1px 1px rgba(255,255,255,.65); cursor:pointer; }
+  /* ---- luxury hardware sliders (left pane, luxury mode only): tactile
+     brass-dial audio/console styling. Classic mode keeps the native look:
+     groove / fill / ticks stay hidden and the input fills the row exactly
+     as before. ---- */
+  :root {
+    --gold-primary: #e2c99b;
+    --gold-dark: #8a6f3e;
+    --gold-glow: rgba(226, 201, 155, 0.4);
+  }
+  .rotrow.control-row .slider-container { position:relative; flex:1 1 auto; min-width:0; width:0; display:flex; align-items:center; }
+  .rotrow.control-row .slider-container > input[type="range"].luxury-slider { width:100%; min-width:0; margin:0; }
+  .rotrow.control-row .slider-track-groove, .rotrow.control-row .slider-fill, .rotrow.control-row .ticks { display:none; }
+  #leftPanel.lux .rotrow.control-row { gap:10px; }
+  #leftPanel.lux .rotrow.control-row .slider-container { height:22px; }
+  /* 1. recessed track groove: channel cut into dark metal */
+  #leftPanel.lux .slider-track-groove {
+    display:block;
+    position:absolute; left:0; right:0; top:50%; transform:translateY(-50%);
+    height:6px; background:#090b0e; border-radius:20px;
+    border:1px solid rgba(226, 201, 155, 0.25);
+    box-shadow:inset 0 2px 4px rgba(0, 0, 0, 0.9), 0 1px 1px rgba(255, 255, 255, 0.05);
+    overflow:hidden; pointer-events:none;
+  }
+  /* 2. braided-gold fill bar */
+  #leftPanel.lux .slider-fill {
+    display:block;
+    height:100%; width:50%; border-radius:20px 0 0 20px;
+    background:
+      repeating-linear-gradient(45deg, rgba(255,240,210,.32) 0 2px, rgba(0,0,0,0) 2px 4px),
+      repeating-linear-gradient(-45deg, rgba(120,90,40,.45) 0 2px, rgba(0,0,0,0) 2px 4px),
+      linear-gradient(180deg, #f3e2c3 0%, #e2c99b 40%, #8a6f3e 100%);
+    box-shadow:0 0 8px var(--gold-glow);
+    transition:width 0.05s linear;
+  }
+  /* 3. engraved measurement ticks */
+  #leftPanel.lux .ticks {
+    display:flex; position:absolute; inset:0; align-items:center;
+    justify-content:space-between; padding:0 8px; opacity:.35; pointer-events:none;
+  }
+  #leftPanel.lux .ticks span { width:1px; height:3px; background:var(--gold-primary); }
+  /* 4. native input rides transparent over the groove */
+  #leftPanel.lux input[type="range"].luxury-slider {
+    -webkit-appearance:none; appearance:none;
+    position:absolute; left:0; top:0; width:100%; height:100%;
+    background:transparent; outline:none; cursor:pointer; z-index:2;
+  }
+  #leftPanel.lux input[type="range"].luxury-slider::-webkit-slider-runnable-track { height:100%; background:transparent; }
+  #leftPanel.lux input[type="range"].luxury-slider::-moz-range-track { height:100%; background:transparent; }
+  #leftPanel.lux input[type="range"].luxury-slider::-moz-range-progress { background:transparent; }
+  /* 5. brass dial knob with dark pearl dome + warm under-glow */
+  #leftPanel.lux input[type="range"].luxury-slider::-webkit-slider-thumb {
+    -webkit-appearance:none; appearance:none;
+    width:17px; height:17px; border-radius:50%;
+    background:
+      radial-gradient(circle at 32% 28%, rgba(255,255,255,.95) 0 1.5px, rgba(255,255,255,0) 3px),
+      radial-gradient(circle at 50% 42%, #2a3550 0%, #0b0e16 34%, rgba(0,0,0,0) 40%),
+      repeating-conic-gradient(from 0deg, rgba(255,244,220,.28) 0deg 7deg, rgba(60,44,16,.30) 7deg 14deg),
+      radial-gradient(circle at 35% 30%, #fff8e8 0%, #f3e2c3 30%, #c9a45e 58%, #6e5626 82%, #3a2d12 100%);
+    border:1.5px solid #f5e3be;
+    box-shadow:0 0 10px var(--gold-glow), 0 4px 8px rgba(0, 0, 0, 0.7),
+      inset 0 2px 3px rgba(255,255,255,.55), inset 0 -3px 6px rgba(0,0,0,.5);
+    cursor:pointer;
+    transition:transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  #leftPanel.lux input[type="range"].luxury-slider::-webkit-slider-thumb:hover {
+    transform:scale(1.1);
+    box-shadow:0 0 16px rgba(226, 201, 155, 0.7), 0 6px 12px rgba(0, 0, 0, 0.8),
+      inset 0 2px 3px rgba(255,255,255,.7), inset 0 -3px 6px rgba(0,0,0,.5);
+  }
+  #leftPanel.lux input[type="range"].luxury-slider::-webkit-slider-thumb:active { transform:scale(1.05); }
+  #leftPanel.lux input[type="range"].luxury-slider::-moz-range-thumb {
+    width:16px; height:16px; border-radius:50%;
+    background:
+      radial-gradient(circle at 32% 28%, rgba(255,255,255,.95) 0 1.5px, rgba(255,255,255,0) 3px),
+      radial-gradient(circle at 50% 42%, #2a3550 0%, #0b0e16 34%, rgba(0,0,0,0) 40%),
+      radial-gradient(circle at 35% 30%, #fff8e8 0%, #f3e2c3 30%, #c9a45e 58%, #6e5626 82%, #3a2d12 100%);
+    border:1.5px solid #f5e3be;
+    box-shadow:0 0 10px var(--gold-glow), 0 4px 8px rgba(0, 0, 0, 0.7),
+      inset 0 2px 3px rgba(255,255,255,.55), inset 0 -3px 6px rgba(0,0,0,.5);
+    cursor:pointer;
+  }
+  /* 6. engraved serif value readout */
+  #leftPanel.lux .rotrow.control-row .value-display {
+    font-family:Georgia, 'Palatino Linotype', 'Times New Roman', serif;
+    font-size:13px; font-weight:600; color:#e2c99b; letter-spacing:.06em;
+    min-width:44px; text-align:right; text-shadow:0 0 8px rgba(226, 201, 155, 0.3);
+  }
+  /* brass push-plate row buttons to match the console */
+  #leftPanel.lux .rotrow.control-row .btn {
+    background:linear-gradient(180deg, #2b2417 0%, #171310 60%, #0d0b08 100%);
+    border:1px solid rgba(226, 201, 155, .45);
+    color:#f0dcaa; text-shadow:0 0 6px rgba(226, 201, 155, .35);
+    box-shadow:inset 0 1px 1px rgba(255,240,210,.25), inset 0 -2px 4px rgba(0,0,0,.6), 0 2px 5px rgba(0,0,0,.5);
+    transition:transform .25s cubic-bezier(.16,1,.3,1), box-shadow .25s cubic-bezier(.16,1,.3,1), border-color .25s;
+  }
+  #leftPanel.lux .rotrow.control-row .btn:hover { transform:translateY(-1px); border-color:rgba(226, 201, 155, .8); box-shadow:inset 0 1px 1px rgba(255,240,210,.35), inset 0 -2px 4px rgba(0,0,0,.6), 0 0 10px rgba(226, 201, 155, .35); }
+  #leftPanel.lux .rotrow.control-row .btn:active { transform:translateY(1px); box-shadow:inset 0 2px 5px rgba(0,0,0,.7); }
+  /* locked shade row: dim the whole console strip, not just the input */
+  #leftPanel.lux .rotrow.shade-locked .slider-container, #leftPanel.lux .rotrow.shade-locked #bgBtn { opacity:.45; }
+  #leftPanel.lux .rotrow.shade-locked input[type="range"].luxury-slider { cursor:not-allowed; }
+  #leftPanel.lux .rotrow.shade-locked input[type="range"].luxury-slider::-webkit-slider-thumb { cursor:not-allowed; box-shadow:none; }
+  #leftPanel.lux .rotrow.shade-locked input[type="range"].luxury-slider::-moz-range-thumb { cursor:not-allowed; box-shadow:none; }
+  #leftPanel.lux .rotrow.shade-locked #bgBtn { cursor:not-allowed; }
+  .rotrow span[id$="Mul"] { font-size:11px; color:var(--mut); min-width:38px; text-align:right; flex-shrink:0; }
+  /* verse minimap (Distribute mode): bottom-right glass pane, header-drags to
+     move, corner-drags to resize, canvas fills the rest with the dot map */
+  #miniMap { position:absolute; z-index:23; display:flex; flex-direction:column; border-radius:14px; overflow:hidden; }
+  #miniMap[hidden] { display:none; }
+  #miniMapHead { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 32px 6px 10px; font-size:10.5px; letter-spacing:.12em; color:var(--acc); cursor:grab; user-select:none; -webkit-user-select:none; touch-action:none; flex:0 0 auto; }
+  #miniMapHead:active { cursor:grabbing; }
+  #miniMap .glassDot { top:8px; right:8px; }
+  #miniMapCount { color:var(--mut); letter-spacing:.02em; }
+  #miniMapCv { display:block; width:100%; flex:1 1 auto; min-height:0; }
+  #miniMapResize { position:absolute; right:1px; bottom:0; width:22px; height:22px; display:flex; align-items:center; justify-content:center; font-size:13px; color:var(--mut); cursor:nwse-resize; user-select:none; -webkit-user-select:none; touch-action:none; z-index:2; }
+  #miniMapResize:hover { color:#9cc2ff; }
+  #miniMap .mm-right { display:flex; align-items:center; gap:6px; }
+  #miniMapFold { background:none; border:1px solid var(--line); color:var(--mut); border-radius:6px; width:18px; height:18px; line-height:1; font-size:12px; cursor:pointer; padding:0; display:flex; align-items:center; justify-content:center; flex:0 0 auto; }
+  #miniMapFold:hover { color:#9cc2ff; border-color:#9cc2ff; }
+  #miniMap.folded #miniMapCv, #miniMap.folded #miniMapResize { display:none; }
+  /* folded corner bar: narrow widths must not wrap or push out — label
+     ellipsizes, count + fold key stay pinned at the right end */
+  #miniMap.folded #miniMapHead { white-space:nowrap; overflow:hidden; }
+  #miniMap.folded #miniMapHead > span:first-child { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #miniMap.folded .mm-right { flex:0 0 auto; }
+  #miniMap.folded #miniMapCount { white-space:nowrap; }
+  #leftPanel, #docPanel, #devBox, #miniMap, #glossPane, #notesPane, #pinPane { background:rgba(20,26,32,calc(.72 * var(--paneAlpha, 1))); }
+  /* crisp glass overlay: layered sheen + blur painted as the pane background itself,
+     so text, toggles, thumbnails and filenames always render in front of it */
+  #leftPanel.glass, #docPanel.glass, #devBox.glass, #miniMap.glass, #glossPane.glass, #notesPane.glass, #pinPane.glass {
+    background:
+      linear-gradient(115deg, rgba(255,255,255,calc(.14 * var(--paneAlpha,1))), rgba(255,255,255,calc(.03 * var(--paneAlpha,1))) 30%, rgba(255,255,255,0) 48%, rgba(255,255,255,calc(.05 * var(--paneAlpha,1))) 74%, rgba(255,255,255,calc(.10 * var(--paneAlpha,1)))),
+      linear-gradient(180deg, rgba(255,255,255,calc(.06 * var(--paneAlpha,1))), rgba(255,255,255,0) 26%),
+      rgba(20,26,32,calc(.72 * var(--paneAlpha, 1)));
+    backdrop-filter:blur(18px) saturate(1.35);
+    -webkit-backdrop-filter:blur(18px) saturate(1.35);
+    box-shadow:0 18px 50px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.22);
+  }
+  /* glass disengaged via the per-pane dot: flat background, no blur, no sheen */
+  #leftPanel.noglass, #docPanel.noglass, #devBox.noglass, #miniMap.noglass, #glossPane.noglass, #notesPane.noglass, #pinPane.noglass {
+    background:rgba(20,26,32,calc(.72 * var(--paneAlpha, 1)));
+    backdrop-filter:none; -webkit-backdrop-filter:none;
+    box-shadow:0 18px 50px rgba(0,0,0,.5);
+  }
+  /* polished-glass overlay for the pills — same removable treatment as the panes */
+  #tabBar.glass {
+    background:
+      linear-gradient(115deg, rgba(255,255,255,.14), rgba(255,255,255,.03) 30%, rgba(255,255,255,0) 48%, rgba(255,255,255,.05) 74%, rgba(255,255,255,.10)),
+      linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0) 26%),
+      rgba(8,12,18,.92);
+    backdrop-filter:blur(18px) saturate(1.35);
+    -webkit-backdrop-filter:blur(18px) saturate(1.35);
+    box-shadow:0 18px 50px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.22), 0 0 10px rgba(255,190,80,.35);
+  }
+  #hintBar.glass {
+    background:
+      linear-gradient(115deg, rgba(255,255,255,.14), rgba(255,255,255,.03) 30%, rgba(255,255,255,0) 48%, rgba(255,255,255,.05) 74%, rgba(255,255,255,.10)),
+      linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0) 26%),
+      rgba(10,15,24,.85);
+    backdrop-filter:blur(18px) saturate(1.35);
+    -webkit-backdrop-filter:blur(18px) saturate(1.35);
+    box-shadow:0 8px 28px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.22);
+  }
+  /* glass disengaged via the pill dots: flat background, no blur, no sheen */
+  #tabBar.noglass {
+    background:rgba(8,12,18,.92);
+    backdrop-filter:none; -webkit-backdrop-filter:none;
+    box-shadow:0 18px 50px rgba(0,0,0,.6), 0 0 10px rgba(255,190,80,.35);
+  }
+  #hintBar.noglass {
+    background:rgba(10,15,24,.85);
+    backdrop-filter:none; -webkit-backdrop-filter:none;
+    box-shadow:0 8px 28px rgba(0,0,0,.5);
+  }
+  /* white-canvas sharpness: dark glass washes out over a bright backdrop, so
+     deepen the base, mute the sheen, harden the edge and shadow. Only matches
+     body.light-canvas — the black-canvas look above is untouched. */
+  body.light-canvas #leftPanel.glass, body.light-canvas #docPanel.glass, body.light-canvas #devBox.glass, body.light-canvas #miniMap.glass, body.light-canvas #glossPane.glass, body.light-canvas #notesPane.glass, body.light-canvas #pinPane.glass {
+    background:
+      linear-gradient(115deg, rgba(255,255,255,calc(.05 * var(--paneAlpha,1))), rgba(255,255,255,calc(.01 * var(--paneAlpha,1))) 30%, rgba(255,255,255,0) 48%, rgba(255,255,255,calc(.02 * var(--paneAlpha,1))) 74%, rgba(255,255,255,calc(.04 * var(--paneAlpha,1)))),
+      linear-gradient(180deg, rgba(255,255,255,calc(.03 * var(--paneAlpha,1))), rgba(255,255,255,0) 26%),
+      rgba(13,17,24,calc(.88 * var(--paneAlpha, 1) + .08));
+    border-color:rgba(10,15,25,.65);
+    box-shadow:0 18px 50px rgba(20,30,50,.45), inset 0 1px 0 rgba(255,255,255,.28);
+  }
+  body.light-canvas #leftPanel.noglass, body.light-canvas #docPanel.noglass, body.light-canvas #devBox.noglass, body.light-canvas #miniMap.noglass, body.light-canvas #glossPane.noglass, body.light-canvas #notesPane.noglass, body.light-canvas #pinPane.noglass {
+    background:rgba(13,17,24,calc(.88 * var(--paneAlpha, 1) + .08));
+    border-color:rgba(10,15,25,.65);
+    box-shadow:0 18px 50px rgba(20,30,50,.45);
+  }
+  body.light-canvas #hintBar.glass {
+    background:
+      linear-gradient(115deg, rgba(255,255,255,.05), rgba(255,255,255,.01) 30%, rgba(255,255,255,0) 48%, rgba(255,255,255,.02) 74%, rgba(255,255,255,.04)),
+      linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0) 26%),
+      rgba(255,255,255,.93);
+    border-color:rgba(30,45,75,.28);
+    box-shadow:0 8px 28px rgba(30,45,75,.2), inset 0 1px 0 rgba(255,255,255,.28);
+  }
+  body.light-canvas #hintBar.noglass {
+    background:rgba(255,255,255,.93);
+    backdrop-filter:none; -webkit-backdrop-filter:none;
+    border-color:rgba(30,45,75,.28);
+    box-shadow:0 8px 28px rgba(30,45,75,.2);
+  }
+  /* round glossy toggle dot — top-right corner of each pane */
+  .glassDot { position:absolute; z-index:6; width:18px; height:18px; border-radius:50%; padding:0; cursor:pointer;
+    border:1px solid rgba(255,255,255,.55);
+    background:radial-gradient(circle at 34% 30%, rgba(240,246,253,.9) 0%, rgba(203,220,242,.48) 18%, rgba(150,180,218,.3) 38%, rgba(105,140,190,.42) 60%, rgba(70,120,185,.62) 100%); /* steel tones sit ~15 luma under the old wash so the disc matches the gold orb's visual weight at the same 18px box */
+    box-shadow:0 1px 4px rgba(0,0,0,.5), inset 0 1px 1px rgba(255,255,255,.8);
+  }
+  .glassDot:hover { transform:scale(1.18); }
+  .glassDot:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
+  #leftPanel .glassDot { top:38px; right:11px; }
+  #docPanel .glassDot { top:11px; right:40px; }
+  #devBox .glassDot { top:10px; right:10px; }
+  /* dimmed dot = glass currently off for that pane */
+  #leftPanel.noglass .glassDot, #docPanel.noglass .glassDot, #devBox.noglass .glassDot, #miniMap.noglass .glassDot, #glossPane.noglass .glassDot, #tabBar.noglass .glassDot, #hintBar.noglass .glassDot {
+    background:rgba(120,140,170,.22); border-color:rgba(140,160,190,.4); box-shadow:none;
+  }
+  /* pill dots ride the outer corners so they never cover pill content; the bottom tip opens upward */
+  #tabBar .glassDot { top:5px; right:38px; } /* 18px orb centered on the 24px ▴ button's midline (both centers at 14px) — parked high, clear of the cluster frame below */
+  /* the glaze orb blooms exactly like its gold neighbour (same 18px box, same
+     8px halo in its own silver-blue tone) so the pair reads as one size */
+  #tabBar .glassDot { box-shadow:0 0 8px rgba(160,200,255,.45), 0 1px 4px rgba(0,0,0,.5), inset 0 1px 1px rgba(255,255,255,.8); }
+  #tabBar.noglass .glassDot { box-shadow:0 0 8px rgba(140,160,190,.3); } /* dimmed keeps a faint halo so it still matches the gold orb's size */
+  #hintBar .hb-btns > .glassDot, #hintBar .hb-btns > .luxDot { top:50%; right:8px; transform:translateY(-50%); } /* glaze orb rides the buttons partition itself (it is position:relative), so it stays vertically centered no matter the partition height or wrap */
+  #hintBar .hb-btns > .glassDot:hover, #hintBar .hb-btns > .luxDot:hover { transform:translateY(-50%) scale(1.18); } /* hover grow keeps the vertical centering */
+  #hintBar .glassDot .glassTip { top:auto; bottom:calc(100% + 9px); }
+  /* hover explainer caption */
+  .glassDot .glassTip { position:absolute; top:calc(100% + 9px); right:-8px; width:196px; padding:9px 11px;
+    font-size:11.5px; line-height:1.55; color:var(--txt); text-align:left; font-weight:400;
+    background:rgba(16,22,32,.96); border:1px solid var(--line); border-radius:10px;
+    box-shadow:0 14px 40px rgba(0,0,0,.6); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+    visibility:hidden; opacity:0; transform:translateY(-4px); pointer-events:none;
+    transition:opacity .2s ease, transform .2s ease, visibility 0s linear .4s; }
+  .glassDot:hover .glassTip, .glassDot:focus-visible .glassTip { visibility:visible; opacity:1; transform:none; transition-delay:0s; }
+  /* collapsed panes hide everything but the arrow — dots included */
+  #leftPanel.collapsed .glassDot, #docPanel.collapsed .glassDot { display:none; }
+  #leftPanel.collapsed .luxDot, #docPanel.collapsed .luxDot { display:none; }
+  /* luxury mode: the silver glass orbs do nothing (the gold finish owns the
+     surface), so they step aside on any luxury surface — nothing to unhide */
+  .lux .glassDot { display:none; }
+  /* luxury pane finish (second overlay option for the side panes): gold cosmic-glass skin */
+  #leftPanel.lux, #docPanel.lux {
+    background-color:#0d0f12;
+    background-image:
+      radial-gradient(ellipse at 15% 15%, rgba(226,201,155,.08) 0%, transparent 60%),
+      radial-gradient(ellipse at 85% 85%, rgba(40,60,90,.15) 0%, transparent 60%),
+      url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.04'/%3E%3C/svg%3E");
+    border:1px solid rgba(226,201,155,.4);
+    box-shadow:
+      0 0 25px rgba(226,201,155,.35),
+      0 15px 35px rgba(0,0,0,.8),
+      inset 0 1px 2px rgba(255,255,255,.15);
+    backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+  }
+  /* reader pane extrusion (right pane only — the left pane keeps the shared skin above) */
+  #docPanel.lux {
+    background-color:#0b0d10;
+    background-image:
+      linear-gradient(165deg, rgba(42,48,62,.6) 0%, rgba(13,15,20,.15) 45%, rgba(0,0,0,.4) 100%),
+      radial-gradient(ellipse at 15% 15%, rgba(226,201,155,.10) 0%, transparent 60%),
+      radial-gradient(ellipse at 85% 85%, rgba(40,60,90,.18) 0%, transparent 60%),
+      url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.04'/%3E%3C/svg%3E");
+    border:1px solid rgba(226,201,155,.55);
+    border-top-color:rgba(255,232,190,.8);
+    box-shadow:
+      0 0 22px rgba(226,201,155,.38),
+      0 -1px 8px rgba(255,220,160,.18),
+      0 14px 30px rgba(0,0,0,.85),
+      inset 0 2px 3px rgba(255,240,210,.22),
+      inset 0 -1px 2px rgba(0,0,0,.6);
+  }
+  /* control-console extrusion (left pane only — same casting as the reader pane) */
+  #leftPanel.lux {
+    background-color:#0b0d10;
+    background-image:
+      linear-gradient(165deg, rgba(42,48,62,.6) 0%, rgba(13,15,20,.15) 45%, rgba(0,0,0,.4) 100%),
+      radial-gradient(ellipse at 15% 15%, rgba(226,201,155,.10) 0%, transparent 60%),
+      radial-gradient(ellipse at 85% 85%, rgba(40,60,90,.18) 0%, transparent 60%),
+      url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.04'/%3E%3C/svg%3E");
+    border:1px solid rgba(226,201,155,.55);
+    border-top-color:rgba(255,232,190,.8);
+    box-shadow:
+      0 0 22px rgba(226,201,155,.38),
+      0 -1px 8px rgba(255,220,160,.18),
+      0 14px 30px rgba(0,0,0,.85),
+      inset 0 2px 3px rgba(255,240,210,.22),
+      inset 0 -1px 2px rgba(0,0,0,.6);
+  }
+  /* luxury section labels (e.g. PERSONALIZATION): the luxury heading gold —
+     color only, the font itself is untouched; classic keeps its contrast ink */
+  #leftPanel.lux .sec-label { color:#E8C97A; }
+  /* verse-map extrusion (follows workspace luxury via luxMini; static lift only — the map is draggable, so no hover transform) */
+  #miniMap.lux {
+    background-color:#0b0d10;
+    background-image:
+      linear-gradient(165deg, rgba(42,48,62,.6) 0%, rgba(13,15,20,.15) 45%, rgba(0,0,0,.4) 100%),
+      radial-gradient(ellipse at 15% 15%, rgba(226,201,155,.10) 0%, transparent 60%),
+      radial-gradient(ellipse at 85% 85%, rgba(40,60,90,.18) 0%, transparent 60%),
+      url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.04'/%3E%3C/svg%3E");
+    border:1px solid rgba(226,201,155,.55);
+    border-top-color:rgba(255,232,190,.8);
+    box-shadow:
+      0 0 22px rgba(226,201,155,.38),
+      0 -1px 8px rgba(255,220,160,.18),
+      0 14px 30px rgba(0,0,0,.85),
+      inset 0 2px 3px rgba(255,240,210,.22),
+      inset 0 -1px 2px rgba(0,0,0,.6);
+  }
+  #miniMap.lux #miniMapHead { color:#E8C97A; }
+  #miniMap.lux #miniMapHead > span:first-child { font-family:Georgia, 'Palatino Linotype', 'Times New Roman', serif; letter-spacing:.14em; text-shadow:0 0 8px rgba(226,201,155,.35); }
+  #miniMap.lux #miniMapCount { color:rgba(226,201,155,.6); }
+  #miniMap.lux #miniMapCv { border-top:1px solid rgba(226,201,155,.25); }
+  #miniMap.lux #miniMapFold {
+    background:linear-gradient(180deg, rgba(34,40,52,.85) 0%, rgba(16,19,25,.85) 100%);
+    border:1px solid rgba(226,201,155,.5); color:#E8C97A;
+    box-shadow:
+      0 0 8px rgba(226,201,155,.2),
+      0 4px 10px rgba(0,0,0,.6),
+      inset 0 1px 2px rgba(255,240,210,.2);
+    transition:transform .25s cubic-bezier(.16,1,.3,1), box-shadow .25s cubic-bezier(.16,1,.3,1), border-color .25s, color .25s, background .25s;
+  }
+  #miniMap.lux #miniMapFold:hover {
+    transform:translateY(-1px);
+    border-color:rgba(255,232,190,.9); color:#FFF3D6;
+    box-shadow:
+      0 0 14px rgba(226,201,155,.45),
+      0 7px 14px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,240,210,.32);
+  }
+  #miniMap.lux #miniMapFold:active {
+    transform:translateY(1px);
+    box-shadow:
+      0 0 6px rgba(226,201,155,.25),
+      0 2px 6px rgba(0,0,0,.7),
+      inset 0 2px 4px rgba(0,0,0,.55);
+  }
+  #miniMap.lux #miniMapResize:hover { color:#FFF3D6; text-shadow:0 0 8px rgba(226,201,155,.6); }
+  /* top-diagonal glass specular reflection across the luxury pane */
+  #leftPanel.lux::before, #docPanel.lux::before {
+    content:''; position:absolute; top:0; left:0; right:0; height:45%;
+    background:linear-gradient(135deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.01) 60%, transparent 100%);
+    pointer-events:none;
+  }
+  /* luxury gold toggle orb — sits beside the glass orb on each side pane */
+  .luxDot { position:absolute; z-index:6; width:18px; height:18px; border-radius:50%; padding:0; cursor:pointer;
+    border:1px solid rgba(226,201,155,.75);
+    background:radial-gradient(circle at 32% 28%, rgba(255,244,220,.95), rgba(226,201,155,.45) 42%, rgba(150,110,60,.55) 68%, rgba(80,58,28,.7));
+    box-shadow:0 0 8px rgba(226,201,155,.45), inset 0 1px 1px rgba(255,255,255,.7);
+  }
+  .luxDot:hover { transform:scale(1.18); }
+  .luxDot:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
+  #leftPanel .luxDot { top:38px; right:33px; }
+  #docPanel .luxDot { top:11px; right:62px; }
+  /* dimmed orb = luxury finish currently off for that pane */
+  #leftPanel:not(.lux) .luxDot, #docPanel:not(.lux) .luxDot {
+    background:rgba(120,140,170,.22); border-color:rgba(140,160,190,.4); box-shadow:none;
+  }
+  .luxDot .glassTip { position:absolute; top:calc(100% + 9px); right:-8px; width:196px; padding:9px 11px;
+    font-size:11.5px; line-height:1.55; color:var(--txt); text-align:left; font-weight:400;
+    background:rgba(16,22,32,.96); border:1px solid var(--line); border-radius:10px;
+    box-shadow:0 14px 40px rgba(0,0,0,.6); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+    visibility:hidden; opacity:0; transform:translateY(-4px); pointer-events:none;
+    transition:opacity .2s ease, transform .2s ease, visibility 0s linear .4s; }
+  .luxDot:hover .glassTip, .luxDot:focus-visible .glassTip { visibility:visible; opacity:1; transform:none; transition-delay:0s; }
+  /* luxury ink for the toggle explainers: the glass/luxury orb tooltips wear
+     the luxury heading gold on any luxury surface — typeface untouched */
+  .lux .glassTip { color:#E8C97A; }
+  /* luxury inner cards / list containers */
+  .lux .card-item {
+    background:rgba(18,22,28,.7); border:1px solid rgba(226,201,155,.25);
+    border-radius:12px; padding:12px 16px; transition:all .25s ease;
+  }
+  .lux .card-item:hover { border-color:rgba(226,201,155,.6); box-shadow:0 0 12px rgba(226,201,155,.2); background:rgba(28,34,42,.85); }
+  /* ---- luxury inner dressing: gold-on-dark-glass reader + controls ---- */
+  /* (the left-pane logo is excluded by design — brand lock: it keeps the
+     original Inter look in every mode) */
+  /* reader title: original Inter in every mode; luxury only tints it the
+     luxury heading gold (color only — same treatment as the section labels) */
+  #docPanel.lux #docTitle { color:#E8C97A; }
+  #docPanel.lux #docMeta { color:rgba(226,201,155,.65); }
+  #docPanel.lux .kicker { color:#E8C97A; }
+  #docPanel.lux #docBody { color:#E8C97A; }
+  #docPanel.lux .ovNote { color:#E8C97A; } /* overview blurbs carry their own contrast-ink var — pin them to gold in luxury */
+  #docPanel.lux .tags-cap, #docPanel.lux .sg-label { color:#E8C97A; }
+  #leftPanel.lux .sub, #leftPanel.lux .notefilter { color:rgba(226,201,155,.6); }
+  #leftPanel.lux #intakeLog { color:#E8C97A !important; } /* !important beats the log line's inline status color */
+  /* text fields: dark glass wells with gold rims */
+  #leftPanel.lux input:not([type]), #leftPanel.lux input[type="text"],
+  #docPanel.lux input:not([type]), #docPanel.lux input[type="text"] {
+    background:rgba(10,12,16,.72); border:1px solid rgba(226,201,155,.45); color:#F0E6D2; border-radius:9px;
+  }
+  #leftPanel.lux input:not([type])::placeholder, #leftPanel.lux input[type="text"]::placeholder,
+  #docPanel.lux input:not([type])::placeholder, #docPanel.lux input[type="text"]::placeholder { color:rgba(226,201,155,.45); }
+  /* buttons + tag chips go gold-outline */
+  #leftPanel.lux .btn, #docPanel.lux .btn {
+    background:rgba(18,22,28,.6); border:1px solid rgba(226,201,155,.45); color:#E8C97A; border-radius:9px;
+  }
+  #leftPanel.lux .btn:hover, #docPanel.lux .btn:hover {
+    border-color:rgba(226,201,155,.8); color:#FFF3D6; background:rgba(30,36,46,.75); box-shadow:0 0 10px rgba(226,201,155,.25);
+  }
+  /* ---- luxury control-console keys (left pane only; rotrow brass plates keep their more-specific skin) ---- */
+  #leftPanel.lux .btn {
+    background:linear-gradient(180deg, rgba(34,40,52,.85) 0%, rgba(16,19,25,.85) 100%);
+    box-shadow:
+      0 0 12px rgba(226,201,155,.22),
+      0 6px 14px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,240,210,.22);
+    transition:transform .25s cubic-bezier(.16,1,.3,1), box-shadow .25s cubic-bezier(.16,1,.3,1), border-color .25s, background .25s, color .25s;
+  }
+  #leftPanel.lux .btn:hover {
+    transform:translateY(-2px);
+    background:linear-gradient(180deg, rgba(46,52,66,.92) 0%, rgba(20,24,31,.92) 100%);
+    box-shadow:
+      0 0 20px rgba(226,201,155,.45),
+      0 10px 22px rgba(0,0,0,.8),
+      inset 0 1px 2px rgba(255,240,210,.35);
+  }
+  #leftPanel.lux .btn:active {
+    transform:translateY(1px);
+    box-shadow:
+      0 0 8px rgba(226,201,155,.3),
+      0 3px 8px rgba(0,0,0,.75),
+      inset 0 2px 4px rgba(0,0,0,.6);
+  }
+  /* console text field stays a well (no lift) but glows gold on focus */
+  #leftPanel.lux input:not([type]):focus, #leftPanel.lux input[type="text"]:focus {
+    outline:none; border-color:rgba(255,232,190,.9);
+    box-shadow:0 0 12px rgba(226,201,155,.35), inset 0 1px 2px rgba(0,0,0,.4);
+  }
+  /* collapse toggles: full raised-key face in luxury (one shared face for both
+     panes). The rim stays 1px so the fixed 24px box never shifts. Deliberately
+     NO multi-property transition here: only docPanel's pre-existing top glide
+     is kept — the engine's live re-render cycle pins fresh transitions on
+     these two buttons at their start values (verified: 7 running
+     CSSTransitions stuck at base for 1.2s+), so hover/active swap instantly
+     instead of animating. */
+  #leftPanel.lux .collapseBtn, #docPanel.lux .collapseBtn {
+    background:linear-gradient(180deg, rgba(34,40,52,.85) 0%, rgba(16,19,25,.85) 100%);
+    border:1px solid rgba(226,201,155,.5); color:#E8C97A;
+    box-shadow:
+      0 0 8px rgba(226,201,155,.2),
+      0 4px 10px rgba(0,0,0,.6),
+      inset 0 1px 2px rgba(255,240,210,.2);
+    transition:top .45s ease;
+  }
+  #leftPanel.lux .collapseBtn:hover, #docPanel.lux .collapseBtn:hover {
+    border-color:rgba(255,232,190,.9); color:#FFF3D6;
+    background:linear-gradient(180deg, rgba(46,52,66,.92) 0%, rgba(20,24,31,.92) 100%);
+    box-shadow:
+      0 0 14px rgba(226,201,155,.45),
+      0 7px 14px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,240,210,.32);
+  }
+  #leftPanel.lux .collapseBtn:active, #docPanel.lux .collapseBtn:active {
+    color:#FFF3D6;
+    box-shadow:
+      0 0 6px rgba(226,201,155,.25),
+      0 2px 6px rgba(0,0,0,.7),
+      inset 0 2px 4px rgba(0,0,0,.55);
+  }
+  #leftPanel.lux .btn.danger, #docPanel.lux .btn.danger { border-color:rgba(255,120,120,.55); color:#F0A8A8; }
+  #docPanel.lux .tagpill { background:rgba(226,201,155,.08); border-color:rgba(226,201,155,.45); color:#E8C97A; }
+  #docPanel.lux .tagpill.auto { background:rgba(226,201,155,.08); border-color:rgba(226,201,155,.45); color:#E8C97A; }
+  #docPanel.lux .tagpill:hover { border-color:rgba(226,201,155,.8); color:#FFF3D6; box-shadow:0 0 10px rgba(226,201,155,.25); }
+  #docPanel.lux .help-edit-btn { background:rgba(18,22,28,.6); border:1px solid rgba(226,201,155,.4); color:#E8C97A; }
+  #docPanel.lux .sg-help, #leftPanel.lux .sg-help { color:#E8C97A; }
+  /* section headers: gold small caps over a hairline */
+  #docPanel.lux .bl-head { color:#E8C97A; border-bottom:1px solid rgba(226,201,155,.25); padding-bottom:5px; }
+  #docPanel.lux .bl-head .viewall { color:#FFF3D6; }
+  /* body rows become gold-rimmed cards */
+  #docPanel.lux .bl-wrap {
+    background:linear-gradient(180deg, rgba(34,40,52,.8) 0%, rgba(16,19,25,.8) 100%);
+    border:1px solid rgba(226,201,155,.5); border-radius:12px;
+    padding:8px; gap:6px;
+    box-shadow:
+      0 0 12px rgba(226,201,155,.18),
+      0 6px 14px rgba(0,0,0,.65),
+      inset 0 1px 2px rgba(255,240,210,.2);
+    transition:transform .25s cubic-bezier(.16,1,.3,1), box-shadow .25s cubic-bezier(.16,1,.3,1), border-color .25s, background .25s;
+  }
+  #docPanel.lux .bl-wrap:hover {
+    border-color:rgba(226,201,155,.8);
+    transform:translateY(-1px);
+    box-shadow:
+      0 0 20px rgba(226,201,155,.4),
+      0 10px 22px rgba(0,0,0,.8),
+      inset 0 1px 2px rgba(255,240,210,.32);
+  }
+ #docPanel.lux .bl-row { background:none; border:none; color:#F0E6D2; margin:0; padding:2px 4px; white-space:normal; }
+  #docPanel.lux .bl-wrap:has(.bl-x) .bl-row { padding-right:34px; } /* title never runs under the × */
+  #docPanel.lux .bl-wrap:has(.bl-ft) .bl-row { padding-right:58px; } /* title never runs under the badge (or the × below it) */
+  #docPanel.lux .bl-row span { color:rgba(226,201,155,.6); }
+  #docPanel.lux .bl-row:hover { background:none; }
+  #docPanel.lux .bl-row:hover { color:#FFF3D6; }
+  #docPanel.lux .bl-dot { background:rgba(18,22,28,.6); border:1px solid rgba(226,201,155,.5); color:#E8C97A; border-radius:9px; }
+  #docPanel.lux .bl-dot:hover { border-color:#E2C99B; color:#FFF3D6; background:rgba(30,36,46,.75); box-shadow:0 0 10px rgba(226,201,155,.25); }
+  #docPanel.lux .bl-eye, #docPanel.lux .bl-slot { border:1px solid rgba(226,201,155,.65); border-radius:8px; color:#F5D998; background:rgba(18,22,28,.6); }
+  #docPanel.lux .bl-eye:hover, #docPanel.lux .bl-slot:hover { border-color:#E2C99B; color:#FFF3D6; }
+  #docPanel.lux .bl-ft { border:1px solid rgba(226,201,155,.55); color:#E8C97A; background:rgba(18,22,28,.7); }
+  #docPanel.lux .bl-x { color:rgba(226,201,155,.55); background:rgba(10,12,16,.6); }
+  /* ---- luxury reader controls: raised gold keys (right pane only; shared .btn skin above stays for the left pane) ---- */
+  #docPanel.lux .btn {
+    background:linear-gradient(180deg, rgba(34,40,52,.85) 0%, rgba(16,19,25,.85) 100%);
+    box-shadow:
+      0 0 12px rgba(226,201,155,.22),
+      0 6px 14px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,240,210,.22);
+    transition:transform .25s cubic-bezier(.16,1,.3,1), box-shadow .25s cubic-bezier(.16,1,.3,1), border-color .25s, background .25s, color .25s;
+  }
+  #docPanel.lux .btn:hover {
+    transform:translateY(-2px);
+    background:linear-gradient(180deg, rgba(46,52,66,.92) 0%, rgba(20,24,31,.92) 100%);
+    box-shadow:
+      0 0 20px rgba(226,201,155,.45),
+      0 10px 22px rgba(0,0,0,.8),
+      inset 0 1px 2px rgba(255,240,210,.35);
+  }
+  #docPanel.lux .btn:active {
+    transform:translateY(1px);
+    box-shadow:
+      0 0 8px rgba(226,201,155,.3),
+      0 3px 8px rgba(0,0,0,.75),
+      inset 0 2px 4px rgba(0,0,0,.6);
+  }
+  #docPanel.lux .btn.danger {
+    background:linear-gradient(180deg, rgba(64,28,28,.65) 0%, rgba(28,12,12,.65) 100%);
+    box-shadow:
+      0 0 12px rgba(255,91,91,.25),
+      0 6px 14px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,200,200,.18);
+  }
+  #docPanel.lux .btn.danger:hover {
+    transform:translateY(-2px);
+    box-shadow:
+      0 0 20px rgba(255,91,91,.5),
+      0 10px 22px rgba(0,0,0,.8),
+      inset 0 1px 2px rgba(255,200,200,.3);
+  }
+  #docPanel.lux .tagpill, #docPanel.lux .tagpill.auto {
+    background:linear-gradient(180deg, rgba(40,34,22,.7) 0%, rgba(16,13,9,.7) 100%);
+    box-shadow:
+      0 0 8px rgba(226,201,155,.18),
+      0 4px 10px rgba(0,0,0,.6),
+      inset 0 1px 2px rgba(255,240,210,.2);
+    transition:transform .25s cubic-bezier(.16,1,.3,1), box-shadow .25s cubic-bezier(.16,1,.3,1), border-color .25s, color .25s;
+  }
+  #docPanel.lux .tagpill:hover {
+    transform:translateY(-1px);
+    box-shadow:
+      0 0 16px rgba(226,201,155,.45),
+      0 8px 16px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,240,210,.32);
+  }
+  #docPanel.lux .tagpill:active {
+    transform:translateY(1px);
+    box-shadow:
+      0 0 6px rgba(226,201,155,.25),
+      0 2px 6px rgba(0,0,0,.7),
+      inset 0 2px 4px rgba(0,0,0,.55);
+  }
+  #docPanel.lux .help-edit-btn {
+    background:linear-gradient(180deg, rgba(34,40,52,.85) 0%, rgba(16,19,25,.85) 100%);
+    box-shadow:
+      0 0 8px rgba(226,201,155,.18),
+      0 4px 10px rgba(0,0,0,.6),
+      inset 0 1px 2px rgba(255,240,210,.2);
+    transition:transform .25s cubic-bezier(.16,1,.3,1), box-shadow .25s cubic-bezier(.16,1,.3,1), border-color .25s, color .25s;
+  }
+  #docPanel.lux .help-edit-btn:hover {
+    transform:translateY(-1px);
+    border-color:rgba(226,201,155,.8); color:#FFF3D6;
+    box-shadow:
+      0 0 16px rgba(226,201,155,.45),
+      0 8px 16px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,240,210,.32);
+  }
+  /* row furniture: miniature raised keys */
+  #docPanel.lux .bl-dot, #docPanel.lux .bl-eye, #docPanel.lux .bl-slot, #docPanel.lux .bl-x {
+    background:linear-gradient(180deg, rgba(34,40,52,.85) 0%, rgba(16,19,25,.85) 100%);
+    box-shadow:
+      0 0 8px rgba(226,201,155,.18),
+      0 4px 10px rgba(0,0,0,.6),
+      inset 0 1px 2px rgba(255,240,210,.2);
+    transition:transform .25s cubic-bezier(.16,1,.3,1), box-shadow .25s cubic-bezier(.16,1,.3,1), border-color .25s, color .25s, background .25s;
+  }
+  #docPanel.lux .bl-dot:hover, #docPanel.lux .bl-eye:hover, #docPanel.lux .bl-slot:hover, #docPanel.lux .bl-x:hover {
+    transform:translateY(-1px);
+    border-color:rgba(226,201,155,.85); color:#FFF3D6;
+    background:linear-gradient(180deg, rgba(46,52,66,.92) 0%, rgba(20,24,31,.92) 100%);
+    box-shadow:
+      0 0 14px rgba(226,201,155,.45),
+      0 7px 14px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,240,210,.32);
+  }
+  #docPanel.lux .bl-dot:active, #docPanel.lux .bl-eye:active, #docPanel.lux .bl-slot:active, #docPanel.lux .bl-x:active {
+    transform:translateY(1px);
+    box-shadow:
+      0 0 6px rgba(226,201,155,.25),
+      0 2px 6px rgba(0,0,0,.7),
+      inset 0 2px 4px rgba(0,0,0,.55);
+  }
+  /* +#tag slot provenance in luxury: user-made stays dashed, brighter gold + halo; system-associated stays solid gold */
+  #docPanel.lux .bl-slot.slot-user { border-style:dashed; border-color:rgba(232,201,122,.9); color:#FFF3D6; background:rgba(233,195,60,.10); box-shadow:0 0 8px rgba(226,201,155,.3), 0 4px 10px rgba(0,0,0,.6), inset 0 1px 2px rgba(255,240,210,.2); }
+  #docPanel.lux .bl-slot.slot-solid { border-style:solid; }
+  /* find field stays a well (no lift) but glows gold on focus */
+  #docPanel.lux #findBar input:focus {
+    outline:none; border-color:rgba(255,232,190,.9);
+    box-shadow:0 0 12px rgba(226,201,155,.35), inset 0 1px 2px rgba(0,0,0,.4);
+  }
+  /* (pane collapse toggles share the raised-key face defined with the left pane above) */
+  /* ---- luxury side book tabs: glossary + notes + pinned notes ----
+     Edge-docked tabs: NO transform lifts here (they must stay glued to the
+     panel edge; .pinTab additionally bans transitions — the compositor can
+     strand them mid-swing). Elevation comes from rim + halo + bevel only. */
+  #leftPanel.lux #glossTab,
+  #docPanel.lux ~ #notesTab,
+  #docPanel.lux ~ .pinTab {
+    background:linear-gradient(180deg, rgba(38,44,56,.94) 0%, rgba(16,19,25,.94) 100%);
+    border-color:#E2C99B; /* opaque: the old .55 rim ghosted beside the tab exactly like the pill rims did */
+    color:#E8C97A;
+    box-shadow:
+      0 0 12px rgba(226,201,155,.25),
+      4px 6px 14px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,240,210,.22);
+  }
+  #leftPanel.lux #glossTab span,
+  #docPanel.lux ~ #notesTab span,
+  #docPanel.lux ~ .pinTab span { font-family:Georgia, 'Palatino Linotype', 'Times New Roman', serif; }
+  /* NO transitions on these tabs (see collapse toggles above): the live engine
+     pins fresh color/shadow transitions on panel chrome at their start
+     values, freezing the classic faces on — verified live just now (lux
+     background + Georgia applied, border/color/shadow stuck classic).
+     Hover/open swap instantly instead; transform was already banned here. */
+  #docPanel.lux ~ #notesTab { transition:transform .45s ease; } /* seating slide only — positional transitions are immune; color/shadow ones freeze */
+  #leftPanel.lux #glossTab:hover,
+  #docPanel.lux ~ #notesTab:hover,
+  #docPanel.lux ~ .pinTab:hover {
+    color:#FFF3D6; border-color:#FFE8BE;
+    box-shadow:
+      0 0 20px rgba(226,201,155,.5),
+      4px 8px 18px rgba(0,0,0,.75),
+      inset 0 1px 2px rgba(255,240,210,.35);
+  }
+  #leftPanel.lux #glossTab.open,
+  #docPanel.lux ~ #notesTab.open,
+  #docPanel.lux ~ .pinTab.open {
+    color:#FFF3D6; border-color:#FFE8BE;
+    box-shadow:
+      0 0 16px rgba(226,201,155,.45),
+      4px 6px 14px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,240,210,.3);
+  }
+  #docPanel.lux .bl-note { background:rgba(226,201,155,.12); border-color:rgba(226,201,155,.55); color:#E8C97A; }
+  /* ---- luxury pills: same gold cosmic-glass skin for the top + bottom pills ---- */
+  #tabBar.lux, #hintBar.lux {
+    background-color:#0d0f12;
+    background-image:
+      radial-gradient(ellipse at 15% 15%, rgba(226,201,155,.08) 0%, transparent 60%),
+      radial-gradient(ellipse at 85% 85%, rgba(40,60,90,.15) 0%, transparent 60%),
+      url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.04'/%3E%3C/svg%3E");
+    border:1px solid rgba(226,201,155,.4);
+    box-shadow:
+      0 0 25px rgba(226,201,155,.35),
+      0 15px 35px rgba(0,0,0,.8),
+      inset 0 1px 2px rgba(255,255,255,.15);
+    backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+  }
+  #tabBar.lux::before {
+    content:''; position:absolute; top:0; left:0; right:0; height:45%;
+    background:linear-gradient(135deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.01) 60%, transparent 100%);
+    pointer-events:none;
+  }
+  /* ---- luxury top pill, raised 3D extrusion (top pill only — bottom pill keeps the shared skin above) ---- */
+  #tabBar.lux {
+    background-clip:padding-box; /* translucent rim stays uniform: no metallic bleed under the gold border */
+    background-color:#0b0d10;
+    background-image:
+      linear-gradient(165deg, rgba(42,48,62,.6) 0%, rgba(13,15,20,.15) 45%, rgba(0,0,0,.4) 100%),
+      radial-gradient(ellipse at 15% 15%, rgba(226,201,155,.10) 0%, transparent 60%),
+      radial-gradient(ellipse at 85% 85%, rgba(40,60,90,.18) 0%, transparent 60%),
+      url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.04'/%3E%3C/svg%3E");
+    border:1px solid #E2C99B; /* opaque hairline: translucent rims composite unpredictably over backdrop blur and read as scratches */
+    border-top-color:rgba(255,232,190,.8);
+    box-shadow:
+      0 0 22px rgba(226,201,155,.38),
+      0 -1px 8px rgba(255,220,160,.18),
+      0 14px 30px rgba(0,0,0,.85),
+      inset 0 2px 3px rgba(255,240,210,.22),
+      inset 0 -1px 2px rgba(0,0,0,.6);
+  }
+  /* luxury gold orbs ride beside the glass orbs on both pills */
+  #tabBar .luxDot { top:5px; right:60px; }
+  #hintBar .luxDot { top:8px; right:30px; }
+  /* the top-pill luxury orb stays gold in regular mode too (it is the switch
+     that invites you into luxury — dimming it read as disabled) */
+  #hintBar:not(.lux) .luxDot {
+    background:rgba(120,140,170,.22); border-color:rgba(140,160,190,.4); box-shadow:none;
+  }
+  /* top pill inner dressing */
+  #tabBar.lux .tabbar-label { color:#E8C97A; }
+  #tabBar.lux .tab:not(.tabghost) {
+    background:linear-gradient(180deg, rgba(34,40,52,.85) 0%, rgba(16,19,25,.85) 100%);
+    border-color:rgba(226,201,155,.55); color:#E8C97A;
+    box-shadow:
+      0 0 12px rgba(226,201,155,.22),
+      0 6px 14px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,240,210,.22);
+    transition:transform .25s cubic-bezier(.16,1,.3,1), box-shadow .25s cubic-bezier(.16,1,.3,1), border-color .25s, background .25s, color .25s;
+  }
+  #tabBar.lux .tab:not(.tabghost):hover {
+    border-color:rgba(226,201,155,.85); color:#FFF3D6;
+    background:linear-gradient(180deg, rgba(46,52,66,.92) 0%, rgba(20,24,31,.92) 100%);
+    transform:translateY(-1px);
+    box-shadow:
+      0 0 20px rgba(226,201,155,.45),
+      0 10px 22px rgba(0,0,0,.8),
+      inset 0 1px 2px rgba(255,240,210,.35);
+  }
+  #tabBar.lux .tab:not(.tabghost):active {
+    transform:translateY(1px);
+    box-shadow:
+      0 0 8px rgba(226,201,155,.3),
+      0 3px 8px rgba(0,0,0,.75),
+      inset 0 2px 4px rgba(0,0,0,.6);
+  }
+  #tabBar.lux .tab.active {
+    background:linear-gradient(180deg, rgba(130,44,44,.6) 0%, rgba(66,20,20,.6) 100%);
+    border-color:rgba(226,201,155,.8); color:#FFF3D6;
+    box-shadow:
+      0 0 14px rgba(226,201,155,.35),
+      0 6px 14px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,240,210,.25);
+  }
+  #tabBar.lux .tabadd, #tabBar.lux .tabadd-out { color:#E8C97A; }
+  #tabBar.lux .vm { color:rgba(226,201,155,.7); }
+  #tabBar.lux .vm:hover, #tabBar.lux .vm.on { color:#FFF3D6; }
+  #tabBar.lux .vm.pilltoggle:hover { background:rgba(226,201,155,.18); border-color:rgba(226,201,155,.6); color:#FFF3D6; }
+  /* pill collapse toggle: same raised-key face at rest + inset press (hover lift already defined below) */
+  #tabBar.lux .vm.pilltoggle {
+    background:linear-gradient(180deg, rgba(34,40,52,.85) 0%, rgba(16,19,25,.85) 100%);
+    border:1px solid rgba(226,201,155,.5); color:#E8C97A;
+    box-shadow:
+      0 0 8px rgba(226,201,155,.2),
+      0 4px 10px rgba(0,0,0,.6),
+      inset 0 1px 2px rgba(255,240,210,.2);
+  }
+  #tabBar.lux .vm.pilltoggle:active {
+    transform:translateY(1px);
+    box-shadow:
+      0 0 6px rgba(226,201,155,.25),
+      0 2px 6px rgba(0,0,0,.7),
+      inset 0 2px 4px rgba(0,0,0,.55);
+  }
+  #tabBar.lux .sg-help { color:#E8C97A; }
+  #tabBar.lux .ugroup { border-color:rgba(226,201,155,.5); }
+  #tabBar.lux .ugroup.live { border-color:rgba(226,201,155,.85); box-shadow:0 0 10px rgba(226,201,155,.35); }
+  #tabBar.lux .ugroup > .uconn { background:rgba(226,201,155,.7); box-shadow:0 0 4px rgba(226,201,155,.5); }
+  /* ---- luxury book tabs: raised gold keys (visible face is the ::before trapezoid, so the lift lives there) ---- */
+  #tabBar.lux .vm.vmpill::before, #tabBar.lux .vm.taginv::before {
+    box-shadow:
+      0 0 14px rgba(226,201,155,.30),
+      0 8px 18px rgba(0,0,0,.75),
+      inset 0 1px 2px rgba(255,240,210,.30);
+  }
+  #tabBar.lux .vm.vmpill, #tabBar.lux .vm.taginv { transition:transform .25s cubic-bezier(.16,1,.3,1); }
+  #tabBar.lux .vm.vmpill:hover { transform:translateY(7px); } /* base staggers 9px down; hover lifts 2px */
+  #tabBar.lux .vm.taginv:hover { transform:translateY(calc(-50% + 10px)); } /* base hangs 12px low; hover lifts 2px */
+  #tabBar.lux .vm.vmpill:hover::before, #tabBar.lux .vm.taginv:hover::before {
+    border-color:rgba(255,232,190,.9);
+    box-shadow:
+      0 0 24px rgba(226,201,155,.55),
+      0 12px 24px rgba(0,0,0,.85),
+      inset 0 1px 3px rgba(255,240,210,.45);
+  }
+  #tabBar.lux .vm.vmpill:active { transform:translateY(10px); }
+  #tabBar.lux .vm.taginv:active { transform:translateY(calc(-50% + 13px)); }
+  #tabBar.lux .vm.vmpill:active::before, #tabBar.lux .vm.taginv:active::before {
+    box-shadow:
+      0 0 8px rgba(226,201,155,.35),
+      0 3px 8px rgba(0,0,0,.8),
+      inset 0 2px 4px rgba(0,0,0,.55);
+  }
+  /* ---- luxury pill furniture: mode orb, collapse toggle, glaze dots lift a touch on hover ---- */
+  #tabBar.lux .modeBtn, #tabBar.lux .vm.pilltoggle { transition:transform .25s cubic-bezier(.16,1,.3,1), box-shadow .25s cubic-bezier(.16,1,.3,1), border-color .25s, background .25s; }
+  #tabBar.lux .modeBtn:hover, #tabBar.lux .vm.pilltoggle:hover {
+    transform:translateY(-1px);
+    border-color:rgba(255,232,190,.9);
+    box-shadow:
+      0 0 12px rgba(226,201,155,.5),
+      0 5px 10px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,240,210,.35);
+  }
+  #tabBar.lux .luxDot:hover, #tabBar.lux .glassDot:hover { box-shadow:0 0 10px rgba(226,201,155,.7); }
+  /* ---- luxury locate floater (gotoSide): same pane extrusion + raised gold book tabs ---- */
+  #gotoSide.lux {
+    background-color:#0b0d10;
+    background-image:
+      linear-gradient(165deg, rgba(42,48,62,.6) 0%, rgba(13,15,20,.15) 45%, rgba(0,0,0,.4) 100%),
+      radial-gradient(ellipse at 15% 15%, rgba(226,201,155,.10) 0%, transparent 60%),
+      radial-gradient(ellipse at 85% 85%, rgba(40,60,90,.18) 0%, transparent 60%),
+      url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.04'/%3E%3C/svg%3E");
+    border:1px solid rgba(226,201,155,.55);
+    border-top-color:rgba(255,232,190,.8);
+    box-shadow:
+      0 0 22px rgba(226,201,155,.38),
+      0 -1px 8px rgba(255,220,160,.18),
+      0 14px 30px rgba(0,0,0,.85),
+      inset 0 2px 3px rgba(255,240,210,.22),
+      inset 0 -1px 2px rgba(0,0,0,.6);
+  }
+  #gotoSide.lux #gotoSideCap { color:#E8C97A; }
+  /* raised gold keys (visible face is the ::before trapezoid, so the lift lives there) */
+  #gotoSide.lux #gotoSideRow button { transition:transform .25s cubic-bezier(.16,1,.3,1), color .25s; }
+  #gotoSide.lux #gotoSideRow button::before {
+    box-shadow:
+      0 0 14px rgba(226,201,155,.30),
+      0 8px 18px rgba(0,0,0,.75),
+      inset 0 1px 2px rgba(255,240,210,.30);
+  }
+  #gotoSide.lux #gotoSideRow button:hover { transform:translateY(6px); color:#FFF3D6; } /* base stagger 8px down; hover lifts 2px */
+  #gotoSide.lux #gotoSideRow button:hover::before {
+    border-color:rgba(255,232,190,.9);
+    box-shadow:
+      0 0 24px rgba(226,201,155,.55),
+      0 12px 24px rgba(0,0,0,.85),
+      inset 0 1px 3px rgba(255,240,210,.45);
+  }
+  #gotoSide.lux #gotoSideRow button:active { transform:translateY(9px); }
+  #gotoSide.lux #gotoSideRow button:active::before {
+    box-shadow:
+      0 0 8px rgba(226,201,155,.35),
+      0 3px 8px rgba(0,0,0,.8),
+      inset 0 2px 4px rgba(0,0,0,.55);
+  }
+  #gotoSide.lux #gotoSideRow button.picked { color:#FFF3D6; }
+  #gotoSide.lux #gotoSideRow button.picked::before {
+    border-color:rgba(255,120,120,.85);
+    box-shadow:
+      0 0 16px rgba(255,91,91,.45),
+      0 8px 18px rgba(0,0,0,.75),
+      inset 0 1px 2px rgba(255,240,210,.3);
+  }
+  /* bottom pill inner dressing */
+  #hintBar.lux { color:#EDE0C6; }
+  #hintBar.lux .hb-tips { color:rgba(237,224,198,.85); }
+  /* luxury tips ink (font untouched — color only): plain phrases warm cream, accent phrases heading gold, separators dim gold */
+  #hintBar.lux .hb-tips .tt-w { color:#EDE0C6; }
+  #hintBar.lux .hb-tips .tt-g { color:#E8C97A; }
+  #hintBar.lux .hb-tips .tt-sep { color:rgba(226,201,155,.5); }
+  /* bottom pill function keys: raised 3D gold (standalone tabs lift themselves; split pairs lift as one frame) */
+  #hintBar.lux #tipsBtn, #hintBar.lux #hvBtn {
+    background:linear-gradient(180deg, rgba(34,40,52,.85) 0%, rgba(16,19,25,.85) 100%);
+    border-color:rgba(226,201,155,.55); color:#E8C97A;
+    box-shadow:
+      0 0 12px rgba(226,201,155,.22),
+      0 6px 14px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,240,210,.22);
+    transition:transform .25s cubic-bezier(.16,1,.3,1), box-shadow .25s cubic-bezier(.16,1,.3,1), border-color .25s, background .25s, color .25s;
+  }
+  #hintBar.lux #tipsBtn:hover, #hintBar.lux #hvBtn:hover {
+    border-color:rgba(226,201,155,.85); color:#FFF3D6;
+    background:linear-gradient(180deg, rgba(46,52,66,.92) 0%, rgba(20,24,31,.92) 100%);
+    transform:translateY(-2px);
+    box-shadow:
+      0 0 20px rgba(226,201,155,.45),
+      0 10px 22px rgba(0,0,0,.8),
+      inset 0 1px 2px rgba(255,240,210,.35);
+  }
+  #hintBar.lux #tipsBtn:active, #hintBar.lux #hvBtn:active {
+    transform:translateY(1px);
+    box-shadow:
+      0 0 8px rgba(226,201,155,.3),
+      0 3px 8px rgba(0,0,0,.75),
+      inset 0 2px 4px rgba(0,0,0,.6);
+  }
+  #hintBar.lux #tipsBtn.open, #hintBar.lux #hvBtn.on {
+    border-color:rgba(255,120,120,.7); color:#FFF3D6;
+    box-shadow:
+      0 0 12px rgba(255,91,91,.45),
+      0 6px 14px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,240,210,.22);
+  }
+  /* split pairs: the outer frame is the visible key (inner buttons are flat over it; the frame clips outward glow, so shadows live on the frame) */
+  #hintBar.lux .hb-btns > .splitab {
+    background:linear-gradient(180deg, rgba(34,40,52,.85) 0%, rgba(16,19,25,.85) 100%);
+    border-color:rgba(226,201,155,.55);
+    box-shadow:
+      0 0 12px rgba(226,201,155,.22),
+      0 6px 14px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,240,210,.22);
+    transition:transform .25s cubic-bezier(.16,1,.3,1), box-shadow .25s cubic-bezier(.16,1,.3,1), border-color .25s, background .25s;
+  }
+  #hintBar.lux .hb-btns > .splitab:hover {
+    border-color:rgba(226,201,155,.85);
+    transform:translateY(-2px);
+    box-shadow:
+      0 0 20px rgba(226,201,155,.45),
+      0 10px 22px rgba(0,0,0,.8),
+      inset 0 1px 2px rgba(255,240,210,.35);
+  }
+  #hintBar.lux .hb-btns > .splitab:active {
+    transform:translateY(1px);
+    box-shadow:
+      0 0 8px rgba(226,201,155,.3),
+      0 3px 8px rgba(0,0,0,.75),
+      inset 0 2px 4px rgba(0,0,0,.6);
+  }
+  #hintBar.lux .hb-btns > .splitab:has(> button.on) {
+    border-color:rgba(255,120,120,.7);
+    box-shadow:
+      0 0 12px rgba(255,91,91,.45),
+      0 6px 14px rgba(0,0,0,.7),
+      inset 0 1px 2px rgba(255,240,210,.22);
+  }
+  #hintBar.lux .hb-btns > .splitab > button {
+    background:none; color:#E8C97A;
+    box-shadow:inset 0 1px 2px rgba(255,240,210,.14);
+    transition:color .25s, box-shadow .25s cubic-bezier(.16,1,.3,1);
+  }
+  #hintBar.lux .hb-btns > .splitab > button.split-l { border-right-color:rgba(226,201,155,.4); }
+  #hintBar.lux .hb-btns > .splitab > button:hover { color:#FFF3D6; }
+  #hintBar.lux .hb-btns > .splitab > button:active { box-shadow:inset 0 2px 4px rgba(0,0,0,.6); }
+  #hintBar.lux .hb-btns > .splitab > button.on { color:#FFF3D6; }
+  /* ---- bottom pill split: function-buttons partition over tips partition ----
+     The outer pill goes transparent (positioning shell only); .hb-btns and
+     .hb-tips become the two visible pills — same width, stacked close.
+     Every background variant (dark / light-canvas / noglass / lux) is
+     mirrored onto both partitions so all modes look exactly as before. */
+  #hintBar { padding:0; gap:5px; background:none; border-color:transparent; box-shadow:none; backdrop-filter:none; -webkit-backdrop-filter:none; }
+  #hintBar.glass, #hintBar.lux, body.light-canvas #hintBar, body.light-canvas #hintBar.glass, #hintBar.noglass, body.light-canvas #hintBar.noglass { background:none; background-image:none; border-color:transparent; box-shadow:none; backdrop-filter:none; -webkit-backdrop-filter:none; }
+  #hintBar .hb-btns, #hintBar .hb-tips {
+    width:100%; box-sizing:border-box; position:relative;
+    background:rgba(10,15,24,.85); border:1px solid rgba(140,170,220,.38);
+    border-radius:14px; box-shadow:0 8px 28px rgba(0,0,0,.5);
+    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  }
+  #hintBar .hb-btns { padding:0 30px 5px 14px; } /* top padding 0 (was 6px): lifts the whole tab row so the open tab tops cross the partition's top line — the bottom-pill mirror of the top pill's book tabs, whose faces sit 1px proud of the pill edge */
+  #hintBar .hb-btns > button:not(.glassDot):not(.luxDot), #hintBar .hb-btns > .splitab { position:relative; top:-2px; } /* final 2px: tab tops sit 1px above the partition's outer top (1px border), matching the top pill's 1px tab stagger; relative (not transform) so the lux hover lifts compose */
+  #hintBar .hb-tips { margin-top:0; padding:5px 14px 6px 10px; } /* shaved 20px total (30→14 right, 14→10 left): the tips set the shell width, so this narrows both pills by 20px */
+  body.light-canvas #hintBar .hb-btns, body.light-canvas #hintBar .hb-tips {
+    background:
+      linear-gradient(115deg, rgba(255,255,255,.05), rgba(255,255,255,.01) 30%, rgba(255,255,255,0) 48%, rgba(255,255,255,.02) 74%, rgba(255,255,255,.04)),
+      linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0) 26%),
+      rgba(255,255,255,.93);
+    border-color:rgba(30,45,75,.28);
+    box-shadow:0 8px 28px rgba(30,45,75,.2), inset 0 1px 0 rgba(255,255,255,.28);
+  }
+  #hintBar.noglass .hb-btns, #hintBar.noglass .hb-tips {
+    background:rgba(10,15,24,.85);
+    backdrop-filter:none; -webkit-backdrop-filter:none;
+    box-shadow:0 8px 28px rgba(0,0,0,.5);
+  }
+  body.light-canvas #hintBar.noglass .hb-btns, body.light-canvas #hintBar.noglass .hb-tips {
+    background:rgba(255,255,255,.93);
+    backdrop-filter:none; -webkit-backdrop-filter:none;
+    border-color:rgba(30,45,75,.28);
+    box-shadow:0 8px 28px rgba(30,45,75,.2);
+  }
+  #hintBar.lux .hb-btns, #hintBar.lux .hb-tips {
+    background-color:#0d0f12;
+    background-image:
+      radial-gradient(ellipse at 15% 15%, rgba(226,201,155,.08) 0%, transparent 60%),
+      radial-gradient(ellipse at 85% 85%, rgba(40,60,90,.15) 0%, transparent 60%),
+      url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.04'/%3E%3C/svg%3E");
+    border:1px solid #E2C99B; /* opaque silhouette: the old .4 rim over the partition blur ghosted exactly like the pill rims did */
+    box-shadow:
+      0 0 25px rgba(226,201,155,.35),
+      0 15px 35px rgba(0,0,0,.8),
+      inset 0 1px 0 rgba(255,255,255,.15);
+    backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+  }
+  #hintBar.lux .hb-btns::before, #hintBar.lux .hb-tips::before {
+    content:''; position:absolute; top:0; left:0; right:0; height:45%;
+    background:linear-gradient(135deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.01) 60%, transparent 100%);
+    border-radius:14px 14px 0 0; pointer-events:none;
+  }
+  /* luxury Return: the gold medallion (regular mode wears the dark-glass base above) */
+  #hintBar.lux #returnBtn { background:linear-gradient(165deg, rgba(72,64,52,.62), rgba(28,24,19,.55) 42%, rgba(12,10,8,.82)); border-color:rgba(226,201,155,.85); color:#F5D998; text-shadow:0 0 9px rgba(245,217,152,.55); box-shadow:0 0 16px rgba(226,201,155,.4), inset 0 1px 0 rgba(255,240,210,.22), inset 0 -10px 16px rgba(0,0,0,.55); }
+  #hintBar.lux #returnBtn::before { background:radial-gradient(120% 90% at 18% 0%, rgba(255,240,210,.13), rgba(255,240,210,0) 45%), radial-gradient(60% 55% at 76% 82%, rgba(170,158,140,.10), rgba(170,158,140,0) 70%), radial-gradient(45% 40% at 60% 20%, rgba(200,190,175,.06), rgba(200,190,175,0) 70%); }
+  #hintBar.lux #returnBtn::after { border-top-color:rgba(226,201,155,.5); }
+ #hintBar.lux #returnBtn:hover { background:linear-gradient(165deg, rgba(88,78,62,.68), rgba(36,30,24,.6) 42%, rgba(16,13,10,.88)); border-color:#E2C99B; color:#FFF3D6; box-shadow:0 0 18px rgba(226,201,155,.45), inset 0 1px 0 rgba(255,240,210,.3), inset 0 -10px 16px rgba(0,0,0,.5); }
+  #hintBar.lux .hb-return { margin-bottom:18px; } /* matches the shared seat (kept explicit so a future shared-gap tune can't crowd the gold medallion's halo) */
+  /* ---- luxury "?" explicator pops: every sg-help-pop under a luxury
+     surface wears the gold cosmic-glass instead of the standard dark pop ---- */
+  #leftPanel.lux .sg-help-pop, #docPanel.lux .sg-help-pop, #tabBar.lux .sg-help-pop, #hintBar.lux .sg-help-pop {
+    background-color:#0b0d10;
+    background-image:
+      linear-gradient(165deg, rgba(42,48,62,.6) 0%, rgba(13,15,20,.15) 45%, rgba(0,0,0,.4) 100%),
+      radial-gradient(ellipse at 15% 15%, rgba(226,201,155,.10) 0%, transparent 60%),
+      radial-gradient(ellipse at 85% 85%, rgba(40,60,90,.18) 0%, transparent 60%),
+      url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.04'/%3E%3C/svg%3E");
+    border:1px solid rgba(226,201,155,.55);
+    color:#EDE0C6;
+    box-shadow:
+      0 0 22px rgba(226,201,155,.35),
+      0 18px 50px rgba(0,0,0,.6),
+      inset 0 1px 2px rgba(255,240,210,.2);
+  }
+  #leftPanel.lux .sg-help-pop .help-edit-btn, #tabBar.lux .sg-help-pop .help-edit-btn, #hintBar.lux .sg-help-pop .help-edit-btn {
+    background:rgba(18,22,28,.6); border-color:rgba(226,201,155,.4); color:#E8C97A;
+  }
+  body.dropping #hintBar .hb-btns, body.dropping #hintBar .hb-tips { border-color:var(--acc); }
+  /* tether tint palette: 12 swatches in two rows of six */
+  #tePal { display:grid; grid-template-columns:repeat(12, 1fr); gap:4px; margin:8px 2px 2px; }
+  .tesw { aspect-ratio:1/1; border-radius:6px; border:1px solid rgba(255,255,255,.28); background:var(--sw); cursor:pointer; padding:0; min-width:0; }
+  .tesw:hover { transform:scale(1.15); }
+  .tesw:focus-visible { outline:2px solid #fff; outline-offset:1px; }
+  .tesw.on { outline:2px solid #fff; outline-offset:1px; box-shadow:0 0 8px var(--sw); }
+  body.light-canvas .tesw { border-color:rgba(30,45,75,.35); }
+  body.light-canvas .tesw.on { outline-color:#1a2a4a; }
+  /* canvas backdrop picker: 12 photo thumbs in one row */
+  #bgPal { display:grid; grid-template-columns:repeat(12, 1fr); gap:4px; margin:8px 2px 2px; }
+  .bgsw { aspect-ratio:1/1; border-radius:6px; border:1px solid rgba(255,255,255,.28); background-size:cover; background-position:center; background-color:#10151d; cursor:pointer; padding:0; min-width:0; }
+  .bgsw:hover { transform:scale(1.15); }
+  .bgsw:focus-visible { outline:2px solid #fff; outline-offset:1px; }
+  .bgsw.on { outline:2px solid #fff; outline-offset:1px; box-shadow:0 0 8px rgba(255,255,255,.35); }
+  body.light-canvas .bgsw { border-color:rgba(30,45,75,.35); }
+  body.light-canvas .bgsw.on { outline-color:#1a2a4a; }
+  body.light-panes #leftPanel, body.light-panes #docPanel, body.light-panes #devBox, body.light-panes #miniMap, body.light-panes #notesPane { --txt:#22304a; --mut:#5a6b8c; --acc:#2450b4; --line:rgba(30,45,75,.3); --sun:#8a6a1f; color:var(--txt); }
+  body.light-panes #searchInput { background:rgba(255,255,255,.92); }
+  body.light-panes #docBody { color:#2f3c55; }
+  body.light-panes #docBody .wl { color:#1e56c8; }
+  body.light-panes #docBody .tag, body.light-panes .sg-label, body.light-panes .bl-row span { color:#237a4c; border-color:#237a4c; }
+  body.light-panes .tagpill { color:#1f7a48; border-color:rgba(31,122,72,.5); background:rgba(31,122,72,.1); }
+  body.light-panes .tagpill.auto { color:#2b4fc4; border-color:rgba(43,79,196,.45); background:rgba(43,79,196,.08); }
+  body.light-panes .tagpill.notesbtn { color:#8a6a1f; border-color:rgba(138,106,31,.55); background:rgba(233,195,60,.18); }
+  /* permanently-dark floating surfaces keep light ink no matter the pane theme
+     (their backgrounds never change, so their text must never follow it) */
+  .glass, #tabBar, .sg-help-pop, .sg-menu { --txt:#dbe4f5; --mut:#7d8aa3; --line:rgba(120,150,200,.16); --acc:#5f9dff; --sun:#ffce6b; }
+  #ctxMenu { position:fixed; z-index:60; min-width:220px; padding:6px; }
+  #ctxMenu .ctx-head { font-size:11px; color:var(--sun); padding:6px 10px 4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:260px; }
+  #ctxMenu .ctx-item { display:block; width:100%; text-align:left; background:none; border:0; color:var(--txt); font-size:13px; padding:7px 10px; border-radius:7px; cursor:pointer; }
+  #ctxMenu .ctx-item:hover { background:rgba(95,157,255,.18); }
+  #ctxMenu .ctx-item.danger { color:#ff9d9d; }
+  #ctxMenu .ctx-item.danger:hover { background:rgba(255,120,120,.15); }
+  #ctxMenu hr { border:0; border-top:1px solid var(--line); margin:5px 4px; }
+  #ctxMenu .ctx-note { font-size:11px; color:var(--mut); padding:2px 10px 6px; line-height:1.5; max-width:260px; }
+  #ctxMenu .ctx-sub { font-size:10px; letter-spacing:.12em; color:var(--mut); text-transform:uppercase; padding:8px 10px 2px; }
+  #ctxMenu .ctx-picklist { display:flex; flex-direction:column; gap:2px; max-height:220px; overflow:auto; padding:0 2px 4px; }
+  #ctxMenu .ctx-pick { overflow-wrap:anywhere; }
+  #ctxMenu .ctx-pick.on { color:#cfe0ff; background:rgba(95,157,255,.14); }
+  #ctxMenu .ctx-item.static { cursor:default; }
+  #ctxMenu .ctx-item.static:hover { background:none; }
+  .tabbar-label { display:block; font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:var(--mut); white-space:normal; overflow-wrap:anywhere; text-align:center; padding:0 30px; margin:0 0 1px; } /* 30px sides clear the corner overlays: mode button left, glass orb right */
+  .tabbar-label .hw { position:static; margin-left:2px; letter-spacing:0; }
+  .tabsave { font-size:10px; letter-spacing:0; text-transform:none; font-weight:400; color:var(--saveink, var(--sun)); margin-left:7px; text-decoration:none; white-space:nowrap; border:1px solid var(--line); border-radius:7px; padding:1px 7px; background:rgba(95,157,255,.10); opacity:1; vertical-align:1px; }
+  button.tab .tabsave:hover { color:#fff; background:rgba(95,157,255,.28); border-color:var(--acc); }
+  #tabBar .tabcount { font-weight:100; opacity:.75; }
+  .tab.tabopen { font-size:11px; letter-spacing:.02em; border-style:dashed; opacity:.9; font-weight:400; }
+  #openProjMenu { position:fixed; top:66px; left:50%; transform:translateX(-50%); z-index:40; width:min(300px,86vw); padding:10px 12px; }
+  #openProjMenu[hidden] { display:none; }
+  #openProjMenu .opm-head { font-size:10px; letter-spacing:.12em; color:var(--sun); text-transform:uppercase; padding:2px 4px 8px; }
+  #openProjMenu .opm-item { display:block; width:100%; text-align:left; background:rgba(95,157,255,.08); border:1px solid var(--line); color:var(--txt); border-radius:8px; padding:7px 10px; margin:0 0 6px; cursor:pointer; font-size:13px; }
+  #openProjMenu .opm-item:hover { background:rgba(95,157,255,.18); }
+  #openProjMenu .opm-item span { display:block; font-size:11px; color:#8fd0a8; margin-top:2px; }
+  #openProjMenu .opm-item span.opm-mates { color:var(--mut); }
+  #openProjMenu .opm-empty { font-size:12px; color:var(--mut); padding:6px 4px; }
+  #openProjMenu .opm-sub { font-size:10px; letter-spacing:.12em; color:var(--mut); text-transform:uppercase; padding:8px 4px 6px; }
+  #openProjMenu .rowbtns { margin-top:4px; }
+  .tabbar-row { display:flex; gap:6px; align-items:center; justify-content:center; flex-wrap:wrap; row-gap:6px; max-width:92vw; overflow:visible; padding:1px; margin:4px 8px 0; } /* cluster centered in the pill width: static frame, fixed horizontally, growing only downward by wrapping — the margins hold the row clear of the corner mode button and the pill's own edges */
+  #tabBar .ugroup { display:inline-flex; flex:none; align-items:center; flex-wrap:wrap; row-gap:6px; gap:6px; border:1px solid rgba(155,190,240,.7); border-radius:13px; padding:3px 8px; min-width:0; max-width:100%; } /* static cluster frame: never stretches left-right, only wraps downward */
+  #tabBar .ugroup.live { border-color:rgba(255,120,120,.9); box-shadow:0 0 10px rgba(255,59,59,.35); }
+  /* thin red connector between tabs in the same project cluster: a real
+     flex item that exactly fills the 6px tab gap (1px plugged under each
+     border). A ::before on the tab itself can't work — .tab has
+     overflow:hidden, which clips anything hanging outside its border. */
+  #tabBar .ugroup > .uconn { flex:0 0 8px; width:8px; height:2px; margin:0 -7px; padding:0; background:rgba(255,70,70,.9); box-shadow:0 0 4px rgba(255,59,59,.6); pointer-events:none; }
+  #tabBar { position:fixed; top:10px; left:50%; transform:translateX(-50%); z-index:20; display:flex; flex-direction:column; gap:1px; align-items:stretch; width:max-content; max-width:92vw; background:rgba(8,12,18,.92); border:1px solid rgba(255,200,100,.55); border-radius:0 0 14px 14px; padding:5px 8px 6px; box-shadow:0 18px 50px rgba(0,0,0,.6), 0 0 10px rgba(255,190,80,.35); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); } /* book tab anchored in space: flat top edge, rounded bottom corners, gold frame + tiny glow (mirrors the bottom pill's Tips tab) */
+  /* its ? popovers must clear the Active-body pane — except when the
+     stretched reader slides over the pill: then the reader wins (z20 < z21)
+     and only a non-overlapping open pop floats above it. syncTabBarZ() in
+     app.js owns the boost dynamically (sets z30 when a pop shows clear of
+     the reader, back to 20 otherwise), since a static :has rule can't see
+     the overlap. */
+  /* associated (shared) tabs wear the shared accent color */
+  #tabBar .tab { background:rgba(95,157,255,.10); border:1px solid rgba(95,157,255,.45); color:#cfe0ff; font-size:12px; padding:5px 10px; border-radius:9px; cursor:pointer; white-space:nowrap; max-width:min(38vw, 100%); overflow:hidden; text-overflow:ellipsis; }
+  #tabBar .tab:hover { color:#fff; background:rgba(95,157,255,.22); border-color:var(--acc); }
+  #tabBar .tab.active { color:#fff; background:rgba(255,59,59,.40); border-color:rgba(255,120,120,.9); box-shadow:0 0 10px rgba(255,59,59,.45); }
+  /* isolated tabs are unassociated: dim dashed grey instead of the shared accent */
+  #tabBar .tab.iso { background:none; border:1px dashed rgba(125,138,163,.55); color:var(--mut); box-shadow:none; }
+  #tabBar .tab.iso:hover { color:var(--txt); background:rgba(125,138,163,.12); border-color:var(--mut); }
+  #tabBar .tab.iso.active { border-color:rgba(255,120,120,.9); color:#fff; background:rgba(255,59,59,.32); }
+  #tabBar .tab.iso.tinted { border-style:solid; border-color:var(--tabc); color:#eef2fa; background:color-mix(in srgb, var(--tabc) 16%, transparent); box-shadow:0 0 10px color-mix(in srgb, var(--tabc) 45%, transparent); }
+  #tabBar .tab.iso.tinted:hover { background:color-mix(in srgb, var(--tabc) 28%, transparent); border-color:var(--tabc); color:#fff; }
+  #tabBar .tab.iso.tinted.active { background:rgba(255,59,59,.40); border-color:rgba(255,120,120,.9); color:#fff; box-shadow:0 0 12px rgba(255,59,59,.5); }
+  #tabBar .tabadd { color:var(--sun); font-weight:700; font-size:14px; }
+  #tabBar .tabadd-out { color:#e8a83e; } /* standalone-Universe "+": deeper amber, vs the inside-frame joining gold */
+  /* empty-row placeholders: dashed "add tab" frames that hold the pill's width when no projects exist (click starts one) */
+  #tabBar .tab.tabghost { background:none; border-style:dashed; border-color:rgba(140,170,220,.5); color:var(--mut); }
+  #tabBar .tab.tabghost:hover { color:#fff; border-color:var(--sun); background:rgba(255,206,107,.10); }
+  /* empty-state cluster: the placeholders live inside a static dashed group frame so the row reads as one empty universe */
+  #tabBar .ugroup.ugroupghost { border-style:dashed; border-color:rgba(140,170,220,.5); }
+  #tabBar .ugroup.ugroupghost:hover { border-color:rgba(255,206,107,.7); }
+  /* zero-tab cluster wears the live red frame too: the empty row reads exactly like an active universe awaiting its first tab */
+  #tabBar .ugroup.ugroupghost.live { border-style:dashed; border-color:rgba(255,120,120,.9); box-shadow:0 0 10px rgba(255,59,59,.35); }
+  /* row-fill placeholders run double-wide: one fill frame holds the footprint of two ghosts */
+  #tabBar .tab.tabghost[data-filltab] { min-width:125px; }
+  #tabBar .tabx { margin-left:7px; color:var(--mut); font-size:12px; padding:0 3px; border-radius:5px; }
+  #tabBar .tabx:hover { color:#ff9d9d; background:rgba(255,120,120,.18); }
+  /* universe view modes: discrete text row under the tabs */
+  #tabBar .viewmodes { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; row-gap:2px; gap:7px; padding:3px 4px 1px; font-size:11px; color:var(--mut); letter-spacing:.04em; position:relative; }
+  /* true-centered tabs: Tag Inventory parks right of the row so the three folder tabs (+ their ?s) center on the pill alone; the ▴ toggle lives top-right beside the glass orb */
+  #tabBar .viewmodes .taginv { position:absolute; right:2px; top:50%; transform:translateY(calc(-50% + 12px)); } /* parked hard right: clears the TAGS tab face (was 8px under it at pill width) */
+  #tabBar > .pilltoggle { position:absolute; right:8px; top:2px; transform:none; margin-left:0; }
+  #tabBar .vm.pilltoggle { width:24px; height:24px; padding:0; line-height:1; font-size:15px; background:rgba(95,157,255,.12); color:var(--txt); border:1px solid var(--line); border-radius:7px; cursor:pointer; }
+  #tabBar .vm.pilltoggle:hover { background:rgba(95,157,255,.28); color:#fff; text-decoration:none; }
+  @media (max-width:760px) { #tabBar .viewmodes .taginv { position:relative; transform:none; } }
+  #tabBar .vm { background:none; border:none; padding:1px 2px; font:inherit; font-size:11px; letter-spacing:.04em; color:var(--mut); cursor:pointer; }
+  #tabBar .vm:hover { color:#fff; text-decoration:underline; }
+  #tabBar .vm.on { color:var(--sun); font-weight:700; }
+  /* See Tags Inventory: fourth folder tab — same book-tab recipe as MAIN/THEMATIC/TAGS (tilt on ::before keeps the long label crisp) */
+  #tabBar .vm.taginv { background:none; border:none; box-shadow:none; color:#ffce6b; font-size:9.6px; font-weight:400; letter-spacing:.1em; text-transform:uppercase; padding:3.8px 11px 3.6px; white-space:nowrap; cursor:pointer; } /* padding favors the top: the tall rounded top corners eat visual mass, so the caps sit on the optical center */
+  #tabBar .vm.taginv::before { content:''; position:absolute; inset:0; z-index:-1; background:var(--maintabbg, #11161f); border:1px solid rgba(255,200,100,.55); border-bottom:none; border-radius:11px 11px 0 0; transform:perspective(104px) rotateX(12deg); transform-origin:50% 100%; box-shadow:0 -2px 9px rgba(0,0,0,.4); }
+  #tabBar .vm.taginv:hover { color:#ffe1a1; text-decoration:none; }
+  #tabBar .vm.taginv:hover::before { filter:brightness(1.25); }
+  body.light-canvas #tabBar .vm.taginv { color:#8a6a1f; }
+  body.light-canvas #tabBar .vm.taginv::before { border-color:rgba(154,98,0,.55); }
+  body.light-canvas #tabBar .vm.taginv:hover { color:#5a3c00; text-decoration:none; }
+  /* view-mode folder tabs (Main | Thematic | Tag): cut from the canvas itself — fill tracks the canvas shade live — gold ink, bases plugged through the pill's bottom edge with gold outlines joined continuous to the pill's, no glow. The 3D tilt lives on a ::before backdrop so the label text stays axis-aligned and razor-crisp (tilted text rasterizes fuzzy). */
+  #tabBar .vm.vmpill { position:relative; background:none; border:none; box-shadow:none; transform:translateY(9px); color:#ffce6b; font-size:16px; font-weight:800; letter-spacing:.1em; width:170px; box-sizing:border-box; text-align:center; padding:3.5px 33px 5.8px; cursor:pointer; }
+  #tabBar .vm.vmpill::before { content:''; position:absolute; inset:0; z-index:-1; background:var(--maintabbg, #11161f); border:1px solid rgba(255,200,100,.55); border-bottom:none; border-radius:14px 14px 0 0; transform:perspective(104px) rotateX(12deg); transform-origin:50% 100%; box-shadow:0 -2px 9px rgba(0,0,0,.4); }
+  #tabBar .vm.vmpill:hover { color:#ffe1a1; text-decoration:none; }
+  #tabBar .vm.vmpill:hover::before { filter:brightness(1.25); }
+  #tabBar .vm.vmpill.on { color:#ffce6b; }
+  #tabBar .vm.vmpill.on::before { border-color:#ff3b3b; box-shadow:0 -2px 8px rgba(0,0,0,.4); }
+  /* unselected tabs: gold ink dims so the live view owns the emphasis */
+  #tabBar .vm.vmpill:not(.on) { color:#9a7a33; }
+  body.light-canvas #tabBar .vm.vmpill:not(.on) { color:#b49b5e; }
+  body.light-canvas #tabBar .vm.vmpill { color:#8a6a1f; }
+  body.light-canvas #tabBar .vm.vmpill::before { border-color:rgba(154,98,0,.55); }
+  body.light-canvas #tabBar .vm.vmpill.on::before { border-color:#ff3b3b; }
+  body.light-canvas #tabBar .vm.vmpill:hover { color:#5a3c00; text-decoration:none; }
+  #tabBar .viewmodes .hw .sg-help { margin-left:0; margin-right:2px; cursor:pointer; } /* ? leads its book tab: the breathing-room margin rides on the tab side */
+  /* view-mode explicators: each ? leads its book tab, so the pops re-anchor (-53px keeps the landing exactly where -230px put it — under their own tab, 190px wide so neighbors clear each other with the tabs at their natural pitch, all three can stand open at once) */
+  #tabBar .viewmodes .hw .sg-help-pop { left:-53px; width:min(190px,72vw); line-height:1.15; }
+  #tabBar .viewmodes .hw .sg-help-pop .help-edit-btn { margin-top:5px; padding:0 6px; font-size:11px; line-height:1.2; }
+  /* the pop's hover bridge is invisible but hit-testable — over the tabs it would swallow the lower half of every ? click. View-mode pops are click-only (no hover continuity to preserve), so the bridge is click-through and the whole ? stays live */
+  #tabBar .viewmodes .hw .sg-help-pop::before { pointer-events:none; }
+  /* Universe view modes helps are click-only: hover/focus never opens them — only .help-open (pinned by click) does */
+  #tabBar .viewmodes .hw:not(.help-open) .sg-help-pop { visibility:hidden; opacity:0; transform:translateY(-4px); transition-delay:0s; pointer-events:none; }
+  #tabBar .vm-sep { opacity:.35; }
+  #tabBar.pillCollapsed > :not(.viewmodes):not(.pilltoggle) { display:none; }
+  #tabBar .modeBtn { position:absolute; top:2px; left:8px; z-index:5; width:24px; height:24px; padding:0; line-height:1; font-size:13px; background:rgba(95,157,255,.12); color:var(--txt); border:1px solid var(--line); border-radius:7px; cursor:pointer; }
+  #tabBar .modeBtn:hover { background:rgba(95,157,255,.28); }
+  .collapseBtn { position:absolute; top:8px; right:8px; z-index:5; width:24px; height:24px; padding:0; line-height:1; font-size:12px; background:rgba(95,157,255,.12); color:var(--txt); border:1px solid var(--line); border-radius:7px; cursor:pointer; }
+  .collapseBtn:hover { background:rgba(95,157,255,.28); }
+  #leftPanel h1 { padding-right:34px; }
+  #docPanel .kicker { padding-right:64px; }
+  #devBox .cb-head { padding-right:34px; }
+  #leftPanel.collapsed, #docPanel.collapsed { padding:6px 8px; width:auto !important; min-width:0; }
+  #leftPanel.collapsed > :not(.collapseBtn):not(#glossTab), #docPanel.collapsed > :not(.collapseBtn) { display:none; }
+  #leftPanel.collapsed .collapseBtn, #docPanel.collapsed .collapseBtn { position:static; }
+  #propsModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:70; width:min(360px,90vw); padding:18px 20px; }
+  #propsModal h3 { margin:0 0 10px; font-size:16px; overflow-wrap:anywhere; }
+  #propsModal .pr { display:flex; justify-content:space-between; gap:12px; font-size:13px; padding:5px 0; border-bottom:1px solid var(--line); }
+  #propsModal .pr span:first-child { color:var(--mut); }
+  #propsModal .pr span:last-child { text-align:right; overflow-wrap:anywhere; }
+  #confirmModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:300; width:min(380px,92vw); padding:18px 20px; }
+  #confirmModal h3 { margin:0 0 8px; font-size:16px; overflow-wrap:anywhere; }
+  #confirmMsg { font-size:13px; line-height:1.6; color:var(--txt); overflow-wrap:anywhere; }
+  #confirmModal .rowbtns { margin-top:14px; }
+  /* upload progress tracker: centered popup that stays up while documents
+     load — regular glass by default, gold cosmic-glass under luxury */
+  #uploadProg { position:fixed; top:0; left:0; transform:translate(-50%,-50%); z-index:250; width:min(380px,92vw); padding:18px 20px; text-align:center; } /* JS-centered on the live canvas (placeUploadProg): midpoint of the free lane between the side panes and pills, clamped on-screen */
+  #uploadProg[hidden] { display:none; }
+  #uploadProg h3 { margin:0 0 8px; font-size:16px; overflow-wrap:anywhere; }
+  #uploadProgMsg { font-size:13px; line-height:1.6; color:var(--txt); }
+  .up-track { height:10px; border-radius:6px; margin:12px 0 8px; background:rgba(255,255,255,.10); border:1px solid var(--line); overflow:hidden; }
+  #uploadProgFill { height:100%; width:0%; border-radius:6px; background:linear-gradient(90deg, var(--acc), #8fd0a8, var(--acc)); background-size:200% 100%; transition:width .25s ease; animation:upslide 1.2s linear infinite; }
+  @keyframes upslide { from { background-position:0% 0; } to { background-position:200% 0; } }
+  #uploadProgCount { font-size:12px; color:var(--mut); min-height:1.4em; overflow-wrap:anywhere; }
+  #uploadProg .upb-hint { font-size:11px; color:var(--mut); margin-top:10px; line-height:1.55; }
+  /* luxury: the same gold cosmic-glass the pills wear */
+  #uploadProg.lux {
+    background-color:#0b0d10;
+    background-image:
+      linear-gradient(165deg, rgba(42,48,62,.6) 0%, rgba(13,15,20,.15) 45%, rgba(0,0,0,.4) 100%),
+      radial-gradient(ellipse at 15% 15%, rgba(226,201,155,.10) 0%, transparent 60%),
+      radial-gradient(ellipse at 85% 85%, rgba(40,60,90,.18) 0%, transparent 60%),
+      url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.04'/%3E%3C/svg%3E");
+    border:1px solid rgba(226,201,155,.55);
+    border-top-color:rgba(255,232,190,.8);
+    box-shadow:
+      0 0 22px rgba(226,201,155,.38),
+      0 14px 30px rgba(0,0,0,.85),
+      inset 0 2px 3px rgba(255,240,210,.22);
+  }
+  #uploadProg.lux h3 { color:#E8C97A; font-family:Georgia, 'Palatino Linotype', 'Times New Roman', serif; letter-spacing:.14em; text-shadow:0 0 8px rgba(226,201,155,.35); }
+  #uploadProg.lux #uploadProgMsg { color:#EDE0C6; }
+  #uploadProg.lux .up-track { background:rgba(255,255,255,.07); border-color:rgba(226,201,155,.4); }
+  #uploadProg.lux #uploadProgFill { background:linear-gradient(90deg, #8a6a1f, #E8C97A, #8a6a1f); background-size:200% 100%; box-shadow:0 0 8px rgba(226,201,155,.5); }
+  #uploadProg.lux #uploadProgCount, #uploadProg.lux .upb-hint { color:rgba(226,201,155,.7); }
+  #licenseModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:310; width:min(430px,94vw); padding:18px 20px; }
+  #licenseModal h3 { margin:0 0 8px; font-size:16px; }
+  #licenseMsg { font-size:13px; line-height:1.6; color:var(--txt); }
+  #licenseInput { width:100%; box-sizing:border-box; min-height:86px; margin-top:10px; font-size:12px; resize:vertical; color:var(--txt); background:rgba(0,0,0,.35); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  #licenseKeyInput { width:100%; box-sizing:border-box; margin-top:10px; font-size:13px; letter-spacing:.04em; color:var(--txt); background:rgba(0,0,0,.35); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  .lic-sep { margin:12px 0 2px; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--mut); text-align:center; }
+  #licenseErr { margin-top:10px; font-size:12px; color:#ff9d9d; }
+  #licenseErr[hidden] { display:none; }
+  #licenseModal .rowbtns { margin-top:14px; }
+  #eulaModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:320; width:min(520px,94vw); padding:18px 20px; }
+  #eulaModal h3 { margin:0 0 8px; font-size:16px; }
+  #eulaText { max-height:min(46vh,380px); overflow:auto; white-space:pre-wrap; font-size:12px; line-height:1.65; color:var(--txt); background:rgba(0,0,0,.35); border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-top:10px; }
+  #eulaCheck { display:flex; align-items:flex-start; gap:8px; margin-top:12px; font-size:13px; cursor:pointer; }
+  #eulaCheck input { margin-top:2px; accent-color:var(--acc); }
+  #eulaModal .rowbtns { margin-top:14px; }
+  /* update banner: slim glass notice parked under the top pill (top is set
+     in JS from the pill's live bottom edge, so wrapped tab rows never cover
+     it); above canvas UI, below menus and modals */
+  #updateBanner { position:fixed; left:50%; transform:translateX(-50%); z-index:65; width:min(430px,94vw); padding:12px 14px; }
+  #updateBanner[hidden] { display:none; }
+  .upb-head { display:flex; align-items:center; gap:8px; }
+  #updateTitle { flex:1; font-size:13px; font-weight:700; color:var(--sun); }
+  #updateClose { background:none; border:none; color:inherit; cursor:pointer; font-size:13px; line-height:1; opacity:.7; padding:0 0 0 4px; }
+  #updateClose:hover { opacity:1; }
+  #updateNotes { font-size:12px; line-height:1.6; color:var(--txt); margin:6px 0 2px; }
+  #updateNotes .upb-date { font-size:11px; color:var(--mut); }
+  #updateNotes ul { margin:4px 0 2px; padding-left:18px; }
+  #updateNotes li { margin:2px 0; }
+  #updateBanner .rowbtns { margin-top:8px; }
+  .upb-hint { font-size:10.5px; color:var(--mut); margin-top:6px; line-height:1.5; }
+  #confirmSkip { display:flex; align-items:center; gap:7px; margin-top:12px; font-size:12px; color:var(--mut); cursor:pointer; }
+  #confirmSkip[hidden] { display:none; }
+  #confirmSkip input { accent-color:var(--acc); }
+  .tvp-link { background:none; border:none; padding:0; margin:0; font:inherit; color:var(--sun); border-bottom:1px dotted var(--sun); cursor:pointer; }
+  .tvp-frost .tvp-link { color:#8a6a1f; border-color:#8a6a1f; }
+  #pickModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:90; width:min(420px,94vw); max-height:84vh; display:flex; flex-direction:column; padding:18px 20px; }
+  #pickModal[hidden] { display:none; }
+  #pickModal h3 { margin:0 0 4px; font-size:16px; overflow-wrap:anywhere; }
+  #pickSub { font-size:12px; color:var(--mut); margin-bottom:10px; line-height:1.5; }
+  #pickList { overflow:auto; display:flex; flex-direction:column; gap:4px; margin-bottom:6px; }
+  #pickList label { display:flex; gap:9px; align-items:flex-start; background:rgba(95,157,255,.07); border:1px solid var(--line); border-radius:8px; padding:7px 10px; font-size:13px; cursor:pointer; }
+  #pickList label:hover { background:rgba(95,157,255,.16); }
+  #pickList input { margin-top:2px; accent-color:var(--acc); flex-shrink:0; }
+  #pickList .pk-t { display:block; font-size:11px; color:#8fd0a8; margin-top:2px; }
+  #pickList .pk-sun { color:var(--sun); }
+  .btn.danger { background:rgba(255,120,120,.14); border-color:rgba(255,120,120,.45); }
+  .btn.danger:hover { background:rgba(255,120,120,.3); }
+  .btn:disabled { opacity:.45; cursor:default; }
+  #docActions { margin:10px 0 2px; }
+  #docPairBtns { display:flex; gap:6px; flex:1 1 200px; min-width:0; flex-wrap:wrap; }
+  #docRemoveBtn, #docDeleteBtn { flex:1 1 140px; min-width:140px; white-space:nowrap; }
+  #docActions[hidden] { display:none; }
+  /* title-row × : same canvas-scoped removal as the button row, parked on the title */
+  #devBox { position:absolute; left:16px; bottom:16px; width:264px; padding:12px 14px; z-index:10; }
+  #devBox .cb-head { font-size:11px; letter-spacing:.12em; color:var(--acc); display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
+  #devBox .cb-head span:last-child { color:var(--mut); letter-spacing:0; font-size:10.5px; }
+  #devBox .rowbtns { margin-top:8px; }
+  #devBox[hidden] { display:none; }
+  #devBox .cb-head { font-size:11px; letter-spacing:.12em; color:var(--acc); display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
+  #devBox .cb-head button { background:none; border:0; color:var(--mut); text-decoration:underline; cursor:pointer; font-size:10.5px; padding:0; }
+  #devBox .cb-head button:hover { color:#ff9d9d; }
+  #devBox .rowbtns { margin-top:8px; }
+  #devBox a.btn { text-decoration:none; display:inline-block; }
+  #devBox a.btn.off { opacity:.45; }
+ @media (max-width:760px) { #hintBar { display:none; } #docResize { display:none; } #devBox { left:8px; right:8px; bottom:8px; top:auto; width:auto; } #docPanel { display:none; } #docPanel.open { display:block; } #findSide { display:none; } #notesTab, #notesPane { display:none; } #leftPanel { width:210px; } #miniMap { display:none; } }
+

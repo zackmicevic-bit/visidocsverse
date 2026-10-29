@@ -1,0 +1,22 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Allow the Visi|Docsverse window, store persistence, Gumroad verification, and the vault-folder mirror (fs under $HOME, folder picker, reveal-in-Finder).",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "store:default",
+    "http:default",
+    { "identifier": "fs:allow-exists", "allow": [{ "path": "$HOME/**" }] },
+    { "identifier": "fs:allow-mkdir", "allow": [{ "path": "$HOME/**" }] },
+    { "identifier": "fs:allow-read-dir", "allow": [{ "path": "$HOME/**" }] },
+    { "identifier": "fs:allow-read-file", "allow": [{ "path": "$HOME/**" }] },
+    { "identifier": "fs:allow-remove-file", "allow": [{ "path": "$HOME/**" }] },
+    { "identifier": "fs:allow-rename", "allow": [{ "path": "$HOME/**" }, { "path": "$HOME/**" }] },
+    { "identifier": "fs:allow-stat", "allow": [{ "path": "$HOME/**" }] },
+    { "identifier": "fs:allow-write-file", "allow": [{ "path": "$HOME/**" }] },
+    "dialog:allow-open",
+    "opener:allow-open-path",
+    "opener:allow-reveal-item-in-dir"
+  ]
+}
