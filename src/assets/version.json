@@ -2,8 +2,7 @@
   "latestVersion": "1.0.21",
   "releaseDate": "2026-11-07",
   "releaseNotes": [
-    "Subscription build: weekly online license check (7-day cache + 7-day offline grace)",
-    "License persistence fix: stable machine fingerprint survives WebView updates",
-    "Desktop shell: proven Neutralino build layout (exe + resources.neu)"
+    "Weekly subscription check (validates once a week, 7-day offline grace)",
+    "Stable license seal — WebView updates no longer sign you out"
   ]
 }

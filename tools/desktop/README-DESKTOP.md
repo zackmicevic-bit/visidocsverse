@@ -219,3 +219,51 @@ Artifacts land in `src-tauri/target/<triple>/release/bundle/{dmg,nsis,msi}/`.
   frontend checker. No `src/preload/preload.ts` / `ipcMain.handle` exists
   here on purpose: this project has no Electron main process, and the
   Tauri WebView needs no IPC for a plain HTTPS GET.
+
+## 10. GitHub repo zip (canonical layout — do not change)
+
+  The owner's GitHub repo mirrors the desktop `resources/` tree, NOT the
+  Perchance workspace. Every repo-update zip must use exactly this root
+  layout (root `README.md` is the owner's own file — never overwrite it):
+
+  - `index.html` — full desktop document: `<!DOCTYPE html>` head with
+    `<link rel="stylesheet" href="src/css/style.css">`, body (DEV-ONLY
+    ranges stripped), inline boot tracer, then
+    `<script src="src/js/neutralino.js">` +
+    `<script type="module" src="src/js/app.js">`
+  - `package.json`, `settings.json` — desktop copies (version = release)
+  - `src/assets/` — logo/icon/addtag-pill/overlays.json + backdrops/,
+    overlays/, samples/ (NOT workspace-flat `src/*.png`)
+  - `src/css/style.css` — extracted from the workspace `<style>` block
+  - `src/js/` — the ten app modules + `neutralino.js` client lib +
+    `vendor/` (body asset paths rewritten `src/` → `src/assets/`,
+    module script rewritten `src/app.js` → `src/js/app.js`)
+  - `tools/` — `dcp-scan.mjs` + `desktop/` (current workspace copies)
+  - NEVER include `main.pjs` (Perchance-only) or a root `README.md`.
+
+## 11. Release day checklist (every app update)
+
+  Phase A — build the new installer:
+  1. Make the code changes in the Perchance workspace; test in preview.
+  2. Bump `APP_VERSION` in `src/update-check.js` AND `version` in
+     `src/tools/desktop/src-tauri/tauri.conf.json` to the SAME new number.
+  3. Pack the GitHub repo zip in the §10 layout; upload/merge it to the
+     app repo on GitHub.
+  4. On Windows: extract the repo (or the Inno project), run
+     `build-inno.bat`, install the produced `VisiDocsVerse-Setup.exe`
+     and smoke-test it (launch, license gate, one document).
+
+  Phase B — deliver it on Lemon Squeezy:
+  5. Lemon dashboard → product variant → Files → upload the new
+     `VisiDocsVerse-Setup.exe`. Buyers (new and re-downloading) now get
+     this build. No URL changes needed anywhere: the feed points at the
+     stable checkout page, not at a file link.
+
+  Phase C — announce it on the Vercel feed:
+  6. In the `visidocs-updates-site` repo, edit `version.json`: set
+     `latestVersion` (same number as step 2), `releaseDate`, and
+     `releaseNotes` (one string per bullet). Leave `downloadUrl` alone.
+  7. Commit to `main` — Vercel auto-deploys. Open the live
+     `/version.json` URL and confirm the new number parses as JSON.
+  8. Installed apps older than the new version show the banner on next
+     launch (Download → checkout page, copy-receipt, Later/✕).
