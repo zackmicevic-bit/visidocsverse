@@ -1,9 +1,5 @@
-/* VisiDocsVerse — standalone offline build (GitHub / DCP Setup Maker).
-   Dark-cosmic theme: base #0d0f12, gold accents #e2c99b.
-   Multi-layered 3D box-shadows (halo + drop + top bevel + inset press) live
-   in the .lux rules below — untouched from the app, only the :root base was
-   pinned to #0d0f12. No web fonts, no CDNs, no remote imports. */
-:root { --bg:#0d0f12; --glass:rgba(20,26,36,.72); --line:rgba(120,150,200,.16); --txt:#dbe4f5; --mut:#7d8aa3; --acc:#5f9dff; --sun:#ffce6b; }
+
+  :root { --bg:#0d1117; --glass:rgba(20,26,36,.72); --line:rgba(120,150,200,.16); --txt:#dbe4f5; --mut:#7d8aa3; --acc:#5f9dff; --sun:#ffce6b; }
   * { box-sizing:border-box; }
   body { text-align:left; background:var(--bg); color:var(--txt); font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; margin:0; overflow:hidden; }
  #app { position:fixed; inset:0; }
@@ -78,9 +74,12 @@
   /* fatter invisible hit zone around the arrow (clicks still land on #docResize) */
   #docResize::after { content:''; position:absolute; top:-8px; bottom:-8px; left:-20px; right:-6px; cursor:ew-resize; }
   /* reader-pane 3D tilt: 30° clockwise (seen from above) about the pane's own
-     vertical middle; rides above the stretch arrow with a clear gap */
+     vertical middle; rides above the stretch arrow with a clear gap.
+     --tiltShift (set by syncTiltShift) pulls a wide tilted pane left by
+     exactly its perspective overshoot, so the docked right edge — and the
+     collapse/glaze controls on it — can never leave the screen */
   #docPanel { transition:transform .45s ease; transform-origin:50% 50%; }
-  #docPanel.tiltedR { transform:perspective(1100px) rotateY(-30deg); }
+  #docPanel.tiltedR { transform:perspective(1100px) translateX(var(--tiltShift, 0px)) rotateY(-30deg); }
   /* rail riders live INSIDE the pane now, so the tilt transform carries them
      rigidly — one shared rotation, zero chase/lag in any mode. They straddle
      the outer left rim (half on the canvas, half in the gutter) so they never
@@ -579,13 +578,13 @@
   .ovblurb { line-height:1.3; } /* overview blurbs: single-spaced, edit button at text height */
   .ovblurb .help-edit-btn { margin-top:0; vertical-align:baseline; }
   .hb-tiprow .help-text { display:contents; }
-  .hb-tiprow .help-edit-btn { margin:0; padding:1px 7px; font-size:10px; align-self:center; } /* flush with the row's right edge under the justified spread */
+  .hb-tiprow .help-edit-btn { margin:0; padding:1px 7px; font-size:11px; align-self:center; } /* flush with the row's right edge under the justified spread */
   #helpEditModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:230; width:min(420px,92vw); padding:18px 20px; }
   #helpEditModal h3 { margin:0 0 10px; font-size:15px; }
   #helpEditText { width:100%; min-height:130px; background:rgba(10,14,20,.8); border:1px solid var(--line); color:var(--txt); border-radius:9px; padding:10px 12px; font-size:13px; line-height:1.6; font-family:inherit; resize:vertical; }
   #helpEditText:focus { outline:none; border-color:var(--acc); }
   #helpEditHint { font-size:11px; color:var(--mut); margin-top:8px; line-height:1.5; }
-  #hintBar { position:absolute; bottom:14px; left:50%; transform:translateX(-50%); width:max-content; max-width:96vw; font-size:11.5px; color:#aebdd6; background:rgba(10,15,24,.85); border:1px solid rgba(140,170,220,.38); padding:6px 30px 5px 14px; border-radius:14px; z-index:25; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); box-shadow:0 8px 28px rgba(0,0,0,.5); display:flex; flex-direction:column; align-items:center; gap:1px; }
+  #hintBar { position:fixed; bottom:0; bottom:env(safe-area-inset-bottom, 0px); left:50%; transform:translateX(-50%); width:max-content; max-width:96vw; font-size:12.65px; color:#aebdd6; background:rgba(10,15,24,.85); border:1px solid rgba(140,170,220,.38); padding:6px 30px 5px 14px; border-radius:14px 14px 0 0; z-index:25; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); box-shadow:0 8px 28px rgba(0,0,0,.5); display:flex; flex-direction:column; align-items:center; gap:1px; }
   #hintBar .hb-btns { display:flex; align-items:flex-start; justify-content:center; flex-wrap:wrap; gap:6px; row-gap:4px; max-width:100%; margin-top:-7px; } /* book-tab row: pulled up 7px (6px top padding + 1px border) so every tab's topless top edge plugs through the pill's top line — the slot Tips used to ride alone */
   #hintBar .hb-return { position:absolute; bottom:100%; left:50%; transform:translateX(-50%); margin:0 0 18px; z-index:26; } /* Return floats as its own glass pane above the pill, centered — 18px clears the tabs' 1px protrusion + halos in both modes */
   /* bottom-pill function tabs: every tab wears the Tips hanging book-tab
@@ -594,20 +593,21 @@
      Distribute|Fit split; every other tab shares one equalized width
      (JS syncHbTabs: widest natural wins).
      (The old solo-Tips absolute ride is gone: Tips now hangs first in this row.) */
-  #hintBar .hb-sep { color:var(--mut); opacity:.55; font-size:11px; user-select:none; -webkit-user-select:none; }
-  #hintBar .hb-sep.thick { opacity:1; font-size:14px; font-weight:900; }
-  #hintBar .hb-tips { font-size:10.5px; display:flex; flex-direction:column; align-items:stretch; gap:0; max-width:100%; width:100%; margin-top:7px; }
-  #hintBar.notips .hb-tips { display:none; } /* tips collapsed: buttons row stays */
+  #hintBar .hb-sep { color:var(--mut); opacity:.55; font-size:12.1px; user-select:none; -webkit-user-select:none; }
+  #hintBar .hb-sep.thick { opacity:1; font-size:15.4px; font-weight:900; }
+  #hintBar .hb-tips { font-size:11.55px; display:flex; flex-direction:column; align-items:stretch; gap:0; max-width:100%; width:100%; margin-top:7px; }
+  #hintBar.notips { gap:0; } /* tips collapse must not shrink either pill: the inter-partition gap dies with the rows */
+  #hintBar.notips .hb-tips { display:flex; visibility:hidden; height:0; min-height:0; overflow:hidden; margin:0; padding-top:0; padding-bottom:0; border-top-width:0; border-bottom-width:0; gap:0; box-shadow:none; backdrop-filter:none; -webkit-backdrop-filter:none; pointer-events:none; } /* tips collapsed: rows keep their full width contribution (both pills hold width) but take zero height and paint nothing — buttons row stays */
   .hb-tiprow { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; white-space:normal; text-align:left; line-height:1.5; } /* justified + distributed: phrases spread edge-to-edge across the pill in both modes */
   .tt-w { color:#e6edfa; } .tt-g { color:var(--sun); } .tt-sep { color:var(--mut); margin:0 5px; }
   body.light-canvas .tt-w { color:#233044; }
   body.light-canvas .tt-g { color:#8a6a1f; }
   /* (bottom-pill logo retired — the emblem now sits in the top title) */
-  #isoBtn, #autoBtn, #fitBtn, #simpleOrbBtn, #simpleOrb2Btn, #triOrbBtn, #docIconBtn, #vividBtn, #tipsBtn, #hvBtn { background:var(--hbtabbg, rgba(10,15,24,.85)); color:#e6edfa; border:1px solid rgba(140,170,220,.45); border-top:none; border-radius:0 0 9px 9px; padding:7px 12px 4px; font-size:11px; cursor:pointer; white-space:nowrap; text-align:center; box-sizing:border-box; }
+  #isoBtn, #autoBtn, #fitBtn, #simpleOrbBtn, #simpleOrb2Btn, #triOrbBtn, #docIconBtn, #vividBtn, #tipsBtn, #hvBtn { background:var(--hbtabbg, rgba(10,15,24,.85)); color:#e6edfa; border:1px solid rgba(140,170,220,.45); border-top:none; border-radius:0 0 9px 9px; padding:7px 12px 4px; font-size:12.1px; cursor:pointer; white-space:nowrap; text-align:center; box-sizing:border-box; }
   #isoBtn:hover, #autoBtn:hover, #fitBtn:hover, #simpleOrbBtn:hover, #simpleOrb2Btn:hover, #triOrbBtn:hover, #docIconBtn:hover, #vividBtn:hover, #tipsBtn:hover, #hvBtn:hover { background:rgba(95,157,255,.38); }
   #tipsBtn.open { border-color:#ff5b5b; box-shadow:0 0 8px rgba(255,91,91,.45); } /* tips shown: red border while non-collapsed */
   #isoBtn.on, #autoBtn.on, #fitBtn.on, #simpleOrbBtn.on, #simpleOrb2Btn.on, #triOrbBtn.on, #docIconBtn.on, #hvBtn.on, #vividBtn.on { color:#fff; border-color:#ff5b5b; box-shadow:0 0 8px rgba(255,91,91,.45); }
-  #returnBtn { position:relative; display:inline-flex; align-items:center; gap:10px; padding:9px 26px 14px; border-radius:9999px; background:rgba(10,15,24,.85); border:1px solid rgba(140,170,220,.45); color:#e6edfa; font-family:'Segoe UI', system-ui, -apple-system, sans-serif; font-size:13px; font-weight:600; letter-spacing:.28em; cursor:pointer; white-space:nowrap; box-shadow:0 8px 28px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.25); -webkit-backdrop-filter:blur(12px) saturate(1.25); transition:all .2s ease-in-out; }
+  #returnBtn { position:relative; display:inline-flex; align-items:center; gap:10px; padding:9px 26px 14px; border-radius:9999px; background:rgba(10,15,24,.85); border:1px solid rgba(140,170,220,.45); color:#e6edfa; font-family:'Segoe UI', system-ui, -apple-system, sans-serif; font-size:14.3px; font-weight:600; letter-spacing:.28em; cursor:pointer; white-space:nowrap; box-shadow:0 8px 28px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.25); -webkit-backdrop-filter:blur(12px) saturate(1.25); transition:all .2s ease-in-out; }
   #returnBtn::before { content:''; position:absolute; inset:3px; border-radius:9999px; background:radial-gradient(120% 90% at 18% 0%, rgba(255,255,255,.06), rgba(255,255,255,0) 45%); pointer-events:none; }
   #returnBtn::after { content:''; position:absolute; left:14%; right:14%; bottom:7px; height:0; border-top:1px dotted rgba(140,170,220,.5); pointer-events:none; }
   #returnBtn:hover { background:rgba(95,157,255,.28); border-color:rgba(140,170,220,.8); color:#fff; }
@@ -625,8 +625,9 @@
      #hintBar .splitab > button (1,1,1) outranks the id-only tab rules above,
      so the frame owns all paint and the partitions stay flat until lit. */
   #hintBar .splitab { display:inline-flex; align-items:stretch; justify-content:center; padding:0; background:var(--hbtabbg, rgba(10,15,24,.85)); border:1px solid rgba(140,170,220,.45); border-top:none; border-radius:0 0 9px 9px; overflow:hidden; box-sizing:border-box; }
-  #hintBar .splitab > button { flex:0 0 auto; background:none; border:none; border-radius:0; box-shadow:none; padding:7px 10px 4px; font-size:11px; cursor:pointer; white-space:nowrap; }
+  #hintBar .splitab > button { flex:0 0 auto; background:none; border:none; border-radius:0; box-shadow:none; padding:7px 10px 4px; font-size:12.1px; cursor:pointer; white-space:nowrap; }
   #hintBar .splitab > button.split-l { padding-left:12px; border-right:1px solid rgba(140,170,220,.45); }
+  #hintBar .splitab > button.split-m { border-right:1px solid rgba(140,170,220,.45); }
   #hintBar .splitab > button.split-r { padding-right:12px; }
   #hintBar .splitab > button:hover { background:rgba(95,157,255,.22); }
   /* active partition: filled + a red inset underline along the tab's bottom —
@@ -634,6 +635,7 @@
   #hintBar .splitab > button.on { color:#fff; border-color:#ff5b5b; box-shadow:inset 0 -2px 0 #ff5b5b; }
   body.light-canvas #hintBar .splitab { background:var(--hbtabbg, rgba(255,255,255,.93)); border-color:rgba(35,80,180,.4); }
   body.light-canvas #hintBar .splitab > button.split-l { border-right-color:rgba(35,80,180,.4); }
+  body.light-canvas #hintBar .splitab > button.split-m { border-right-color:rgba(35,80,180,.4); }
   body.light-canvas #hintBar .splitab > button:hover { background:rgba(35,80,180,.14); }
   body.light-canvas #hintBar .splitab > button.on { color:#1a2a4a; box-shadow:inset 0 -2px 0 #ff5b5b; }
   /* snug split tab (Distribute | Fit): both partitions hug their text at
@@ -1717,6 +1719,8 @@
     background:rgba(18,22,28,.6); border-color:rgba(226,201,155,.4); color:#E8C97A;
   }
   body.dropping #hintBar .hb-btns, body.dropping #hintBar .hb-tips { border-color:var(--acc); }
+  /* collapsed-tips zero-height must beat every skin (lux/light-canvas/noglass re-assert borders/shadows later in the cascade) */
+  #hintBar.lux.notips .hb-tips, body.light-canvas #hintBar.notips .hb-tips, #hintBar.noglass.notips .hb-tips { border-top-width:0; border-bottom-width:0; box-shadow:none; backdrop-filter:none; -webkit-backdrop-filter:none; background:none; background-image:none; }
   /* tether tint palette: 12 swatches in two rows of six */
   #tePal { display:grid; grid-template-columns:repeat(12, 1fr); gap:4px; margin:8px 2px 2px; }
   .tesw { aspect-ratio:1/1; border-radius:6px; border:1px solid rgba(255,255,255,.28); background:var(--sw); cursor:pointer; padding:0; min-width:0; }
@@ -1725,8 +1729,8 @@
   .tesw.on { outline:2px solid #fff; outline-offset:1px; box-shadow:0 0 8px var(--sw); }
   body.light-canvas .tesw { border-color:rgba(30,45,75,.35); }
   body.light-canvas .tesw.on { outline-color:#1a2a4a; }
-  /* canvas backdrop picker: 12 photo thumbs in one row */
-  #bgPal { display:grid; grid-template-columns:repeat(12, 1fr); gap:4px; margin:8px 2px 2px; }
+  /* canvas backdrop picker: 11 photo thumbs in one row */
+  #bgPal { display:grid; grid-template-columns:repeat(11, 1fr); gap:4px; margin:8px 2px 2px; }
   .bgsw { aspect-ratio:1/1; border-radius:6px; border:1px solid rgba(255,255,255,.28); background-size:cover; background-position:center; background-color:#10151d; cursor:pointer; padding:0; min-width:0; }
   .bgsw:hover { transform:scale(1.15); }
   .bgsw:focus-visible { outline:2px solid #fff; outline-offset:1px; }
@@ -1782,7 +1786,7 @@
      border). A ::before on the tab itself can't work — .tab has
      overflow:hidden, which clips anything hanging outside its border. */
   #tabBar .ugroup > .uconn { flex:0 0 8px; width:8px; height:2px; margin:0 -7px; padding:0; background:rgba(255,70,70,.9); box-shadow:0 0 4px rgba(255,59,59,.6); pointer-events:none; }
-  #tabBar { position:fixed; top:10px; left:50%; transform:translateX(-50%); z-index:20; display:flex; flex-direction:column; gap:1px; align-items:stretch; width:max-content; max-width:92vw; background:rgba(8,12,18,.92); border:1px solid rgba(255,200,100,.55); border-radius:0 0 14px 14px; padding:5px 8px 6px; box-shadow:0 18px 50px rgba(0,0,0,.6), 0 0 10px rgba(255,190,80,.35); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); } /* book tab anchored in space: flat top edge, rounded bottom corners, gold frame + tiny glow (mirrors the bottom pill's Tips tab) */
+  #tabBar { position:fixed; top:0; top:env(safe-area-inset-top, 0px); left:50%; transform:translateX(-50%); z-index:20; display:flex; flex-direction:column; gap:1px; align-items:stretch; width:max-content; max-width:92vw; background:rgba(8,12,18,.92); border:1px solid rgba(255,200,100,.55); border-radius:0 0 14px 14px; padding:5px 8px 6px; box-shadow:0 18px 50px rgba(0,0,0,.6), 0 0 10px rgba(255,190,80,.35); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); } /* book tab anchored in space: flat top edge, rounded bottom corners, gold frame + tiny glow (mirrors the bottom pill's Tips tab) */
   /* its ? popovers must clear the Active-body pane — except when the
      stretched reader slides over the pill: then the reader wins (z20 < z21)
      and only a non-overlapping open pop floats above it. syncTabBarZ() in
@@ -1867,6 +1871,13 @@
   #leftPanel.collapsed, #docPanel.collapsed { padding:6px 8px; width:auto !important; min-width:0; }
   #leftPanel.collapsed > :not(.collapseBtn):not(#glossTab), #docPanel.collapsed > :not(.collapseBtn) { display:none; }
   #leftPanel.collapsed .collapseBtn, #docPanel.collapsed .collapseBtn { position:static; }
+  #findBar .collapseBtn { position:static; flex:0 0 auto; margin-left:auto; } /* reader collapse toggle rides the find row, next to ‹ › */
+  #docTitleRow { display:flex; align-items:center; gap:8px; } /* Back button rides the title row, right of the document name */
+  #docTitleRow #docTitle { flex:1 1 auto; min-width:0; }
+  #docPanel.collapsed #docScroll { display:block; } /* collapsed keeps the find-row toggle: hide everything around it instead */
+  #docPanel.collapsed #docScroll > :not(#findBar) { display:none; }
+  #docPanel.collapsed #findBar { display:flex; } /* beats the no-prose hidden so the toggle survives */
+  #docPanel.collapsed #findBar > :not(.collapseBtn) { display:none; }
   #propsModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:70; width:min(360px,90vw); padding:18px 20px; }
   #propsModal h3 { margin:0 0 10px; font-size:16px; overflow-wrap:anywhere; }
   #propsModal .pr { display:flex; justify-content:space-between; gap:12px; font-size:13px; padding:5px 0; border-bottom:1px solid var(--line); }
@@ -1972,4 +1983,3 @@
   #devBox a.btn { text-decoration:none; display:inline-block; }
   #devBox a.btn.off { opacity:.45; }
  @media (max-width:760px) { #hintBar { display:none; } #docResize { display:none; } #devBox { left:8px; right:8px; bottom:8px; top:auto; width:auto; } #docPanel { display:none; } #docPanel.open { display:block; } #findSide { display:none; } #notesTab, #notesPane { display:none; } #leftPanel { width:210px; } #miniMap { display:none; } }
-

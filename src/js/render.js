@@ -92,6 +92,8 @@ export class Renderer {
     this.docIcon = false; // document-icon mode: plain white page glyphs instead of discs (same size; theme bodies stay round)
     this.tetherScale = 1; // tether thickness multiplier (0 = hidden, 1 = current, 2 = double)
     this.tetherDotted = false; // dotted tethers ("2" pill partition): spaced round dots instead of solid lines
+    this.tetherSparse = false; // sparse tethers ("3" pill partition): dotted stroke with a much wider gap
+    this.tetherDashed = false; // dashed tethers ("4" pill partition): long dashes set far apart
     this.tetherColor = '#82aaff'; // tether tint (user palette; shared-ground links auto-contrast off it)
     this.vivid = false; // vivid-universe variation: nebula wash, volumetric node glow, depth-graded gold/cyan tethers
     this._nebCache = null; // vivid nebula offscreen layer (low-res, rebuilt on resize)
@@ -102,12 +104,20 @@ export class Renderer {
     this.resize();
   }
   resize() {
-    const r = this.cv.parentElement.getBoundingClientRect();
+    // Authoritative on the WINDOW (not the parent box): this canvas is the
+    // full-bleed backdrop and must fill the screen however the window itself
+    // changes (boot sizing, maximize animation, monitor/DPR switches, zoom).
+    // Parent-box fallback covers hidden/zero-window edge cases only.
+    let W = window.innerWidth || 0, H = window.innerHeight || 0;
+    if (!(W >= 50) || !(H >= 50)) {
+      const r = this.cv.parentElement ? this.cv.parentElement.getBoundingClientRect() : null;
+      W = (r && r.width) || 300; H = (r && r.height) || 400;
+    }
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    this.cv.width = Math.max(50, r.width * dpr);
-    this.cv.height = Math.max(50, (r.height || 400) * dpr);
-    this.cv.style.width = r.width + 'px';
-    this.cv.style.height = (r.height || 400) + 'px';
+    this.cv.width = Math.max(50, W * dpr);
+    this.cv.height = Math.max(50, H * dpr);
+    this.cv.style.width = W + 'px';
+    this.cv.style.height = H + 'px';
     this.dpr = dpr;
     this._nebCache = null; // canvas size changed — rebuild the nebula layer
   }
@@ -143,12 +153,14 @@ export class Renderer {
   // Fit — frame the whole formation on the VISIBLE SCREEN (not the canvas
   // element: the canvas can extend past what the person actually sees; Fit
   // frames the viewport overlap instead). Recenters pan on the visible
-  // center, then dollies out far enough that every CURRENT body projects
-  // inside the visible region, plus slack for labels and drift. Deliberately
+  // center, then dollies to the distance that frames every CURRENT body
+  // inside the visible region — out for sprawling universes, IN for small
+  // ones that would otherwise sit tiny in a big void — plus slack for
+  // labels and drift. Deliberately
   // frames bodies, not the empty simulation rim: the rim is 4–9× wider than
   // the shells, so rim-framing shrinks the formation into an unreadable
   // clump. A rim-bound comet may drift out of a fitted frame over minutes —
-  // Fit again. Never zooms in, never touches yaw/pitch — and never touches
+  // Fit again. Never touches yaw/pitch — and never touches
   // the physics: shells, springs, rim and positions are left exactly alone,
   // so orbital mechanics survive Fit untouched. Small orbs that would render
   // as specks at the fitted distance are instead lifted to a readability
@@ -156,7 +168,9 @@ export class Renderer {
   // untouched, size order preserved, repeat presses converge). Returns a
   // report for the toast.
   fitView(nodes, margin = 70, minR = 0, u = null) {
-    const FLOOR = this.fitFloor || 10, SLACK = 1.25;
+    const FLOOR = this.fitFloor || 10, SLACK = 1.25, MIN_D = 90;
+    // MIN_D: closest the camera ever dollies in (a lone orb still reads as
+    // an orb, and the projection stays well outside the formation sphere).
     // effR: physics radius × Fit's view boost — the boost rides separately so
     // repeat fits converge instead of ratcheting the world radius upward.
     const effR = (n) => (n.radius || 6) * (n._fitBoost || 1);
@@ -177,20 +191,23 @@ export class Renderer {
     };
     // worst-case scale is at the sphere's near side: s = focal / (dist - R),
     // so R * s <= half resolves to dist >= R + R * focal / half.
-    const frame = (R) => Math.min(8000, R + (R * this.focal) / half);
+    const frame = (R) => Math.min(8000, Math.max(MIN_D, R + (R * this.focal) / half));
     const rim = minR || 0; // the caller decides the padding: bodies-only (0)
     // keeps the formation big; passing the comet rim keeps escapees framed
     const dist0 = this.cam.dist;
     const distNeed = frame(extent(rim));
-    // already fully on screen with every orb readable → nothing to do
-    if (distNeed <= dist0 + 1) {
+    // already framed with every orb readable → nothing to do (epsilon band:
+    // float distances rarely match exactly; close enough counts as framed)
+    if (Math.abs(distNeed - dist0) <= Math.max(2, dist0 * 0.02)) {
       const sNow = this.focal / Math.max(80, dist0);
       let runts = 0;
       for (const n of list) if (effR(n) * sNow * 1.6 < FLOOR) runts++;
       if (!runts) return { fitted: false };
     }
-    // 1. dolly out only as far as needed — a close-up stays a close-up
-    this.cam.dist = Math.max(dist0, distNeed);
+    // 1. dolly to the framed distance — out for sprawls, in for small
+    //    formations. Close-ups are safe: Fit is a toggle and Fit-off
+    //    restores the exact pre-fit camera + orb sizes from the snapshot.
+    this.cam.dist = distNeed;
     // 2. set every orb's view boost ABSOLUTELY from this distance: runts rise
     //    exactly to the floor, healthy orbs return to ×1. Absolute (never
     //    incremental), so zooming in un-boosts and repeat fits converge.
@@ -393,33 +410,44 @@ export class Renderer {
       ctx.globalAlpha = dim ? 0.06 : hot ? 0.9 : 0.55;
       // neon tethers: tight halo pass + bright core pass (slider scales both, far left skips them)
       const tw = (this.tetherScale == null ? 1 : this.tetherScale);
-      if (tw > 0.01) {
+      // tethers-off exception: the canvas-selected body's shared-ground
+      // (topic) fan still draws — in sun gold — so the pick stays readable
+      // with the fan hidden
+      const ghostFan = tw <= 0.01 && !!sel && (e.source === sel || e.target === sel) && e.kind === 'topic';
+      if (tw > 0.01 || ghostFan) {
+        const twEff = ghostFan ? 0.7 : tw; // ghost fan runs a bit thinner than the full on-state width
         const vv = (this.vivid && hot) ? 1.35 : 1; // vivid: the viewed body's fan runs thicker and blooms
         const ax = Math.round(a.x / px) * px, ay = Math.round(a.y / px) * px;
         const bx = Math.round(b.x / px) * px, by = Math.round(b.y / px) * px;
         // floor the widths in device px: below ~1px a stroke turns to dotted
         // stairs (thin slider settings), so hairlines keep a continuous core
-        const haloW = Math.max((hot ? 3 : 2.6) * tw * vv, hot ? 1.8 : 1.5);
-        const coreW = Math.max((hot ? 1.6 : 1.3) * tw * vv, hot ? 1.0 : 0.75);
+        const haloW = Math.max((hot ? 3 : 2.6) * twEff * vv, hot ? 1.8 : 1.5);
+        const coreW = Math.max((hot ? 1.6 : 1.3) * twEff * vv, hot ? 1.0 : 0.75);
         // dotted tethers ("2" partition): round dots (lineCap is already
         // round), airy spacing that grows with the halo so fat tethers
         // don't crowd — same dash phase on both passes so they stay aligned
-        const dotted = !!this.tetherDotted;
+        const dotted = !ghostFan && (!!this.tetherDotted || !!this.tetherSparse);
+        const sparse = !ghostFan && !!this.tetherSparse;
+        const dashed = !ghostFan && !!this.tetherDashed;
         // dots carry a visibility floor solid lines don't need: hairline
         // thickness would shrink them into invisible dust, so dotted dots
         // never go below a readable diameter (normal thickness and above
         // is exactly what it always was)
         const haloW2 = dotted ? Math.max(haloW, 2.2) : haloW;
         const coreW2 = dotted ? Math.max(coreW, 1.3) : coreW;
-        if (dotted) ctx.setLineDash([0.01, haloW >= 2.2 ? Math.max(8, haloW * 2.5) : 5]);
+        // "3" stretches the spacing ~4x (30px+ floor) so crowded canvases
+        // keep only a whisper of the tether fan; "4" draws long dashes set
+        // far apart instead of dots
+        if (dashed) ctx.setLineDash([3.5, Math.max(36, haloW * 10)]);
+        else if (dotted) ctx.setLineDash([0.01, sparse ? Math.max(30, haloW * 9) : (haloW >= 2.2 ? Math.max(8, haloW * 2.5) : 5)]);
         if (vv > 1) { ctx.save(); ctx.globalCompositeOperation = 'screen'; } // overlapping golds bloom into light
-        ctx.strokeStyle = sunTopic ? `rgba(${sgc},0.22)` : hot ? hotHalo(this.vivid ? 0.42 : 0.28) : (this.vivid ? 'rgba(100,120,160,0.13)' : tint(0.18));
+        ctx.strokeStyle = ghostFan ? 'rgba(255,206,107,0.30)' : sunTopic ? `rgba(${sgc},0.22)` : hot ? hotHalo(this.vivid ? 0.42 : 0.28) : (this.vivid ? 'rgba(100,120,160,0.13)' : tint(0.18));
         ctx.lineWidth = haloW2;
         ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
-        ctx.strokeStyle = sunTopic ? `rgba(${sgc},0.95)` : hot ? hotCore(this.vivid ? 1 : 0.95) : (this.vivid ? 'rgba(130,150,200,0.28)' : coreTint(0.85));
+        ctx.strokeStyle = ghostFan ? 'rgba(255,216,140,0.95)' : sunTopic ? `rgba(${sgc},0.95)` : hot ? hotCore(this.vivid ? 1 : 0.95) : (this.vivid ? 'rgba(130,150,200,0.28)' : coreTint(0.85));
         ctx.lineWidth = coreW2;
         ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
-        if (dotted) ctx.setLineDash([]);
+        if (dotted || dashed) ctx.setLineDash([]);
         if (vv > 1) ctx.restore();
       }
       ctx.globalAlpha = 1;

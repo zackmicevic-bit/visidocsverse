@@ -3,13 +3,50 @@ import { vault } from './vault.js';
 import { Universe } from './physics.js';
 import { Renderer } from './render.js';
 import { imgPut, imgGet, imgKeys, imgDelete, migrateImageDB } from './imgstore.js';
-import { ensureLicensed, verifyLicenseKey, needsLicenseGate, showLicenseModal, verifyLicenseOnStartup, activateLicenseKey } from './license.js';
+import { ensureLicensed, verifyLicenseKey, needsLicenseGate, showLicenseModal, verifyLicenseOnStartup, activateLicenseKey, licenseStatus, deactivateLicense, isDesktopShell } from './license.js';
 import { ensureEulaAccepted, eulaAccepted, showEulaModal } from './eula.js';
+import { clearDevLicenseCaches } from './licensing-manager.js';
+
+// Boot tracer: window-title breadcrumbs so a stalled desktop launch can be
+// diagnosed from a screenshot (no devtools needed). Silent on success — the
+// original title is restored at the end of boot.
+var __bootTitle0 = 'VisiDocsVerse';
+try { __bootTitle0 = document.title || __bootTitle0; } catch (e) {}
+function bootStage(s) { try { window.__bootStage = s; document.title = 'VisiDocsVerse [boot:' + s + ']'; } catch (e) {} }
+bootStage('module');
+// Module is running: cancel the inline stall watchdog (index.html) and drop
+// its overlay if it already painted.
+try { clearTimeout(window.__bootTimer); var __bs = document.getElementById('bootStall'); if (__bs) __bs.remove(); } catch (e) {}
 import { initUpdateChecker, checkForUpdates, showUpdateBanner, hideUpdateBanner, APP_VERSION, needsUpdateCheck } from './update-check.js';
 import { origPut, origGet, origKeys, origDelete } from './origstore.js';
 
+// Neutralino desktop shell: init the client API, then force a clean shutdown
+// when the window's X button is clicked (exitProcessOnClose alone can leave
+// the background process hanging). Guarded so plain browsers, local static
+// servers and other shells (no Neutralino global) skip it entirely.
+if (typeof Neutralino !== 'undefined') {
+  try { Neutralino.init(); } catch {}
+  Neutralino.events.on('windowClose', () => {
+      Neutralino.app.exit();
+  });
+}
+
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+// Vendor-asset base URL (pdf.js worker, tesseract core/lang/worker): the
+// directory layout differs between the live preview (src/*.js + src/vendor/,
+// modules served cross-origin from the bare domain) and the shipped trees
+// (src/js/*.js + src/js/vendor/, everything same-origin). Workers must be
+// same-origin with the page, so: use the module-relative vendor dir whenever
+// it shares the page origin (desktop export, static servers, file://), else
+// fall back to the preview's page-relative src/vendor/ layout.
+function vendorBase() {
+  try {
+    const m = new URL('./vendor/', import.meta.url);
+    if (m.origin === location.origin) return m.href;
+  } catch { /* cross-origin module base (live preview) — fall through */ }
+  return new URL('src/vendor/', location.href).href;
+}
 
 let uni = null; // active canvas universe (each canvas keeps its own persistent universe)
 const unis = new Map(); // tabId -> Universe: formations survive tab switches, twins stay locked
@@ -420,13 +457,14 @@ const SPEED_MIN = 0.02, SPEED_MAX = 5;
 let rotOn = true;
 let autoDist = false; // auto-distribute: pin bodies in a fit-to-canvas orb (orbital motion overridden until toggled off)
 let fitActive = false, fitSnapshot = null; // Fit toggle: pre-fit camera + orb boosts, restored when toggled off (session-only)
+let panHeld = false; // hand-pan ownership (session-only, never persisted): a hand drag owns the pan, so the screen-center gravity stands down; only an explicit re-seat (double-click, Fit-on, fresh canvas/rebuild) hands it back
 let simpleOrb = false; // plain-body mode: flat white discs + thin black outline, no photo/glow overlays
 let simpleOrb2 = false; // plain-body 2: original blue orbs with photo overlays stripped (mutually exclusive with simpleOrb)
 let triOrb = false; // triangle mode: upside-down triangles instead of orbs (same fill, same size; combines with any color mode)
 let docIcon = false; // document-icon mode: plain white page glyphs instead of orbs (docs + tags; themes stay round; shape-exclusive with triOrb)
-let vividUniverse = false; // vivid-universe canvas variation: nebula wash, volumetric node glow, depth-graded gold/cyan tethers (owned by the black Backdrop tile, luxury only)
+let vividUniverse = false; // retired (nebula tile removed): vivid stays off, luxury defaults to plain black — kept so old saves still load
 let miniX = null, miniY = null, miniW = 0, miniH = 0; // verse minimap geometry (null x/y = docked bottom-right; 0 w/h = default size)
-let tabX = null, tabY = null, hintX = null, hintY = null; // pill positions (null = docked default; hand-drag moves, persists; top width always matches the bottom pill; both fully on-screen)
+let tabX = null, tabY = null, hintX = null, hintY = null; // pill x-positions (null = docked default; hand-drag moves x, persists; heights are hard-docked via CSS, tabY/hintY stay null; top width always matches the bottom pill; both fully on-screen)
 let pillsCentered = false; // horizontal-center toggle: single-click the top pill's empty background slides BOTH pills to the viewport's horizontal middle at their current heights; another click docks both beside the left pane
 let pillLaneW = 0; // free-lane width from the last placeTabBar run (restores a moved top pill after a bottom-edge shrink)
 let pillMinW = 0; // legacy: recorded widest seated width (kept for saved-state compat; no longer a floor — the top pill tracks the bottom pill's width exactly)
@@ -454,6 +492,8 @@ let bgShadePreLux = null; // shade stashed while left-pane luxury locks it at bl
 let glowScale = 1, glowLast = 1; // halo radius multiplier (0 = none, 1 = current, 2 = double)
 let tetherScale = 1, tetherLast = 1; // tether thickness multiplier (0 = hidden, 1 = current, 2 = double)
 let tetherDotted = false; // dotted tethers ("2" pill partition): spaced round dots instead of solid lines
+let tetherSparse = false; // sparse tethers ("3" pill partition): dotted stroke with a much wider gap, for crowded canvases
+let tetherDashed = false; // dashed tethers ("4" pill partition): long dashes set far apart, barely-there links
 let tetherColor = '#82aaff'; // tether tint (shared-ground links auto-contrast off it)
 let backdrop = ''; // canvas backdrop photo (filename in src/backdrops, '' = none)
 let backdropAlpha = 0.55, backdropLast = 0.55; // backdrop opacity (0 = off)
@@ -499,7 +539,6 @@ function applyLux() {
     document.getElementById('gotoSide')?.classList.toggle('lux', !!luxDoc); // locate floater dresses with the reader pane
   } catch {}
   syncShadeLock(); // the shade row lives in the left pane: luxury freezes it
-  syncVividLux(); // the canvas rides luxury too: luxury forces vivid on
   try { // no light-mode button in the top pill while luxury is on (shade is locked anyway); back when it leaves
     const bar = document.getElementById('tabBar');
     let mb = document.getElementById('modeBtn');
@@ -522,20 +561,6 @@ function refreshShadeUi() {
     if (ren) ren.bgShade = bgShade;
     syncHintContrast(); syncPaneContrast(); syncModeBtn(); saveUi();
   } catch {}
-}
-// Nebula rides the black Backdrop tile, luxury only: selecting the tile
-// turns vivid on in luxury and stays plain black in regular (selecting or
-// deselecting it there changes nothing). This only adopts legacy sessions
-// (vivid on, no photo) into the tile; the default-select for fresh luxury
-// lives in luxDotClick so a deliberate black canvas survives boots and
-// restores.
-function syncVividLux() {
-  if (!backdrop && vividUniverse) {
-    backdrop = 'nebula';
-    try { document.querySelectorAll('#bgPal .bgsw').forEach(b => b.classList.toggle('on', b.dataset.bg === 'nebula')); } catch {}
-    try { saveUi(); } catch {}
-  }
-  try { syncVividBtn(); } catch {}
 }
 // luxury shade lock: the left pane's gold finish needs a black canvas, so
 // while luxLeft is on the Shade slider + button freeze at 100% and every
@@ -567,20 +592,14 @@ function luxDotClick(e) {
   const on = !(luxLeft && luxDoc && luxTab && luxHint && luxMini);
   luxLeft = luxDoc = luxTab = luxHint = luxMini = on;
   applyLux();
-  if (on && !backdrop) { // luxury's default canvas: the black tile = nebula, unless a photo is already chosen
-    backdrop = 'nebula';
-    vividUniverse = true;
-    try { if (ren) ren.vivid = true; } catch {}
-    try { document.querySelectorAll('#bgPal .bgsw').forEach(b => b.classList.toggle('on', b.dataset.bg === 'nebula')); } catch {}
-  } else if (on && backdrop === 'nebula') { // black tile already on: light the nebula
-    vividUniverse = true;
-    try { if (ren) ren.vivid = true; } catch {}
-  } else if (!on) { // regular mode: the black tile auto-switches on too — plain black canvas (selecting/deselecting it changes nothing)
-    backdrop = 'nebula';
-    vividUniverse = false;
-    try { if (ren) ren.vivid = false; } catch {}
-    try { document.querySelectorAll('#bgPal .bgsw').forEach(b => b.classList.toggle('on', b.dataset.bg === 'nebula')); } catch {}
-  }
+  // luxury's default canvas is plain black (the nebula tile is gone): photos
+  // stay untouched, vivid stays off, and turning luxury off clears any photo
+  // back to the black default, as before.
+  if (backdrop === 'nebula') backdrop = ''; // legacy sessions adopted to black
+  vividUniverse = false;
+  try { if (ren) ren.vivid = false; } catch {}
+  if (!on && backdrop) backdrop = '';
+  try { document.querySelectorAll('#bgPal .bgsw').forEach(b => b.classList.toggle('on', b.dataset.bg === backdrop && backdrop !== '')); } catch {}
   saveUi();
   toast('Workspace luxury ' + (on ? 'on' : 'off'));
 }
@@ -620,7 +639,7 @@ try {
   if (ui.simpleOrb2 === true) simpleOrb2 = true;
   if (ui.triOrb === true) triOrb = true;
   if (ui.docIcon === true) docIcon = true;
-  if (ui.vividUniverse === true) vividUniverse = true;
+  if (ui.vividUniverse === true) vividUniverse = false; // retired: old vivid-on sessions adopt to plain black
   if (typeof ui.miniX === 'number' && typeof ui.miniY === 'number') { miniX = ui.miniX; miniY = ui.miniY; }
   if (typeof ui.miniW === 'number' && ui.miniW >= 140 && ui.miniW <= 640) miniW = ui.miniW;
   if (typeof ui.miniH === 'number' && ui.miniH >= 100 && ui.miniH <= 480) miniH = ui.miniH;
@@ -631,6 +650,12 @@ try {
   if (typeof ui.hintX === 'number' && typeof ui.hintY === 'number') { hintX = ui.hintX; hintY = ui.hintY; }
   if (ui.pillsCentered === true) pillsCentered = true;
   fitPillsToScreen(ui.vw, ui.vh); // auto-fit the pair to this screen on every open
+  // tandem heal: pre-tandem saves may persist different x values per pill.
+  // Centered mode owns x absolutely: drop stale coords so the first layout
+  // seats the pair fresh at this viewport's middle. Otherwise reunite a
+  // split pair now (top leads) — every later layout keeps one shared x.
+  if (pillsCentered) { tabX = tabY = hintX = hintY = null; }
+  else if (tabX != null && hintX != null && tabX !== hintX) hintX = tabX;
   if (typeof ui.pillMinW === 'number' && ui.pillMinW >= 240 && ui.pillMinW <= 4000) pillMinW = ui.pillMinW;
   if (ui.groupMinW && typeof ui.groupMinW === 'object') { const vs = Object.values(ui.groupMinW).filter(v => typeof v === 'number' && v >= 80 && v <= 4000); if (vs.length) clusterW = Math.max(...vs); } // migrated per-group floors -> one uniform width
   if (typeof ui.clusterW === 'number' && ui.clusterW >= 80 && ui.clusterW <= 4000) clusterW = ui.clusterW;
@@ -662,7 +687,9 @@ try {
     if (typeof ui.tetherLast === 'number' && ui.tetherLast > 0 && ui.tetherLast <= 2) tetherLast = ui.tetherLast;
     if (typeof ui.tetherColor === 'string' && /^#[0-9a-f]{6}$/i.test(ui.tetherColor)) tetherColor = ui.tetherColor;
     if (ui.tetherDotted === true) tetherDotted = true;
-    if (typeof ui.backdrop === 'string' && (/^[a-z0-9._-]+\.jpg$/i.test(ui.backdrop) || ui.backdrop === 'nebula')) backdrop = ui.backdrop;
+    if (ui.tetherSparse === true) { tetherSparse = true; tetherDotted = true; }
+    if (ui.tetherDashed === true) tetherDashed = true;
+    if (typeof ui.backdrop === 'string' && (/^[a-z0-9._-]+\.jpg$/i.test(ui.backdrop))) backdrop = ui.backdrop; // legacy 'nebula' saves adopt to plain black (default '')
     if (typeof ui.backdropAlpha === 'number' && ui.backdropAlpha >= 0 && ui.backdropAlpha <= 1) backdropAlpha = ui.backdropAlpha;
     if (typeof ui.backdropLast === 'number' && ui.backdropLast > 0 && ui.backdropLast <= 1) backdropLast = ui.backdropLast;
     if (typeof ui.paneAlpha === 'number' && ui.paneAlpha >= 0 && ui.paneAlpha <= 1) paneAlpha = ui.paneAlpha;
@@ -702,7 +729,7 @@ try {
   if (stored >= 0 && stored <= SPEED_MAX) rotMul = stored;
 } catch { /* fresh prefs */ }
 function saveUi() {
-  try { localStorage.setItem('visidocsverse.ui', JSON.stringify({ rotOn, rotMul, speedMul: rotMul, autoDist, simpleOrb, simpleOrb2, triOrb, docIcon, vividUniverse, miniX, miniY, miniW, miniH, miniFolded, tvpX, tvpY, tvpW, tvpH, tabX, tabY, hintX, hintY, pillsCentered, vw: window.innerWidth, vh: window.innerHeight, pillMinW, clusterW, glossX, glossY, glossW, glossH, glossOpen, glossDockV1: true, ovAlpha, ovLast, lbScale, lbLast, sizeScale, sizeLast, spinOn, spinSpeed, compressScale, compressLast, bgShade, bgShadePreLux, glow: glowScale, glowLast, tether: tetherScale, tetherLast, tetherColor, tetherDotted, backdrop, backdropAlpha, backdropLast, paneAlpha, paneLast, glazeLeft, glazeDoc, glazeCloud, glazeMini, glazeGloss, glazeTabBar, glazeHintBar, luxLeft, luxDoc, luxTab, luxHint, luxMini, leftCollapsed, docCollapsed, docWidth, hoverPrev, hideUngr, snapCenter, statsCollapsed, pillCollapsed, tipsCollapsed, pinnedTerms, lensThematic, lensTags, skipTagConfirms, viewNotesAll, viewNotesSun, notesOpen, notesAuto, carZoom })); } catch { /* private mode */ }
+  try { localStorage.setItem('visidocsverse.ui', JSON.stringify({ rotOn, rotMul, speedMul: rotMul, autoDist, simpleOrb, simpleOrb2, triOrb, docIcon, vividUniverse, miniX, miniY, miniW, miniH, miniFolded, tvpX, tvpY, tvpW, tvpH, tabX, tabY, hintX, hintY, pillsCentered, vw: window.innerWidth, vh: window.innerHeight, pillMinW, clusterW, glossX, glossY, glossW, glossH, glossOpen, glossDockV1: true, ovAlpha, ovLast, lbScale, lbLast, sizeScale, sizeLast, spinOn, spinSpeed, compressScale, compressLast, bgShade, bgShadePreLux, glow: glowScale, glowLast, tether: tetherScale, tetherLast, tetherColor, tetherDotted, tetherSparse, tetherDashed, backdrop, backdropAlpha, backdropLast, paneAlpha, paneLast, glazeLeft, glazeDoc, glazeCloud, glazeMini, glazeGloss, glazeTabBar, glazeHintBar, luxLeft, luxDoc, luxTab, luxHint, luxMini, leftCollapsed, docCollapsed, docWidth, hoverPrev, hideUngr, snapCenter, statsCollapsed, pillCollapsed, tipsCollapsed, pinnedTerms, lensThematic, lensTags, skipTagConfirms, viewNotesAll, viewNotesSun, notesOpen, notesAuto, carZoom })); } catch { /* private mode */ }
 }
 // bottom hint pill: flip to a light pill on a white canvas, dark pill on black
 function syncHintContrast() {
@@ -855,22 +882,49 @@ function applyDocWidth() {
     p.style.width = docWidth > 0 ? clampDocW(docWidth) + 'px' : '';
     sizeDocPanel();
     syncResizeHandle();
+    try { syncTiltShift(); } catch {} // width moves the overshoot — recompute before the tilt-block check
     if (p.classList.contains('tiltedR') && docTiltBlocked()) { setDocTilt(false, true); toast('Reader tilt off — the stretched pane covers the pills'); }
     try { placeTabBar(); } catch {}
     try { placeGotoSide(); } catch {} // width changes move the pane edge — the jump cluster rides it
   } catch {}
 }
+// tilt overshoot compensation: a center-hinged rotateY(-30deg) under
+// perspective(1100px) magnifies the docked (right) edge past the viewport
+// once the pane is wider than ~590px — the top-right collapse/glaze
+// controls (and the bottom-right Top tab) slide off-screen. Shifting the
+// whole tilted frame left by exactly the overshoot pins the visual right
+// edge at its layout edge for ANY width; at resting width the overshoot is
+// negative and the shift is 0 (rendering identical to before).
+const TILT_P = 1100; // must match the perspective() in the tilted transforms
+function tiltShiftPx() {
+  try {
+    const p = document.getElementById('docPanel');
+    if (!p) return 0;
+    const h = p.offsetWidth / 2;
+    const screen = h * Math.cos(Math.PI / 6) * TILT_P / (TILT_P - 0.5 * h);
+    return Math.max(0, Math.ceil(screen - h));
+  } catch { return 0; }
+}
+function syncTiltShift() {
+  try {
+    const app = document.getElementById('app');
+    const p = document.getElementById('docPanel');
+    // NEGATIVE: the frame must move left to cancel a rightward overshoot
+    const s = (p && p.classList.contains('tiltedR')) ? -tiltShiftPx() : 0;
+    if (app) app.style.setProperty('--tiltShift', s + 'px');
+  } catch {}
+}
 // tilt-ride: park an edge rider in the pane's own 3D plane so it glides WITH
 // the rotation instead of sitting at the pre-glide spot and snapping after.
-// Same recipe as the Notes tab — identical perspective + angle about the
-// pane's own center (keep in sync with #docPanel.tiltedR); seats come from
+// Same recipe as the Notes tab — identical perspective + shift + angle about
+// the pane's own center (keep in sync with #docPanel.tiltedR); seats come from
 // layout (offset) geometry, which is transition-stable. Riders carry
 // transition:transform .45s ease in CSS to move in lockstep.
 function rideTiltPlane(el) {
   const p = document.getElementById('docPanel');
   if (!el || !p) return;
   if (p.classList.contains('tiltedR')) {
-    el.style.transform = 'perspective(1100px) rotateY(-30deg)';
+    el.style.transform = 'perspective(1100px) translateX(var(--tiltShift, 0px)) rotateY(-30deg)';
     el.style.transformOrigin = (p.offsetLeft + p.offsetWidth / 2 - (el.offsetLeft || 0)).toFixed(1) + 'px 50%';
   } else {
     el.style.transform = '';
@@ -917,6 +971,7 @@ function setDocTilt(on, silent) {
   if (on && docTiltBlocked()) { if (!silent) toast('Tilt is off while the stretched reader covers the pills — narrow it first'); return false; }
   p.classList.toggle('tiltedR', !!on);
   if (b) b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  try { syncTiltShift(); } catch {} // pin the visual right edge on-screen (0 at resting width)
   try { syncResizeHandle(); placeNotesTab(); placeFindSide(); placeTopBtn(); placeGotoSide(); if (notesOpen) applyNotesGeom(); } catch {} // rail + cards glide in-plane (gotoSide stays flat by design); seats are transition-stable so one pass covers it…
   setTimeout(() => { try { syncResizeHandle(); placeNotesTab(); placeFindSide(); placeTopBtn(); placeGotoSide(); applyNotesGeom(); } catch {} }, 500); // …and again once the .45s glide lands (gotoSide lands flat on the visual edge), absorbing any resize mid-swing
   return !!on;
@@ -1869,7 +1924,7 @@ function syncFitBtn() {
   setPillGlyph('#fitBtn', fitActive);
   b.title = fitActive
     ? 'Fit is ON — click to restore the pre-fit view'
-    : 'Fit: recenter and zoom out until every body is on screen (never zooms in), enlarging any orb below readable size';
+    : 'Fit: recenter and frame every body on screen (zooms out or in as needed), enlarging any orb below readable size';
 }
 function snapFit() {
   if (!uni) return null;
@@ -1893,7 +1948,7 @@ function syncAutoBtn() {  const b = $('#autoBtn');
 // Distribute fills the screen with a close orb, so the whole verse disappears;
 // the map reframes every body (top-down X/Z, auto-fit) in a draggable,
 // resizable glass pane bottom-right — same idea as a game navigation map.
-function applyMiniGeom() {
+function applyMiniGeom(lodgeOK = true) {
   const box = $('#miniMap');
   if (!box) return;
   try { box.classList.toggle('folded', miniFolded === true); } catch {} // geometry measures the shown height: sync the class first so callers can't measure stale
@@ -1960,6 +2015,19 @@ function applyMiniGeom() {
         }
         w = Math.max(140, Math.min(w, window.innerWidth - 32));
         cornerLeft = Math.round(window.innerWidth - 16 - w);
+      }
+      if (!rr0) { // collapsed/hidden reader: shrink to the free lane right of the pill
+        try {
+          const hbLane = document.getElementById('hintBar');
+          if (hbLane && hbLane.offsetParent !== null) {
+            const hrLane = hbLane.getBoundingClientRect();
+            if (hrLane.width > 0 && hrLane.height > 0 && hrLane.top < window.innerHeight) {
+              const freeW = Math.round((window.innerWidth - 16) - (hrLane.right + 8));
+              if (freeW >= 140) w = Math.max(140, Math.min(w, freeW));
+            }
+          }
+        } catch {}
+        w = Math.max(140, Math.min(w, window.innerWidth - 32));
       }
     } catch {}
   }
@@ -2083,6 +2151,16 @@ function applyMiniGeom() {
             } catch {}
           }
         }
+      }
+    } catch {}
+    try { // collapsed/hidden reader: a folded bar lodges in the corner lane (same park as the docked path)
+      if (miniFolded && lodgeOK && !readerRect()) {
+        const lodgeH = Math.max(28, Math.round(box.offsetHeight || box.getBoundingClientRect().height || 34));
+        const lodgeTop = pillTopAt(window.innerWidth - 16 - w);
+        miniX = Math.max(8, Math.round(window.innerWidth - 16 - w));
+        miniY = lodgeTop >= 0 ? Math.max(8, Math.round(lodgeTop - 8 - lodgeH)) : Math.max(8, Math.round(window.innerHeight - 8 - lodgeH));
+        box.style.left = miniX + 'px'; box.style.top = miniY + 'px';
+        box.style.right = 'auto'; box.style.bottom = 'auto';
       }
     } catch {}
   }
@@ -2319,11 +2397,11 @@ function placeNotesTab() {
   // parked above the edge cluster (26px clear of the tilt toggle) with breathing
   // room — anchored to the pane middle so it tracks the cluster on any height
   t.style.top = Math.max(8, Math.min(Math.round(py + ph / 2 - 225), window.innerHeight - 128)) + 'px';
-  // same 3D plane as the tilted pane: identical perspective + angle about the
-  // pane's own center (keep in sync with #docPanel.tiltedR), so the tab slants
-  // with the visual edge instead of floating flat beside it
+  // same 3D plane as the tilted pane: identical perspective + shift + angle
+  // about the pane's own center (keep in sync with #docPanel.tiltedR), so
+  // the tab slants with the visual edge instead of floating flat beside it
   if (p.classList.contains('tiltedR')) {
-    t.style.transform = 'perspective(1100px) rotateY(-30deg)';
+    t.style.transform = 'perspective(1100px) translateX(var(--tiltShift, 0px)) rotateY(-30deg)';
     t.style.transformOrigin = (pw / 2 + 25).toFixed(1) + 'px 50%';
   } else {
     t.style.transform = '';
@@ -2726,17 +2804,6 @@ function syncTriOrbBtn() {
     ? 'Triangle mode is ON — click to restore orbs'
     : 'Triangles: upside-down triangles instead of orbs (same colors, same sizes)';
 }
-function syncVividBtn() {
-  const b = $('#vividBtn');
-  if (!b) return;
-  b.classList.toggle('on', vividUniverse);
-  b.disabled = !!luxLeft; // tied to workspace luxury while it is on
-  b.title = luxLeft
-    ? 'Vivid locked by workspace luxury (ON) — turn luxury off to change it'
-    : vividUniverse
-    ? 'Vivid universe is ON — click to restore the classic canvas'
-    : 'Vivid: nebula wash, volumetric node glow, gold fan + cyan depths (canvas look only — physics untouched)';
-}
 // auto-distribute: sun at the center, every other body pinned on mass-ranked
 // fibonacci shells (even angular spacing = least-obstruction display), scaled
 // to an ellipse that fits the canvas. Eased per-frame so toggles morph.
@@ -2854,8 +2921,25 @@ function syncIsoBtn() {
 function syncTetherDotsBtn() {
   const b = $('#tetherDotsBtn');
   if (!b) return;
-  b.classList.toggle('on', tetherDotted);
-  b.title = tetherDotted ? 'Dotted tethers on — click for solid lines' : 'Dotted tethers: draw the tether lines as spaced dots instead of solid lines';
+  const on = tetherDotted && !tetherSparse && !tetherDashed;
+  b.classList.toggle('on', on);
+  b.title = on ? 'Dotted tethers on — click for solid lines' : 'Dotted tethers: draw the tether lines as spaced dots instead of solid lines';
+}
+// bottom pill "3" tether partition: sparse dots — the same dotted stroke with
+// a much wider gap, for crowded canvases where normal dots still clutter.
+function syncTetherSparseBtn() {
+  const b = $('#tetherSparseBtn');
+  if (!b) return;
+  b.classList.toggle('on', tetherSparse);
+  b.title = tetherSparse ? 'Sparse tethers on — barely-there dots, far apart — click for solid lines' : 'Sparse tethers: widely-spaced dots for crowded canvases, minimally obtrusive';
+}
+// bottom pill "4" tether partition: dashed tethers — long dashes set far
+// apart instead of dots, another barely-there option for crowded canvases.
+function syncTetherDashedBtn() {
+  const b = $('#tetherDashedBtn');
+  if (!b) return;
+  b.classList.toggle('on', tetherDashed);
+  b.title = tetherDashed ? 'Dashed tethers on — long dashes, far apart — click for solid lines' : 'Dashed tethers: long dashes set far apart, barely-there links for crowded canvases';
 }
 // associated-document overlays (thematic view): canvas-wide on/off for
 // the ASSOCIATED-document name labels only — orb labels stay on the
@@ -3023,6 +3107,8 @@ function helpEditAllowed() {
     const q = new URLSearchParams(location.search || '');
     if (q.get('helpedit') === '0' || q.get('noedit') === '1') return false;
     if (window.__TAURI__ || window.__TAURI_INTERNALS__ || window.__TAURI_METADATA__) return false;
+    if (window.NL_PORT != null || window.NL_TOKEN != null || window.NL_APPID != null || window.NL_VERSION != null) return false; // Neutralino desktop shell (localhost http, so the Tauri/file checks above miss it)
+    if (typeof Neutralino !== 'undefined') return false; // Neutralino client API present = desktop shell, even if the NL_* constants are ever absent
     const p = String(location.protocol || '').toLowerCase();
     if (p === 'file:' || p === 'tauri:' || p === 'wry:' || p === 'app:') return false;
     const ua = String(navigator.userAgent || '').toLowerCase();
@@ -3275,18 +3361,62 @@ function placeTabBar() {
   pillLaneW = R - L;
   if (laneW < 240) { L = 8; R = vw - 8; pillLaneW = R - L; } // degenerate sliver: fall back to viewport margins
   bar.style.maxWidth = Math.max(240, R - L) + 'px';
-  if (pillsCentered && (tabX == null || tabY == null || hintX == null || hintY == null)) {
+  if (pillsCentered && (tabX == null || hintX == null)) {
     seatPillsCenter(); // legacy save: flag on but no coords — seat the stack fresh
     try { applyGlossGeom(); } catch {}
     syncTabBarZ();
     return;
   }
-  if (tabX == null || tabY == null) { bar.style.transform = 'none'; bar.style.left = L + 'px'; }
+  if (tabX == null) { bar.style.transform = 'none'; bar.style.left = L + 'px'; bar.style.top = ''; } // docked-x: full CSS seat (left + top) — the top pill is hard-attached to the viewport top, never a hand height
   else applyTabGeom(); // user-moved: keep the hand position, enforce the right clamp
   syncPillPair(bar, L);
-  enforceTopRight(); // the top pill matches the bottom pill's width exactly (positions stay independent)
+  enforceTopRight(); // the top pill matches the bottom pill's width exactly (one shared tandem x)
+  centerPillsX(); // centered toggle: enforceTopRight already re-seats, but it bails while the bottom pill is hidden — re-assert here per visible pill
   try { applyGlossGeom(); } catch {} // the top pill may have wrapped taller: keep the glossary out from under it
   syncTabBarZ(); // restack after every move: reader-over-pill vs popover-above
+  verifyPillsOnScreen(); // self-heal: a pill parked off-screen (stale save, older build, missed clamp) re-docks instead of stranding its controls
+}
+// pill rescue: if either pill ends up even partly off-screen (stale coords from
+// an older build, an in-place restore that nulled coords without clearing inline
+// heights, or any clamp the position missed), re-dock it instead of leaving its
+// controls stranded. Runs at the end of every placeTabBar (boot, resize, settle
+// cascade, toggles), so a bad state heals on the next layout pass at the latest.
+// Only fires on a genuinely off-screen pill — hand drags stay clamped on-screen
+// by construction and never trigger it.
+let __pillVerifyDepth = 0;
+function verifyPillsOnScreen() {
+  if (__pillVerifyDepth) return;
+  try {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    if (!(vw > 50) || !(vh > 50)) return; // not laid out yet
+    const rescued = [];
+    const jobs = [
+      ['tabBar', () => { tabX = null; tabY = null; }],
+      ['hintBar', () => { hintX = null; hintY = null; }],
+    ];
+    for (const [id, nullCoords] of jobs) {
+      const el = document.getElementById(id);
+      if (!el || !pillShown(el)) continue; // hidden (mobile CSS): leave it alone
+      const r = el.getBoundingClientRect();
+      if (!(r.width > 0 && r.height > 0)) continue; // not laid out yet
+      if (r.top < -2 || r.left < -2 || r.right > vw + 2 || r.bottom > vh + 2) {
+        // nothing to change (already docked, no inline offsets) yet still out
+        // of view — e.g. a pill taller than a tiny viewport: leave it alone so
+        // repeated layout passes can't re-fire (no toast loops, no save churn).
+        const docked = (id === 'tabBar' ? (tabX == null || tabY == null) : (hintX == null || hintY == null));
+        if (docked && !el.style.top && !el.style.bottom && !el.style.transform) continue;
+        nullCoords();
+        el.style.transform = 'none';
+        el.style.top = ''; el.style.bottom = '';
+        rescued.push(id);
+      }
+    }
+    if (!rescued.length) return;
+    __pillVerifyDepth++;
+    try { placeTabBar(); } finally { __pillVerifyDepth--; }
+    try { saveUi(); } catch {}
+    try { toast('A pill was off-screen — moved back into view'); } catch {}
+  } catch {}
 }
 // MAIN folder-tab canvas mimic: the tab's fill tracks the canvas center shade
 // (white -> #11161f across bgShade, same mix as the renderer's backdrop core),
@@ -3309,24 +3439,36 @@ function syncMainTabBg() {
     try { document.getElementById('hintBar')?.style.setProperty('--hbtabbg', tabBg); } catch {} // bottom-pill book tabs: same canvas fill, updated live with the shade
   } catch {}
 }
+// pill visibility: offsetParent is ALWAYS null for position:fixed elements
+// (the top pill), so it can never be used as a shown/hidden test for the
+// pills — a rect-based check instead. Hidden = mobile CSS / .hidden only.
+function pillShown(el) {
+  try {
+    if (!el || el.hidden) return false;
+    const c = getComputedStyle(el);
+    if (c.display === 'none' || c.visibility === 'hidden') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  } catch { return false; }
+}
 // pill-pair docking: the top + bottom pills share the lane's left edge; the
 // bottom pill keeps its own natural width and the top pill matches it
-// exactly (see enforceTopRight). A hand-dragged pill keeps its position
-// and never drags the other pill along; auto-layout only sets the top
-// width, so neither pill ever overflows its frame.
+// exactly (see enforceTopRight). Hand-dragging EITHER pill slides BOTH (see
+// slidePillsTandem) — one shared x, so the pair never drifts apart;
+// auto-layout only sets the top width, so neither pill ever overflows.
 function syncPillPair(bar, dockL) {
   try {
     const hint = document.getElementById('hintBar');
     if (!hint || !bar) return;
-    if (hint.offsetParent === null) return; // hidden (mobile): leave it alone
+    if (!pillShown(hint)) return; // hidden (mobile): leave it alone
     bar.style.width = ''; // natural size: never stretched to match the other pill
     hint.style.width = ''; // natural size: never stretched to match the other pill
     hint.style.boxSizing = 'border-box';
     hint.style.maxWidth = bar.style.maxWidth || '96vw'; // cap only
-    if (hintX == null || hintY == null) {
-      // docked: share the lane's left edge with the top pill, at own width
+    if (hintX == null) {
+      // docked-x: share the lane's left edge with the top pill, at own width
       hint.style.transform = 'none';
-      hint.style.top = ''; hint.style.bottom = ''; // back to the CSS bottom:14px
+      hint.style.top = ''; hint.style.bottom = ''; // back to the CSS bottom:0 seat
       hint.style.left = (typeof dockL === 'number' ? dockL : bar.getBoundingClientRect().left) + 'px';
     } else applyHintGeom(); // user-moved: keep the hand position, enforce the right clamp
   } catch {}
@@ -3338,8 +3480,9 @@ function syncPillPair(bar, dockL) {
 // odd saved size can never fling a pill across the display.
 // hand-draggable pills: fixed size (never stretchable). Both pills are fully
 // contained in the viewport at all times — no part can leave the screen —
-// and both pills only slide horizontally (heights stay where docking put
-// them). Double-click a pill's background to send it back to the dock.
+// and both pills only slide horizontally (heights are hard-docked: top pill
+// to the viewport top, bottom pill to the viewport bottom). Double-click a
+// pill's background to send it back to the dock.
 function fitPillsToScreen(savedVw, savedVh) {
   try {
     const cw = window.innerWidth, ch = window.innerHeight;
@@ -3361,21 +3504,47 @@ function clampPill(box, x, y) {
     return [x, y];
   } catch { return [x, y]; }
 }
+// pill tandem: hand-dragging EITHER pill slides BOTH to the same x, so the
+// pair never drifts apart (widths already match via enforceTopRight, so one
+// shared x keeps every edge aligned). Heights are hard-docked — top pill to
+// the viewport top, bottom pill to the viewport bottom — so the drag only
+// ever owns x; clamps are width-based so both pills clamp identically. A
+// null x docks the pair.
+function slidePillsTandem(x, leader) {
+  if (x == null) { dockPills(); return; }
+  const bar = document.getElementById('tabBar'), hint = document.getElementById('hintBar');
+  if (!bar || !pillShown(bar)) return;
+  const hintLive = pillShown(hint);
+  pillsCentered = false; // a hand drag leaves centered mode: the hand x now owns the pair, no re-centering fights it
+  if (leader === 'hint' && hintLive) {
+    hintX = x;
+    applyHintGeom(); // clamps hintX + matches the top width to the bottom
+    tabX = hintX; // follow with the clamped value: identical x, identical clamp
+    applyTabGeom();
+  } else {
+    tabX = x;
+    applyTabGeom(); // clamps tabX + matches the top width to the bottom
+    if (hintLive) {
+      hintX = tabX; // follow with the clamped value: identical x, identical clamp
+      applyHintGeom();
+    }
+  }
+}
 function applyTabGeom() {
   const box = $('#tabBar'); if (!box) return;
-  if (tabX == null || tabY == null) return; // docked: placeTabBar owns the position
-  const [x, y] = clampPill(box, tabX, tabY);
-  tabX = x; tabY = y;
-  box.style.transform = 'none'; box.style.left = x + 'px'; box.style.top = y + 'px';
-  enforceTopRight(); // width match only — a hand move never drags the other pill along
+  if (tabX == null) return; // docked-x: placeTabBar owns the left
+  const [x] = clampPill(box, tabX, 0);
+  tabX = x;
+  box.style.transform = 'none'; box.style.left = x + 'px'; box.style.top = ''; // hard-docked height: the CSS top seat owns y
+  enforceTopRight(); // width match only — the tandem partner follows via slidePillsTandem, never here
 }
 function applyHintGeom() {
   const box = $('#hintBar'); if (!box) return;
-  if (hintX == null || hintY == null) return; // docked: syncPillPair owns the position
-  const [x, y] = clampPill(box, hintX, hintY);
-  hintX = x; hintY = y;
-  box.style.transform = 'none'; box.style.left = x + 'px'; box.style.top = y + 'px'; box.style.bottom = 'auto';
-  enforceTopRight(); // width match only — the bottom pill moves freely, the top pill stays put
+  if (hintX == null) return; // docked-x: syncPillPair owns the left
+  const [x] = clampPill(box, hintX, 0);
+  hintX = x;
+  box.style.transform = 'none'; box.style.left = x + 'px'; box.style.top = ''; box.style.bottom = ''; // hard-docked height: the CSS bottom seat owns y
+  enforceTopRight(); // width match only — the top pill follows via slidePillsTandem, never here
 }
 // horizontal-center toggle: both pills slide to the viewport's horizontal
 // middle, each keeping its current height (top pill stays at the top edge,
@@ -3386,14 +3555,12 @@ function seatPillsCenter() {
   const bar = document.getElementById('tabBar'), hint = document.getElementById('hintBar');
   if (!bar) return;
   const vw = window.innerWidth;
-  const hintHidden = !hint || hint.offsetParent === null;
+  const hintHidden = !pillShown(hint);
   try {
     const bt = bar.getBoundingClientRect();
-    if (tabY == null) tabY = Math.round(bt.top); // docked: pin the current top-edge level
     tabX = Math.round((vw - bt.width) / 2);
     if (!hintHidden) {
       const ht = hint.getBoundingClientRect();
-      if (hintY == null) hintY = Math.round(ht.top); // docked: pin the current bottom-edge level
       hintX = Math.round((vw - ht.width) / 2);
     } else { hintX = null; hintY = null; }
     pillsCentered = true;
@@ -3411,12 +3578,12 @@ function centerPillsX() {
   try {
     const vw = window.innerWidth;
     const bar = document.getElementById('tabBar'), hint = document.getElementById('hintBar');
-    if (bar && tabX != null && tabY != null && bar.offsetParent !== null) {
+    if (bar && tabX != null && pillShown(bar)) {
       const w = Math.max(80, bar.getBoundingClientRect().width || 200);
       tabX = Math.min(Math.max(Math.round((vw - w) / 2), 8), Math.max(8, vw - w - 8));
       bar.style.transform = 'none'; bar.style.left = tabX + 'px';
     }
-    if (hint && hintX != null && hintY != null && hint.offsetParent !== null) {
+    if (hint && hintX != null && pillShown(hint)) {
       const w = Math.max(80, hint.getBoundingClientRect().width || 200);
       hintX = Math.min(Math.max(Math.round((vw - w) / 2), 8), Math.max(8, vw - w - 8));
       hint.style.transform = 'none'; hint.style.left = hintX + 'px';
@@ -3439,23 +3606,56 @@ function togglePillsCenter() {
   if (pillsCentered) dockPills();
   else seatPillsCenter();
 }
+// Viewport authority: the canvas + full-bleed layout always match the live
+// window, however it changed (boot sizing, maximize animation, monitor/DPR
+// switches, zoom, DevTools docking...). Runs the whole layout suite; every
+// step is individually guarded so one failure can't wedge the rest.
+// Hand-placed pill/pane positions are kept (their own geometry clamps them
+// on-screen) — only the canvas is forced to fill.
+let __vpLast = '', __vpT = 0;
+function fitViewport(reason) {
+  try {
+    const vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+    if (vw < 50 || vh < 50) return; // not laid out yet / hidden
+    const sig = vw + 'x' + vh + '|' + (window.devicePixelRatio || 1);
+    if (reason === 'resize' && sig === __vpLast) return; // dedupe noisy resizes
+    __vpLast = sig;
+    try { if (ren) ren.resize(); } catch {}
+    try { applyDocWidth(); } catch {}
+    try { syncHbTabs(); } catch {}
+    try { placeTabBar(); } catch {}
+    try { sizeDocPanel(); } catch {}
+    try { if (typeof autoDist !== 'undefined' && autoDist) applyMiniGeom(); } catch {}
+    try { placeFindSide(); } catch {}
+    try { placeTopBtn(); } catch {}
+    try { syncNotesTab(); } catch {}
+    try { if (typeof notesOpen !== 'undefined' && notesOpen) applyNotesGeom(); } catch {}
+    try { placeUploadProg(); } catch {}
+  } catch {}
+}
+function fitViewportSoon(ms) {
+  try { clearTimeout(__vpT); } catch {}
+  __vpT = setTimeout(() => fitViewport('settle'), ms || 150);
+}
 // width match: the top pill is always EXACTLY as wide as the bottom pill
-// (grows and shrinks with it). The two pills are NOT position-wired: moving
-// one never moves the other — only this width match plus the viewport clamp
-// apply. Skipped while the bottom pill is hidden (mobile).
+// (grows and shrinks with it). The pair shares one x (tandem): a right-edge
+// overflow slides BOTH pills left together. Skipped while the bottom pill
+// is hidden (mobile).
 function enforceTopRight() {
   try {
     const bar = document.getElementById('tabBar'), hint = document.getElementById('hintBar');
-    if (!bar || !hint || hint.offsetParent === null) return;
+    if (!bar || !hint || !pillShown(hint)) return;
     const matchW = Math.max(240, Math.min(Math.round(hint.getBoundingClientRect().width), window.innerWidth - 16));
     bar.style.width = matchW + 'px'; // exact match, both directions — never frozen wider, never left narrower
     bar.style.maxWidth = matchW + 'px';
     delete bar.dataset.topShrunk;
     const r = bar.getBoundingClientRect();
-    if (r.right > window.innerWidth - 8 + 0.5) { // a wider bottom pill must never push the top pill off-screen: slide it left
+    if (r.right > window.innerWidth - 8 + 0.5) { // a wider bottom pill must never push the pair off-screen: slide both left together
       const nx = Math.max(8, Math.round(window.innerWidth - 8 - r.width));
-      if (tabX != null && tabY != null) tabX = nx;
+      if (tabX != null) tabX = nx;
+      if (hintX != null) hintX = nx;
       bar.style.left = nx + 'px';
+      if (pillShown(hint)) { hint.style.left = nx + 'px'; }
     }
     centerPillsX(); // centered toggle: a width change re-seats both x-centers exactly
     try { if (typeof autoDist !== 'undefined' && autoDist) applyMiniGeom(); } catch {} // the bottom pill moved: re-seat the verse map so it never tucks under it
@@ -3472,7 +3672,7 @@ function fillTabRow() {
     const bar = document.getElementById('tabBar');
     const row = bar && bar.querySelector('.tabbar-row');
     const hint = document.getElementById('hintBar');
-    if (!bar || !row || !hint || hint.offsetParent === null) return; // row hidden (collapsed) or mobile: leave it alone
+    if (!bar || !row || !hint || !pillShown(hint)) return; // row hidden (collapsed) or mobile: leave it alone
     row.querySelectorAll('[data-filltab]').forEach(el => el.remove()); // recount from the real tabs (fills never persist)
     let groups = [...row.querySelectorAll(':scope > .ugroup')].filter(g => !g.classList.contains('ugroupghost'));
     if (!groups.length) { // zero tabs: the ghost cluster stands in as the live group, red frame + full placeholders
@@ -3538,7 +3738,7 @@ function wirePillDrag(box, set, onTap) {
   if (!box || box.dataset.pilldrag) return;
   box.dataset.pilldrag = '1';
   let mv = null;
-  const TAP_SEL = 'button,input,a,select,textarea,label,.glassDot,.glassTip,.luxDot,.sg-help-pop,[contenteditable="true"]';
+  const TAP_SEL = 'button,input,a,select,textarea,label,.glassDot,.glassTip,.luxDot,.sg-help,.hw,[data-sghelp],.sg-help-pop,[contenteditable="true"]';
   box.addEventListener('pointerdown', (e) => {
     if (e.pointerType !== 'mouse' && !e.isPrimary) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -3570,7 +3770,7 @@ function wirePillDrag(box, set, onTap) {
   box.addEventListener('pointerup', end);
   box.addEventListener('pointercancel', () => { if (!mv) return; const was = mv.on; mv = null; box.style.touchAction = ''; box.style.cursor = ''; if (was) saveUi(); });
   box.addEventListener('dblclick', (e) => {
-    if (e.target && e.target.closest && e.target.closest('button,input,a,select,textarea,label,.glassDot,.glassTip,.luxDot')) return;
+    if (e.target && e.target.closest && e.target.closest('button,input,a,select,textarea,label,.glassDot,.glassTip,.luxDot,.sg-help,.hw,[data-sghelp],.sg-help-pop')) return;
     set(null, null); saveUi(); // back to the dock
   });
 }
@@ -3673,6 +3873,7 @@ function switchCanvas(id) {
   assocSelId = null; srcHi = null; // the new canvas lights its own rows
   intakeHiIds.clear(); // the new canvas lights its own arrivals
   clearFit(); // snapshots belong to one canvas's universe
+  panHeld = false; // a fresh canvas opens gravity-seated until the hand moves it
   try { vault.tab().activeId = activeId; } catch {} // remember where we were
   vault.activeTabId = id;
   vault.persist();
@@ -3899,6 +4100,7 @@ function rebuildAllTabs() {
 function rebuild(sunId) {
   // active-tab rebuild (legacy entry point): optional sun override, then refresh panes
   try { camCancelGlide(); } catch {} // fresh node objects invalidate any in-flight pan
+  panHeld = false; // fresh layout: gravity may seat it until the hand moves it again
   if (sunId && vault.byId(sunId)) vault.tab().activeId = sunId;
   uni = rebuildTab(vault.activeTabId);
   if (lensThematic) uni = thematicUniFor(vault.activeTabId) || uni;
@@ -4383,10 +4585,20 @@ function closeTagPop() { const box = $('#tagPop'); if (box) box.hidden = true; }
 // editor preview (body.help-can-edit gates it via CSS, same as every helper).
 const TAG_GUIDE_DEFAULT = [
   'Tags are the labels on your documents. Three kinds live here: #explicit tags you type into body text, manual tags you pin onto a selection through the Tag menu (gold M — click one to jump back to the exact passage), and #auto tags the app derives from titles.',
-  'To tag: write #name straight into any body, or select a passage, right-click, and choose Tag — accept the suggestion or pick “Name the tag yourself” to coin your own. You can also drag any pill from ALL TAGS straight onto a highlighted passage to pin that tag there. Tag names are lowercase single words.',
-  'To organize: drag one pill onto another to merge them (the drop target keeps its name); right-click (or double-click) any pill to rename it everywhere on the canvas; hover a pill and click × to delete it from every body. Deleted names stay suppressed until you write #name in a body again.',
-  'Deletes, merges and renames ask first — tick “Don’t ask again” to skip them, and flip the Confirms row in the card below to bring the questions back.',
-  'To explore: click any pill to open it in the TAGS view as the sun; See Tags Inventory lists every tag in the verse; the TAGS view mode redraws the whole canvas around your labels.'
+  'In your research workflow, you tag documents to create clusters of related information, which helps visualize conceptual relationships and navigate your document universe. You apply specific, logical tags—such as #Theme or #Phase—to group files effectively. These tags act as metadata, allowing the system to identify connections, reveal overlaps, and maintain structure across your research materials. Using consistent naming conventions alongside these tags improves searchability, ensuring your workspace remains organized and impactful. Ultimately, this approach transforms scattered documents into an interactive, structured workspace that makes synthesizing evidence across different sources straightforward.',
+  'To make the "art of tagging" feel intuitive, here are three easy-to-understand analogies:',
+  '1. The Supermarket Aisle vs. The Magic Scanner\nTraditional Folders: Imagine a physical grocery store. An apple must sit in the Produce section under Fruit. If you want to put it in "Snacks," "Baking Supplies," or "Low-Calorie Foods," you can\'t—unless you buy three identical apples and put one in each section.',
+  'Tagging: Imagine every item in the store has a set of invisible digital tags (#Fruit, #Snacks, #Baking, #Under100Calories). When you scan your shopping list for #Baking, the store instantly brings the apple, flour, and cinnamon together in front of you.',
+  'The Art: Tagging allows one item to exist in multiple context categories simultaneously without creating duplicate copies.',
+  '2. Wardrobe Accessories vs. Complete Outfits\nTraditional Folders: Storing files in strict folders is like buying a pre-styled mannequin from a store window—the jacket, shirt, and pants are locked together as one fixed outfit.',
+  'Tagging: Tagging treats each document like an individual clothing item hanging in a modular closet. A pair of black boots can be tagged #Formal, #Winter, and #Leather.',
+  'The Art: Depending on what occasion you are dressing for (or what research question you are answering), you pull items based on the specific combination of tags you need at that exact moment.',
+  '3. The Constellation Map (Connecting the Dots)\nTraditional Folders: Think of a traditional filing cabinet as a row of isolated cardboard boxes stacked on a shelf. The contents of Box A cannot see or interact with Box B.',
+  'Tagging: Think of your document collection as a night sky full of stars. Each document is a single star. When you apply a tag like #Phase1 or #Theme, you light up a string that connects all stars bearing that tag, drawing a clear constellation across your entire universe of information.',
+  'The Art: Over time, overlapping tags reveal hidden patterns, clusters, and relationships between documents that would have otherwise remained buried inside separate folders.',
+  'Core Principles of Great Tagging\nKeep them broad yet specific: Use tags for cross-cutting attributes (e.g., #Status/Draft, #Source/Interview, #Topic/Equity).',
+  'Be consistent: Decide on a naming rule early on (e.g., lowercase vs. TitleCase) to avoid duplicate tags like #Research and #research.',
+  'Use them as dynamic filters: Combine two or three tags (e.g., #Phase1 + #HighPriority) to instantly isolate the exact subset of documents you need.'
 ];
 let tagGuideText = null; // null = pristine default above
 try { const g = localStorage.getItem('visidocsverse.tagGuide'); if (typeof g === 'string' && g.trim()) tagGuideText = g; } catch { /* fresh prefs */ }
@@ -5734,9 +5946,15 @@ function syncFindBar() {
   // gate on reader prose, never on vault: themes, tags and overviews are
   // findable too, and this keeps the bar alive outside doc views. The bar
   // itself is permanent — Esc only clears the term and its highlights.
+  // The reader collapse toggle rides in this row, so the row itself never
+  // hides — only the find controls drop out when there is no prose.
   const hasProse = !!($('#docBody') && $('#docBody').textContent.trim());
   const show = !!hasProse;
-  bar.hidden = !show;
+  bar.hidden = false;
+  for (const cid of ['findInput', 'findPrev', 'findNext', 'findCount']) {
+    const cel = document.getElementById(cid);
+    if (cel) cel.hidden = !show;
+  }
   if (fi && document.activeElement !== fi && fi.value !== findTerm) fi.value = findTerm;
   const count = findSpans.length ? `${findIdx + 1}/${findSpans.length}` : (findTerm ? '0/0' : '');
   if (fc) fc.textContent = count;
@@ -6547,7 +6765,7 @@ async function readFileAsText(f) {
         // Page-origin URL (same reason as the OCR worker): the pdf worker
         // must be same-origin with the page and live, not a possibly stale
         // cross-origin copy resolved through the module base.
-        lib.GlobalWorkerOptions.workerSrc = new URL('src/js/vendor/pdf.worker.js', location.href).href;
+        lib.GlobalWorkerOptions.workerSrc = vendorBase() + 'pdf.worker.js';
       }
       const getDocument = lib.getDocument;
       if (!getDocument) throw new Error('PDF engine did not load.');
@@ -6918,7 +7136,7 @@ async function extractPdfImages(buf) {
   const lib = pdfjs.getDocument ? pdfjs : (pdfjs.default || {});
   if (!lib.getDocument) return [];
   if (lib?.GlobalWorkerOptions && !lib.GlobalWorkerOptions.workerSrc) {
-    try { lib.GlobalWorkerOptions.workerSrc = new URL('src/js/vendor/pdf.worker.js', location.href).href; } catch { /* same worker the text path uses */ }
+    try { lib.GlobalWorkerOptions.workerSrc = vendorBase() + 'pdf.worker.js'; } catch { /* same worker the text path uses */ }
   }
   const OPS = lib.OPS || {};
   const IMG_OPS = new Set([OPS.paintImageXObject, OPS.paintInlineImageXObject, OPS.paintJpegXObject, OPS.paintImageMaskXObject].filter(v => typeof v === 'number'));
@@ -7008,14 +7226,16 @@ async function ocrPictures(pics) { // [{blob, cap}] -> [{cap, text}] (high-confi
   const found = [];
   try {
     const { createWorker } = await import('./vendor/tesseract.mjs');
-    // Absolute, page-origin URLs: the worker resolves its core/lang files
-    // against these, and relative paths would mis-resolve inside the worker.
-    // Page-origin (location.href), NOT import.meta.url: modules resolve
-    // through the bare domain while the page — and every worker — lives on
-    // the generator subdomain, so import.meta URLs are cross-origin
-    // (importScripts flakes with an uncatchable NetworkError banner) and can
-    // serve a stale saved copy. Page-relative URLs are live and same-origin.
-    const tessBase = new URL('src/js/vendor/tess/', location.href).href;
+    // Absolute, same-origin-with-the-page URLs: the worker resolves its
+    // core/lang files against these, and relative paths would mis-resolve
+    // inside the worker — while a cross-origin URL dies in importScripts /
+    // dynamic import with an uncatchable NetworkError banner. vendorBase()
+    // is module-relative when the module shares the page origin (desktop
+    // export, static servers) and falls back to the preview's page-relative
+    // src/vendor/ layout (whose modules are served cross-origin from the
+    // bare domain, so import.meta URLs would be cross-origin there and can
+    // serve a stale saved copy — page-relative URLs are live).
+    const tessBase = vendorBase() + 'tess/';
     // The engine start has no built-in timeout and has parked whole intakes
     // here (status stuck at "reading…"): race it, fail OCR fast on timeout,
     // keep the text import. A late-resolving worker is terminated, never leaked.
@@ -7462,9 +7682,11 @@ function loop() {
     // instead of the canvas element's middle (which hides behind the panes).
     // Hands off while anything else drives the pan (hand-drag, locate glide,
     // Fit glide): a frame that finds px/py touched skips and re-baselines.
+    // A hand drag additionally OWNS the pan (panHeld): after release the view
+    // stays where the hand left it — only double-click re-centers.
     try {
       const noSun = uni && uni.nodes && uni.nodes.length && !uni.byId.get(uni.sunId);
-      if (noSun && !autoDist && ren && ren.cv) {
+      if (noSun && !autoDist && !panHeld && ren && ren.cv) {
         const cpx = ren.cam.px || 0, cpy = ren.cam.py || 0;
         if (cpx !== loop._hpx || cpy !== loop._hpy) { loop._hpx = cpx; loop._hpy = cpy; }
         else {
@@ -7506,9 +7728,17 @@ async function boot() {
   // the Windows installers additionally show it in the setup wizard) and
   // then on a locally-verified license key (no network); the web preview
   // skips both gates.
+  // Boot guard order: (1) purge any dev/legacy license artifacts so they
+  // can never satisfy the check; (2) EULA; (3) license — a missing/invalid
+  // license_key + instance_id (checked against Lemon Squeezy's validate
+  // endpoint when the cache is stale) shows the blocking Activate modal
+  // before any of the main interface is built.
+  try { clearDevLicenseCaches(); } catch {}
   try { if (!(await ensureEulaAccepted())) return; } catch { return; }
   try { if (!(await ensureLicensed())) return; } catch { return; }
+  bootStage('gates-ok');
   ren = new Renderer($('#uniCv'));
+  bootStage('renderer');
   ren.selSet = selSet; // selection rings follow the box-select set live
   const firstTab = vault.tab();
   activeId = firstTab
@@ -7534,6 +7764,29 @@ async function boot() {
   // anonymous GET of version.json a few seconds after startup; a banner shows
   // only when a strictly newer version is published. Never blocks, never nags.
   try { initUpdateChecker(toast); } catch {}
+  // license status + deactivate (left panel): shows which credential holds
+  // this machine (Lemon email / key-file email / none) and offers a clean
+  // seat move — clearing both caches then re-running the gate, which
+  // re-shows the blocking Activate modal on desktop shells.
+  try {
+    const syncLic = async () => {
+      const el = $('#licStatus'); if (!el) return;
+      try {
+        const s = await licenseStatus();
+        if (s.kind === 'lemon') el.textContent = `Licensed${s.email ? ' · ' + s.email : ''}`;
+        else if (s.kind === 'keyfile') el.textContent = `Licensed — key file${s.email ? ' · ' + s.email : ''}`;
+        else el.textContent = isDesktopShell() ? 'No license on this machine' : 'Web preview — no license needed';
+      } catch { el.textContent = 'License status unavailable'; }
+    };
+    const ld = $('#licDeactivateBtn');
+    if (ld) ld.onclick = async () => {
+      if (!await confirmDlg('Remove the license from this machine? The Activate window appears next so a key can be entered again.', 'Deactivate')) return;
+      try { deactivateLicense(); } catch {}
+      try { await syncLic(); } catch {}
+      try { if (await ensureLicensed()) await syncLic(); } catch {}
+    };
+    syncLic();
+  } catch {}
   // "?" explicators: show stored wording, gate ✎ buttons to the editor (never desktop)
   try {
     if (helpEditAllowed()) document.body.classList.add('help-can-edit');
@@ -7714,8 +7967,10 @@ async function boot() {
         }, SRC_HOLD_MS);
       } else srcHold = null;
     } else srcHold = null;
-    if (e.shiftKey && e.button === 0) {
-      // shift+left-drag = marquee box-select (plain drag still pans, body-drag still rotates)
+    if (e.shiftKey && e.button === 0 && !lensThematic && !lensTags) {
+      // shift+left-drag = marquee box-select, Main view only (plain drag
+      // still pans, body-drag still rotates). Thematic/Tags views keep
+      // shift-drag as a plain pan — no selection box there.
       dragMode = 'select';
       downNode = null;
       downAt = performance.now(); moved = false;
@@ -7754,8 +8009,9 @@ async function boot() {
       // late Shift: the press didn't start shifted, but Shift is held now —
       // convert the undecided/pan drag into a box-select anchored at the
       // original press (Shift means box-select, whenever it arrives during a
-      // left-drag). An established body rotate/move is left alone.
-      if (e.shiftKey && (e.buttons & 1) && (dragMode === null || dragMode === 'pan')) {
+      // left-drag; Main view only — Thematic/Tags drags stay pans). An
+      // established body rotate/move is left alone.
+      if (e.shiftKey && (e.buttons & 1) && (dragMode === null || dragMode === 'pan') && !lensThematic && !lensTags) {
         if (downNode) { try { downNode._held = false; } catch {} downNode = null; }
         dragMode = 'select';
         downAt = performance.now();
@@ -7802,6 +8058,7 @@ async function boot() {
           try { camCancelGlide(); } catch {} // hand pan replaces any reader glide
           ren.cam.px = Math.max(-2500, Math.min(2500, (ren.cam.px || 0) + dx));
           ren.cam.py = Math.max(-2500, Math.min(2500, (ren.cam.py || 0) + dy));
+          panHeld = true; // the hand owns the pan now: gravity stands down until an explicit re-seat
         } else if (dragMode === 'move' && downNode) {
           const [wx, wy, wz] = dragWorldDelta(dx, dy, downNode._p);
           downNode.x += wx; downNode.y += wy; downNode.z += wz;
@@ -7869,6 +8126,7 @@ async function boot() {
     // "exploded" framed or zoomed-out views). Fitted or not, pan is all it does.
     try { camCancelGlide(); } catch {}
     ren.recenterView();
+    panHeld = false; // explicit re-seat: gravity may hold the center again
   });
   cv.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -9070,7 +9328,7 @@ async function boot() {
     ctx.appendChild(head);
     const note = document.createElement('div');
     note.className = 'ctx-note';
-    note.innerHTML = 'Declare what this document/body belongs with by assigning a +#tag to it. Bodies sharing the tag pull together, share weight, match in search, and form one Tags-view node. This tag button is the same as the +#Tag function/button <img src="src/assets/addtag-pill.png" alt="+ #tag" style="height:1.15em;vertical-align:-0.25em;"> in the document reading/display view.';
+    note.innerHTML = 'Declare what this document/body belongs with by assigning a +#tag to it. Bodies sharing the tag pull together, share weight, match in search, and form one Tags-view node. This tag button is the same as the +#Tag function/button <img src="src/addtag-pill.png" alt="+ #tag" style="height:1.15em;vertical-align:-0.25em;"> in the document reading/display view.';
     ctx.appendChild(note);
     const inp = document.createElement('input');
     inp.value = '';
@@ -9352,8 +9610,8 @@ async function boot() {
   ren.stripOverlays = simpleOrb2;
   ren.triOrb = triOrb;
   ren.docIcon = docIcon;
-  ren.vivid = vividUniverse && !!(luxLeft || luxDoc || luxTab || luxHint || luxMini); // nebula is luxury-only: regular boots stay plain even on the black tile
-  fetch('src/assets/overlays.json').then(r => r.json()).then(list => ren.loadOverlays(list)).catch(() => {});
+  ren.vivid = false; // nebula retired: vivid stays off everywhere
+  fetch('src/overlays.json').then(r => r.json()).then(list => ren.loadOverlays(list)).catch(() => {});
   const ovSlider = $('#ovAlpha'), ovLbl = $('#ovMul'), ovBtnEl = $('#ovBtn');
   ovSlider.value = Math.round(ovAlpha * 100);
   const syncOv = () => { ovLbl.textContent = Math.round(ovAlpha * 100) + '%'; ren.overlayAlpha = ovAlpha; saveUi(); };
@@ -9368,6 +9626,8 @@ async function boot() {
   ren.glowScale = glowScale;
   ren.tetherScale = tetherScale;
   ren.tetherDotted = tetherDotted;
+  ren.tetherSparse = tetherSparse;
+  ren.tetherDashed = tetherDashed;
   const lbSlider = $('#lbSize'), lbLbl = $('#lbMul'), lbBtnEl = $('#lbBtn');
   lbSlider.value = Math.round(lbScale * 100);
   const syncLb = () => { lbLbl.textContent = lbScale <= 0 ? 'hidden' : Math.round(lbScale * 100) + '%'; ren.labelScale = lbScale; saveUi(); };
@@ -9505,7 +9765,7 @@ async function boot() {
   const BACKDROPS = ['bg01.jpg', 'bg02.jpg', 'bg03.jpg', 'bg04.jpg', 'bg05.jpg', 'bg06.jpg', 'bg07.jpg', 'bg08.jpg', 'bg09.jpg', 'bg10.jpg', 'bg11.jpg', 'bg12.jpg'];
   const backdropImgs = new Map(BACKDROPS.map(f => {
     const im = new Image();
-    im.src = 'src/assets/backdrops/' + f;
+    im.src = 'src/backdrops/' + f;
     return [f, im];
   }));
   const applyBackdrop = () => {
@@ -9533,11 +9793,6 @@ async function boot() {
   const syncBgSw = () => bgswatches.forEach(b => b.classList.toggle('on', b.dataset.bg === backdrop && backdrop !== ''));
   bgswatches.forEach(b => { b.onclick = () => {
     backdrop = (backdrop === b.dataset.bg) ? '' : b.dataset.bg; // re-click clears
-    if (b.dataset.bg === 'nebula') { // the black tile owns vivid, luxury only: select = nebula in luxury, plain black canvas otherwise
-      const luxOn = !!(luxLeft || luxDoc || luxTab || luxHint || luxMini);
-      vividUniverse = (backdrop === 'nebula') && luxOn;
-      try { if (ren) ren.vivid = vividUniverse; } catch {}
-    }
     if (backdrop && backdropAlpha <= 0) { backdropAlpha = backdropLast > 0 ? backdropLast : 0.55; bdSlider.value = Math.round(backdropAlpha * 100); }
     syncBgSw(); syncBd();
     toast(backdrop ? 'Backdrop ' + (b.title || backdrop) : 'Backdrop cleared');
@@ -9651,7 +9906,7 @@ async function boot() {
     applyDocWidth();
     wireResize(document.getElementById('docResize'), -1); // left edge: drag left = widen
     { const dtb = document.getElementById('docTiltBtn'); if (dtb && !dtb.dataset.wired) { dtb.dataset.wired = '1'; dtb.onclick = () => { const p = document.getElementById('docPanel'); if (p) setDocTilt(!p.classList.contains('tiltedR')); }; } }
-    window.addEventListener('resize', () => { applyDocWidth(); try { syncHbTabs(); } catch {} try { placeTabBar(); } catch {} try { if (typeof autoDist !== 'undefined' && autoDist) applyMiniGeom(); } catch {} try { placeFindSide(); } catch {} try { placeTopBtn(); } catch {} try { syncNotesTab(); } catch {} try { if (notesOpen) applyNotesGeom(); } catch {} try { placeUploadProg(); } catch {} });
+    window.addEventListener('resize', () => fitViewport('resize'));
     // late layout settlers (webfonts swap row metrics after first paint) —
     // re-park the reader's bottom edge once they're in, or the pill-top read bakes in early
     try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { try { syncHbTabs(); } catch {} try { sizeDocPanel(); } catch {} try { placeTabBar(); } catch {} }); } catch {}
@@ -9661,22 +9916,42 @@ async function boot() {
   try {
     const box = document.getElementById('miniMap'), head = document.getElementById('miniMapHead'), grip = document.getElementById('miniMapResize');
     if (box && head) {
-      let mv = null;
+      let mv = null, lastTapT = 0;
       head.addEventListener('pointerdown', (e) => {
         if (e.target && e.target.closest && e.target.closest('#miniMapFold')) return; // the fold button keeps its own click
         const r = box.getBoundingClientRect();
         box.style.left = r.left + 'px'; box.style.top = r.top + 'px';
         box.style.right = 'auto'; box.style.bottom = 'auto';
-        mv = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+        mv = { dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY };
         try { head.setPointerCapture(e.pointerId); } catch {}
         e.preventDefault();
       });
       head.addEventListener('pointermove', (e) => {
         if (!mv) return;
         miniX = e.clientX - mv.dx; miniY = e.clientY - mv.dy;
-        applyMiniGeom();
+        applyMiniGeom(false); // dragging: no corner auto-lodge mid-drag (it lands on release triggers)
       });
-      const endMv = () => { if (!mv) return; mv = null; saveUi(); };
+      // double-tap to stow (not a real dblclick — the pointerdown
+      // preventDefault above eats compatibility mouse events): two quick taps
+      // on the header without a drag in between dock the map bottom-right.
+      const endMv = (e) => {
+        if (!mv) return;
+        const dragged = !e || Math.hypot((e.clientX || 0) - mv.sx, (e.clientY || 0) - mv.sy) > 6;
+        const onFold = !!(e && e.target && e.target.closest && e.target.closest('#miniMapFold'));
+        mv = null;
+        if (!dragged && !onFold) {
+          const now = Date.now();
+          if (now - lastTapT < 400) {
+            lastTapT = 0;
+            miniX = null; miniY = null;
+            applyMiniGeom(); saveUi();
+            toast('Verse map stowed');
+            return;
+          }
+          lastTapT = now;
+        }
+        saveUi();
+      };
       head.addEventListener('pointerup', endMv);
       head.addEventListener('pointercancel', endMv);
       const fold = document.getElementById('miniMapFold');
@@ -9700,7 +9975,7 @@ async function boot() {
         if (!rs) return;
         miniW = Math.max(140, Math.min(640, rs.w + (e.clientX - rs.x)));
         miniH = Math.max(100, Math.min(480, rs.h + (e.clientY - rs.y)));
-        applyMiniGeom();
+        applyMiniGeom(false); // resizing: no corner auto-lodge mid-gesture
       });
       const endRs = () => { if (!rs) return; rs = null; saveUi(); };
       grip.addEventListener('pointerup', endRs);
@@ -9712,13 +9987,13 @@ async function boot() {
   // pills: hand-drag either by any blank background to move it (fixed size,
   // never stretchable; positions persist; double-click resets to the dock).
   // Single-clicking the TOP pill's blank background centers BOTH pills
-  // left-to-right at their current heights; clicking it again docks both
+  // left-to-right (heights stay hard-docked); clicking it again docks both
   // back beside the left pane.
   try {
     const topBar = document.getElementById('tabBar');
     if (topBar && !topBar.title) topBar.title = 'Click the empty background to center both pills left-to-right — click again to dock them beside the left pane. Drag to move.';
-    wirePillDrag(topBar, (x, y) => { if (x == null || y == null) { dockPills(); return; } const bar = document.getElementById('tabBar'); if (tabY == null && bar) tabY = Math.round(bar.getBoundingClientRect().top); tabX = x; applyTabGeom(); }, () => { try { togglePillsCenter(); } catch {} }); // TOP pill: horizontal-only — height stays where docking put it
-    wirePillDrag(document.getElementById('hintBar'), (x, y) => { if (x == null || y == null) { dockPills(); return; } const hb = document.getElementById('hintBar'); if (hintY == null && hb) hintY = Math.round(hb.getBoundingClientRect().top); hintX = x; applyHintGeom(); }); // BOTTOM pill: horizontal-only too — height stays where docking put it
+    wirePillDrag(topBar, (x, y) => { slidePillsTandem(x, 'bar'); }, () => { try { togglePillsCenter(); } catch {} }); // TOP pill: horizontal-only tandem drag — the bottom pill slides along; height hard-docked
+    wirePillDrag(document.getElementById('hintBar'), (x, y) => { slidePillsTandem(x, 'hint'); }); // BOTTOM pill: horizontal-only tandem drag — the top pill slides along; height hard-docked
   } catch {}
   // tags pop-out: header-drags to move the glass card anywhere (persists; double-click header or any empty pane space re-centers)
   try {
@@ -9913,23 +10188,43 @@ async function boot() {
     toast(tetherScale > 0 ? 'Tethers shown' : 'Tethers hidden');
   };
   syncIsoBtn();
-  // bottom pill "2" tether partition: dotted tethers (same show/hide state,
-  // same thickness — only the stroke changes to spaced dots)
+  // bottom pill "2"/"3" tether partitions: "2" = dotted, "3" = sparse dots
+  // (same show/hide state, same thickness — only the stroke changes).
+  // The two styles exclude each other; clicking the active one restores solid.
   const tetherDotsBtn = $('#tetherDotsBtn');
   if (tetherDotsBtn) tetherDotsBtn.onclick = () => {
-    tetherDotted = !tetherDotted;
-    if (ren) ren.tetherDotted = tetherDotted;
-    syncTetherDotsBtn(); saveUi();
+    if (tetherDotted && !tetherSparse) tetherDotted = false;
+    else { tetherDotted = true; tetherSparse = false; tetherDashed = false; }
+    if (ren) { ren.tetherDotted = tetherDotted; ren.tetherSparse = tetherSparse; ren.tetherDashed = tetherDashed; }
+    syncTetherDotsBtn(); syncTetherSparseBtn(); syncTetherDashedBtn(); saveUi();
     toast(tetherDotted ? 'Dotted tethers on' : 'Solid tethers restored');
   };
   syncTetherDotsBtn();
+  const tetherSparseBtn = $('#tetherSparseBtn');
+  if (tetherSparseBtn) tetherSparseBtn.onclick = () => {
+    if (tetherSparse) { tetherSparse = false; tetherDotted = false; }
+    else { tetherSparse = true; tetherDotted = true; tetherDashed = false; }
+    if (ren) { ren.tetherDotted = tetherDotted; ren.tetherSparse = tetherSparse; ren.tetherDashed = tetherDashed; }
+    syncTetherDotsBtn(); syncTetherSparseBtn(); syncTetherDashedBtn(); saveUi();
+    toast(tetherSparse ? 'Sparse tethers on' : 'Solid tethers restored');
+  };
+  syncTetherSparseBtn();
+  const tetherDashedBtn = $('#tetherDashedBtn');
+  if (tetherDashedBtn) tetherDashedBtn.onclick = () => {
+    if (tetherDashed) tetherDashed = false;
+    else { tetherDashed = true; tetherDotted = false; tetherSparse = false; }
+    if (ren) { ren.tetherDotted = tetherDotted; ren.tetherSparse = tetherSparse; ren.tetherDashed = tetherDashed; }
+    syncTetherDotsBtn(); syncTetherSparseBtn(); syncTetherDashedBtn(); saveUi();
+    toast(tetherDashed ? 'Dashed tethers on' : 'Solid tethers restored');
+  };
+  syncTetherDashedBtn();
   // bottom pill "Tips" toggle: collapses only the tip rows, buttons always stay
   const tipsBtn = $('#tipsBtn');
   if (tipsBtn) tipsBtn.onclick = () => {
     tipsCollapsed = !tipsCollapsed;
     saveUi();
     syncTipsBtn();
-    try { placeTabBar(); } catch {} // tips change the bottom pill's width: re-clamp the top pill to its right edge
+    try { placeTabBar(); } catch {} // tips no longer change the bottom pill's width (collapsed rows keep it): re-seat heights/positions + the verse map
     toast(tipsCollapsed ? 'Tips hidden — buttons stay' : 'Tips shown');
   };
   syncTipsBtn();
@@ -10015,10 +10310,6 @@ async function boot() {
     toast(docIcon ? 'Document icons on — plain white pages, same sizes and selection' : 'Orbs restored');
   };
   syncDocIconBtn();
-  // (vivid button removed — vivid now rides the nebula Backdrop tile;
-  // syncVividBtn() below is a harmless no-op kept for the luxury tie-in
-  // in syncVividLux)
-  syncVividBtn();
   // (Thematic now lives in the Universe view modes row — same docs + same
   // physics, recomposed by themes/tags. From the general state it distills
   // the WHOLE visidocsverse; leaving the view always drops the whole view.)
@@ -10027,8 +10318,9 @@ async function boot() {
   const returnBtn = $('#returnBtn');
   if (returnBtn) returnBtn.onclick = () => { goReturn(); };
   // bottom pill "Fit" button: a TOGGLE. On: snapshot the view, frame the
-  // whole formation on the visible screen (recenter + dolly out as needed,
-  // never zooms in) and lift any orb that would render as a speck up to a
+  // whole formation on the visible screen (recenter + dolly out for
+  // sprawls, dolly in for small formations that would sit tiny in a void)
+  // and lift any orb that would render as a speck up to a
   // readable size. Off: restore the exact pre-fit camera + orb sizes.
   // Physics is untouched either way.
   const fitBtn = $('#fitBtn');
@@ -10043,6 +10335,7 @@ async function boot() {
           const b = s.boosts.get(n.id);
           n._fitBoost = (b === undefined) ? 1 : b;
         }
+        panHeld = true; // the restored view sticks, like a hand pan
         toast('Fit off — pre-fit view restored');
       } else toast('Fit off — the fitted canvas is gone');
       fitActive = false; fitSnapshot = null; syncFitBtn();
@@ -10056,7 +10349,7 @@ async function boot() {
       // placements cleared). The freed bodies were pinned cheek-by-jowl with
       // zeroed velocities — re-seat them settled (same composed seating fresh
       // canvases open with) so the formation has real extent to frame instead
-      // of a tight ball the never-zoom-in rule would strand tiny on screen.
+      // of a tight ball that would frame as one unreadable pile.
       // Toggling Fit back off restores the pre-fit camera; distribute stays off.
       autoDist = false;
       if (uni) for (const n of uni.nodes) { n._ox = n._oy = n._oz = undefined; n._held = false; }
@@ -10065,9 +10358,9 @@ async function boot() {
       freedDistribute = true;
     }
     // an already-collapsed formation (freed from the pinned orb before the
-    // release-into-orbits fix above, or fallen together while paused) frames
-    // as one unreadable pile that the never-zoom-in rule would strand tiny —
-    // detect the pile by body overlap and re-seat it settled first, the same
+    // release-into-orbits fix above, or fallen together while paused) would
+    // frame as one unreadable pile — detect the pile by body overlap and
+    // re-seat it settled first, the same
     // composed seating fresh canvases open with. Healthy shell systems never
     // overlap, so this only fires on a genuine pile-up.
     let reseated = false;
@@ -10098,7 +10391,9 @@ async function boot() {
     if (reseated) bits.push('piled-up bodies re-seated');
     if (res.boosted) bits.push(`${res.boosted} orb${res.boosted === 1 ? '' : 's'} enlarged`);
     if (res.dist1 > res.dist0 + 1) bits.push('zoomed out');
+    else if (res.dist1 < res.dist0 - 1) bits.push('zoomed in');
     fitActive = true; syncFitBtn();
+    panHeld = false; // Fit framed it: gravity may hold the framed center
     toast(bits.length ? 'Fit — ' + bits.join(' · ') : 'Fit — reframed');
   };
   syncFitBtn();
@@ -10126,6 +10421,7 @@ async function boot() {
   syncLensBtn();
   if (lensThematic || lensTags) applyLens(); // persisted lens: open directly in the lens view
   // top canvas tabs: render + double-click a tab to rename it, right-click for verse isolation
+  bootStage('tabs');
   renderTabs();
   const tabBar = $('#tabBar');
   function openTabCtx(x, y, t) {
@@ -10295,14 +10591,23 @@ async function boot() {
     if (next !== null && next.trim() && next.trim() !== t.name) { vault.renameTab(t.id, next.trim()); renderTabs(); }
   });
   setRot(rotOn);
-    async function buildBackupObject() {
+    // Save-project file bundle (NOT dev-only: buildBackupObject below needs it
+  // in stripped desktop builds too, so it must stay outside the DEV range).
+  const BACKUP_FILES = ['src/app.js', 'src/vault.js', 'src/physics.js', 'src/render.js', 'src/README.md', 'src/overlays.json'];
+  async function buildBackupObject() {
     const files = {};
     for (const f of BACKUP_FILES) {
-      try {
-        const r = await fetch(f);
-        if (!r.ok) throw new Error('http ' + r.status);
-        files[f] = { ok: true, content: await r.text() };
-      } catch { files[f] = { ok: false, content: null }; }
+      // desktop exports nest code one level deeper (src/js/...) than the live tree (src/...)
+      const cands = (f.startsWith('src/') && !f.startsWith('src/js/')) ? [f, 'src/js/' + f.slice(4)] : [f];
+      for (const cand of cands) {
+        try {
+          const r = await fetch(cand);
+          if (!r.ok) continue;
+          files[f] = { ok: true, content: await r.text() };
+          break;
+        } catch { /* try the next candidate path */ }
+      }
+      if (!files[f]) files[f] = { ok: false, content: null };
     }
     // Local-first: on desktop (and after save in preview) these resolve to
     // the real files; remotely they fall back to the Perchance API; fully
@@ -10319,12 +10624,12 @@ async function boot() {
       } catch {}
       return null;
     }
-    let mainPjs = await fetchTextLocalFirst('package.json',
-      null,
-      t => t.includes('visidocsverse'))
+    let mainPjs = await fetchTextLocalFirst('main.pjs',
+      'https://perchance.org/api/getGeneratorsAndDependencies?generatorNames=' + encodeURIComponent(window.generatorName || ''),
+      t => t.includes('$meta') || t.includes('{import:'))
       .then(t => { try { const o = JSON.parse(t); return (o.generators && o.generators[window.generatorName] && o.generators[window.generatorName].code) || t; } catch { return t; } });
     let indexHtml = await fetchTextLocalFirst('index.html',
-      null,
+      `https://null.perchance.org/${encodeURIComponent(window.generatorName || '')}`,
       t => t.includes('uniCv'));
     return {
       app: 'visidocsverse-backup', version: 1, pushedAt: new Date().toISOString(),
@@ -10477,8 +10782,10 @@ async function boot() {
       if (typeof s.tetherLast === 'number' && s.tetherLast > 0 && s.tetherLast <= 2) tetherLast = s.tetherLast;
       if (typeof s.tetherColor === 'string' && /^#[0-9a-f]{6}$/i.test(s.tetherColor)) tetherColor = s.tetherColor;
       if (s.tetherDotted === true) tetherDotted = true; else if (s.tetherDotted === false) tetherDotted = false;
-      if (typeof s.backdrop === 'string' && (/^[a-z0-9._-]+\.jpg$/i.test(s.backdrop) || s.backdrop === 'nebula')) backdrop = s.backdrop;
-      else if (s.backdrop === '') backdrop = '';
+      if (s.tetherSparse === true) { tetherSparse = true; tetherDotted = true; } else if (s.tetherSparse === false) tetherSparse = false;
+      if (s.tetherDashed === true) tetherDashed = true; else if (s.tetherDashed === false) tetherDashed = false;
+      if (typeof s.backdrop === 'string' && (/^[a-z0-9._-]+\.jpg$/i.test(s.backdrop))) backdrop = s.backdrop;
+      else if (s.backdrop === '' || s.backdrop === 'nebula') backdrop = ''; // legacy 'nebula' restores adopt to plain black
       if (typeof s.backdropAlpha === 'number' && s.backdropAlpha >= 0 && s.backdropAlpha <= 1) backdropAlpha = s.backdropAlpha;
       if (typeof s.backdropLast === 'number' && s.backdropLast > 0 && s.backdropLast <= 1) backdropLast = s.backdropLast;
       if (typeof s.paneAlpha === 'number' && s.paneAlpha >= 0 && s.paneAlpha <= 1) paneAlpha = s.paneAlpha;
@@ -10497,7 +10804,7 @@ async function boot() {
       if (s.luxMini === true) luxMini = true; else if (s.luxMini === false) luxMini = false;
       else if (s.luxMini == null && (luxLeft || luxDoc || luxTab || luxHint)) luxMini = true; // pre-map backups: luxury on means the map joins in
       if (s.triOrb === true) triOrb = true; else if (s.triOrb === false) triOrb = false;
-      if (s.vividUniverse === true) vividUniverse = true; else if (s.vividUniverse === false) vividUniverse = false;
+      if (s.vividUniverse === true) vividUniverse = false; else if (s.vividUniverse === false) vividUniverse = false; // retired: old vivid-on restores adopt to plain black
       if (typeof s.miniX === 'number' && typeof s.miniY === 'number') { miniX = s.miniX; miniY = s.miniY; }
       if (typeof s.miniW === 'number' && s.miniW >= 140 && s.miniW <= 640) miniW = s.miniW;
       if (typeof s.miniH === 'number' && s.miniH >= 100 && s.miniH <= 480) miniH = s.miniH;
@@ -10525,6 +10832,10 @@ async function boot() {
       if (typeof s.hintX === 'number' && typeof s.hintY === 'number') { hintX = s.hintX; hintY = s.hintY; }
       if (s.pillsCentered === true) pillsCentered = true; else if (s.pillsCentered === false) pillsCentered = false;
       fitPillsToScreen(s.vw, s.vh); // backup from another screen: land proportionally here
+      // tandem heal (same as boot): centered mode re-seats fresh, a split
+      // hand-placed pair reunites now with the top leading.
+      if (pillsCentered) { tabX = tabY = hintX = hintY = null; }
+      else if (tabX != null && hintX != null && tabX !== hintX) hintX = tabX;
       if (typeof s.pillMinW === 'number' && s.pillMinW >= 240 && s.pillMinW <= 4000) pillMinW = s.pillMinW;
       if (typeof s.clusterW === 'number' && s.clusterW >= 80 && s.clusterW <= 4000) clusterW = s.clusterW;
       if (Array.isArray(s.pinnedTerms)) pinnedTerms = s.pinnedTerms.filter(w => typeof w === 'string' && w).slice(0, MAX_PINS);
@@ -10619,7 +10930,7 @@ async function boot() {
     try { const el = $('#cpSize'); if (el) el.value = Math.round(compressScale * 100); const lb = $('#cpMul'); if (lb) lb.textContent = Math.round(compressScale * 100) + '%'; if (ren) ren.compressScale = compressScale; } catch {}
     try { const el = $('#bgShade'); if (el) el.value = Math.round(bgShade * 100); const lb = $('#bgMul'); if (lb) lb.textContent = Math.round(bgShade * 100) + '%'; if (ren) ren.bgShade = bgShade; syncHintContrast(); syncPaneContrast(); syncModeBtn(); } catch {}
     try { const el = $('#glSize'); if (el) el.value = Math.round(glowScale * 50); const lb = $('#glMul'); if (lb) lb.textContent = Math.round(glowScale * 100) + '%'; if (ren) ren.glowScale = glowScale; } catch {}
-    try { const el = $('#teSize'); if (el) el.value = Math.round(tetherScale * 50); const lb = $('#teMul'); if (lb) lb.textContent = Math.round(tetherScale * 100) + '%'; if (ren) ren.tetherScale = tetherScale; syncIsoBtn(); if (ren) ren.tetherDotted = tetherDotted; syncTetherDotsBtn(); } catch {}
+    try { const el = $('#teSize'); if (el) el.value = Math.round(tetherScale * 50); const lb = $('#teMul'); if (lb) lb.textContent = Math.round(tetherScale * 100) + '%'; if (ren) ren.tetherScale = tetherScale; syncIsoBtn(); if (ren) { ren.tetherDotted = tetherDotted; ren.tetherSparse = tetherSparse; ren.tetherDashed = tetherDashed; } syncTetherDotsBtn(); syncTetherSparseBtn(); syncTetherDashedBtn(); } catch {}
     try { if (ren) ren.tetherColor = tetherColor; document.querySelectorAll('#tePal .tesw').forEach(b => b.classList.toggle('on', (b.dataset.color || '').toLowerCase() === String(tetherColor).toLowerCase())); } catch {}
     try { const el = $('#bdAlpha'); if (el) el.value = Math.round(backdropAlpha * 100); const lb = $('#bdMul'); if (lb) lb.textContent = backdropAlpha <= 0 ? 'off' : Math.round(backdropAlpha * 100) + '%'; if (ren) { ren.backdropAlpha = backdropAlpha; } try { applyBackdrop(); } catch {} } catch {}
     try { document.querySelectorAll('#bgPal .bgsw').forEach(b => b.classList.toggle('on', b.dataset.bg === backdrop && backdrop !== '')); } catch {}
@@ -10651,8 +10962,7 @@ async function boot() {
       if (leftCollapsed) setCollapsed('leftPanel', true); else setCollapsed('leftPanel', false);
       if (docCollapsed) setCollapsed('docPanel', true); else setCollapsed('docPanel', false);
     } catch {}
-    try { if (ren) { ren.simpleOrb = simpleOrb; ren.stripOverlays = simpleOrb2; ren.triOrb = triOrb; ren.vivid = vividUniverse && !!(luxLeft || luxDoc || luxTab || luxHint || luxMini); } syncAutoBtn(); syncSimpleOrbBtn(); syncSimpleOrb2Btn(); syncTriOrbBtn(); syncDocIconBtn(); syncVividBtn(); syncHv(); syncLbPill(); } catch {} // restored nebula stays luxury-only
-    try { syncVividLux(); } catch {} // backup restore: re-tie vivid to luxury
+    try { if (ren) { ren.simpleOrb = simpleOrb; ren.stripOverlays = simpleOrb2; ren.triOrb = triOrb; ren.vivid = false; } syncAutoBtn(); syncSimpleOrbBtn(); syncSimpleOrb2Btn(); syncTriOrbBtn(); syncDocIconBtn(); syncHv(); syncLbPill(); } catch {} // nebula retired: vivid stays off
     try { syncHv(); } catch {}
     try {
       lensThematic = s.lensThematic === true;
@@ -10844,6 +11154,30 @@ async function boot() {
   };
           window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), lemonStartup: () => verifyLicenseOnStartup(), lemonActivate: (k, n) => activateLicenseKey(k, n) } };
   window.addEventListener('resize', () => ren.resize());
+  bootStage('ready');
+  try { document.title = __bootTitle0; } catch (e) {} // boot complete: restore the plain title (tracer stays silent on success)
+  // Viewport settle: boot sizes against a window that may still be animating
+  // (maximize on launch, slow fonts) — re-assert the full layout once it
+  // lands, plus on every later viewport-affecting change. fitViewport is
+  // idempotent and dedupes identical sizes, so these are cheap.
+  try { fitViewport('boot'); } catch {}
+  try { setTimeout(() => fitViewport('settle'), 250); } catch {}
+  try { setTimeout(() => fitViewport('settle'), 900); } catch {}
+  try { setTimeout(() => fitViewport('settle'), 2500); } catch {}
+  try { window.addEventListener('orientationchange', () => fitViewportSoon(200)); } catch {}
+  try { document.addEventListener('fullscreenchange', () => fitViewportSoon(200)); } catch {}
+  try { document.addEventListener('visibilitychange', () => { if (!document.hidden) fitViewportSoon(150); }); } catch {}
+  try {
+    const armDpr = () => {
+      try {
+        const mq = window.matchMedia('(resolution: ' + (window.devicePixelRatio || 1) + 'dppx)');
+        const h = () => { try { mq.removeEventListener('change', h); } catch {} try { mq.removeListener(h); } catch {} fitViewportSoon(150); armDpr(); };
+        if (mq.addEventListener) mq.addEventListener('change', h);
+        else if (mq.addListener) mq.addListener(h);
+      } catch {}
+    };
+    armDpr();
+  } catch {}
 }
 
 if (document.readyState !== 'loading') boot();

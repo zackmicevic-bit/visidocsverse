@@ -434,7 +434,10 @@ export const vault = {
       // archived, so falling through to legacy migrate / seed is safe.
       try { archiveCorruptTabs(raw); } catch { /* best-effort */ }
     }
-    // first run with tabs: migrate the legacy single-universe store, else seed
+    // first run: migrate the legacy single-universe store if it holds real
+    // docs, else start with an empty canvas. There are no sample docs — the
+    // app always opens empty; the empty-universe "Create a project" CTA
+    // covers the zero-tab state, same as an explicitly emptied workspace.
     let docs = null;
     try {
       const raw = localStorage.getItem(LS_KEY);
@@ -442,9 +445,17 @@ export const vault = {
         const d = JSON.parse(raw);
         if (d && Array.isArray(d.docs) && d.docs.length) docs = d.docs;
       }
-    } catch { /* fresh seed */ }
-    if (!docs) docs = seedDocs();
-    try { docs = docs.map((d, i) => normalizeDoc(d, 'Untitled ' + (i + 1))); } catch { docs = seedDocs(); }
+    } catch { /* start empty */ }
+    if (docs) {
+      try { docs = docs.map((d, i) => normalizeDoc(d, 'Untitled ' + (i + 1))); } catch { docs = []; }
+      if (!docs.length) docs = null;
+    }
+    if (!docs) {
+      this.tabs = [];
+      this.activeTabId = null;
+      this.persist();
+      return;
+    }
     this.tabs = [{ id: uid('tab_'), name: 'Universe 1', docs, activeId: docs[0]?.id || null, main: true, assoc: [], color: null, suppressedTags: [] }];
     this.activeTabId = this.tabs[0].id;
     this.persist();
@@ -453,7 +464,7 @@ export const vault = {
     try { localStorage.setItem(TABS_KEY, JSON.stringify({ tabs: this.tabs, activeTabId: this.activeTabId })); }
     catch { /* quota / private mode */ }
   },
-  reset() { this.docs = seedDocs(); this.persist(); },
+  reset() { this.tabs = []; this.activeTabId = null; this.persist(); }, // empty-canvas reset: never reseeds sample docs
   // ---------- canvases (top tabs): separate doc sets, copy bodies between them ----------
   createTab(name) {
     const clean = String(name || '').trim().slice(0, 40) || ('Universe ' + (this.tabs.length + 1));
@@ -839,64 +850,3 @@ export const vault = {
   },
 };
 
-function D(name, text) {
-  const p = parseDoc(text);
-  return { id: uid(), name, text, words: p.words, links: p.links, tags: withAutoTags(name, text, p.tags) };
-}
-
-function seedDocs() {
-  return [
-    D('Gravity Primer.md', `# Gravity Primer
-
-Gravity equals relevance. Bodies with more words and more references pull harder.
-Everything orbits the active document — the sun of this system. #physics #gravity
-
-Linked ideas: [[Orbital Mechanics]] and [[Mission Log]].`),
-    D('Orbital Mechanics.md', `# Orbital Mechanics
-
-Circular orbits need tangential velocity v = sqrt(G*M/r). Too slow and the body
-falls in; too fast and it escapes into the dark. Springs hold linked pairs at a
-stable distance like rigid tethers. #physics #orbits
-
-See [[Gravity Primer]] and the [[Star Chart]].`),
-    D('Mission Log.md', `# Mission Log
-
-Day 14: the universe is stable. Unlinked comets drift outward past the Kuiper
-line while the inner system hums. Focus shifts are smooth — the old sun cools,
-the new one ignites. #journal #orbits
-
-Ref: [[Gravity Primer]].`),
-    D('Star Chart.md', `# Star Chart
-
-A catalogue of every body: mass from word count, brightness from references.
-Dense clusters mark hot topics. #catalog #physics
-
-Cross-check [[Orbital Mechanics]] and [[Comet Registry]].`),
-    D('Comet Registry.md', `# Comet Registry
-
-Orphans with no links drift outward like distant comets. They are not lost —
-a single reference can capture them back into the system. #catalog
-
-Related: [[Star Chart]].`),
-    D('Deep Field Notes.md', `# Deep Field Notes
-
-Observations from the edge of the vault. Faint bodies, weak pull, long years.
-Nothing here links anywhere — yet. #journal`),
-    D('Engine Room.md', `# Engine Room
-
-N-body gravity plus Hooke springs plus comet drift, integrated semi-implicitly
-at a fixed timestep with damping. Deterministic, stable, endless. #physics #engines
-
-Tune via [[Gravity Primer]].`),
-    D('Gardener Almanac.md', `# Gardener Almanac
-
-Plant by the moon, water by the rain. A quiet life far from the inner planets,
-sharing only the tag-soil with the rest of the vault. #soil #journal`),
-    D('Soil Samples.md', `# Soil Samples
-
-Nitrogen, loam, patience. The garden cluster holds together through shared tags
-alone — no explicit references needed. #soil`),
-    D('Lone Signal.txt', `A narrow-band transmission from outside the system.
-No links. No hand-written tags. Just drifting.`),
-  ];
-}

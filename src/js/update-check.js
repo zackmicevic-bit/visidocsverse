@@ -12,18 +12,19 @@
 //   APP_VERSION and this exact version wasn't dismissed before. Dismissal is
 //   per-machine localStorage (never backups/installers).
 //
-// Release checklist (all three, every release):
+// Release checklist (every release):
 //   1. Bump APP_VERSION below.
 //   2. Bump "version" in src/tools/desktop/src-tauri/tauri.conf.json to match.
-//   3. Deploy the new version.json to ./src/assets/version.json
+//   3. Deploy the new version.json to the Vercel feed below
 //      with schema: {"latestVersion":"1.0.1","releaseDate":"2026-10-25",
-//      "releaseNotes":["..."]}
+//      "releaseNotes":["..."],"downloadUrl":"https://visidocs-updates-site.vercel.app/"}
+//      (downloadUrl optional — banner shows a Download button when present).
 
 // Current installed version. Keep in sync with tauri.conf.json on release.
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.0.21';
 
-// Static file on the public site (Step 1 of the version-checker spec).
-export const UPDATE_URL = './src/assets/version.json';
+// Static file on Vercel (the update feed).
+export const UPDATE_URL = 'https://visidocs-updates-site.vercel.app/version.json';
 
 // What the "copy" button puts on the clipboard: paste it into the mail-app
 // search box to find the original Lemon Squeezy receipt email, which holds
@@ -76,10 +77,16 @@ function validInfo(o) {
     notes = o.releaseNotes.filter((n) => typeof n === 'string' && n.trim())
       .slice(0, MAX_NOTES).map((n) => n.trim().slice(0, MAX_NOTE_LEN));
   }
+  let downloadUrl = '';
+  if (typeof o.downloadUrl === 'string') {
+    const u = o.downloadUrl.trim().slice(0, 500);
+    if (/^https:\/\/[^\s"'<>]+$/.test(u)) downloadUrl = u;
+  }
   return {
     latestVersion: o.latestVersion.trim(),
     releaseDate: typeof o.releaseDate === 'string' ? o.releaseDate.trim().slice(0, 32) : '',
     releaseNotes: notes,
+    downloadUrl,
   };
 }
 
@@ -93,7 +100,11 @@ async function versionFetch(url, opts) {
   } catch (firstErr) {
     try {
       if (!window.__TAURI__) throw firstErr;
-      throw firstErr; // offline build: no CDN fallback — plain fetch only
+      if (!tauriHttpFetch) {
+        const mod = await import('https://esm.sh/@tauri-apps/plugin-http@2');
+        tauriHttpFetch = mod.fetch;
+      }
+      return await tauriHttpFetch(url, opts);
     } catch {
       throw firstErr;
     }
@@ -157,6 +168,11 @@ export function showUpdateBanner(info, notify) {
       bits.push('<ul>' + info.releaseNotes.map((x) => `<li>${esc(x)}</li>`).join('') + '</ul>');
     }
     n.innerHTML = bits.join('') || '<div class="upb-date">A newer version is ready to download.</div>';
+  }
+  const dl = document.getElementById('updateDownloadBtn');
+  if (dl) {
+    if (info.downloadUrl) { dl.hidden = false; dl.dataset.url = info.downloadUrl; }
+    else { dl.hidden = true; delete dl.dataset.url; }
   }
   b.hidden = false;
   placeUpdateBanner();
@@ -239,6 +255,22 @@ export function initUpdateChecker(notify) {
     if (l) l.onclick = () => hideUpdateBanner(true);
     const cp = document.getElementById('updateCopyBtn');
     if (cp) cp.onclick = () => copyReceiptSearch(notify);
+    const dlb = document.getElementById('updateDownloadBtn');
+    if (dlb && !dlb.dataset.wired) {
+      dlb.dataset.wired = '1';
+      dlb.onclick = async () => {
+        const url = dlb.dataset.url || 'https://visidocs-updates-site.vercel.app/';
+        try {
+          if (window.__TAURI__) {
+            try {
+              const mod = await import('https://esm.sh/@tauri-apps/plugin-opener@2');
+              if (mod && typeof mod.openUrl === 'function') { await mod.openUrl(url); return; }
+            } catch {}
+          }
+        } catch {}
+        try { window.open(url, '_blank', 'noopener'); } catch {}
+      };
+    }
     window.addEventListener('resize', () => { try { placeUpdateBanner(); } catch {} });
   }
   if (!needsUpdateCheck()) return;

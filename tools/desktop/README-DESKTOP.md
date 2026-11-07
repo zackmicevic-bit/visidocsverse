@@ -132,18 +132,21 @@ Artifacts land in `src-tauri/target/<triple>/release/bundle/{dmg,nsis,msi}/`.
 
 ## 7. Licensing notes (`src/license.js` + `src/licensing-manager.js`)
 
-- First launch in a desktop shell shows the Activate modal with two paths.
-  ONLINE: the buyer pastes their Lemon Squeezy license key and activates
-  (one internet check against `api.lemonsqueezy.com/v1/licenses/activate`).
-  The activation caches locally in `localStorage`
-  (`visidocsverse.lemon.v1`) with an HMAC-SHA256 tamper seal: fresh caches
-  unlock offline for 30 days, expired ones re-validate in the background
-  (`/v1/licenses/validate`) and keep working while offline (grace);
-  hand-edited caches fail closed. Needs internet only for the activation
-  call itself (plain `fetch`; inside Tauri it falls back to the http plugin's
-  fetch, which is not bound by WebView CORS). OFFLINE: the buyer pastes (or
-  loads) their license key FILE — verified LOCALLY with the embedded
-  ECDSA P-256 public key, no network ever. Either path passing unlocks.
+- Subscription build (weekly check). First launch in a desktop shell shows
+  the Activate modal (Lemon Squeezy path). ONLINE: the buyer pastes their
+  Lemon Squeezy license key and activates (one internet check against
+  `api.lemonsqueezy.com/v1/licenses/activate`). The activation caches
+  locally in `localStorage` (`visidocsverse.lemon.v1`) with an HMAC-SHA256
+  tamper seal: caches younger than 7 days unlock offline with zero network;
+  older ones MUST ping `/v1/licenses/validate`. Valid -> reseal + unlock.
+  Invalid (expired/cancelled) -> lock. Unreachable -> temporary access until
+  7+7 days with no successful check, then lock until online. Hand-edited
+  caches fail closed without deleting. Needs internet for activation + the
+  weekly ping (plain `fetch`; inside Tauri it falls back to the http
+  plugin's fetch, which is not bound by WebView CORS). OFFLINE key FILE
+  (ECDSA P-256, local-only, no network) is LEGACY: tried only when no Lemon
+  subscription cache has ever existed on the machine, so it cannot bypass
+  an expired/cancelled subscription. Stop issuing key files for subscribers.
 - Mint offline key files with `node src/tools/desktop/make-key.mjs gen`
   (once — keep the private half OFF the repo, encrypted drive / password
   manager) and `node make-key.mjs sign <private.json> <buyer@email>
@@ -184,27 +187,28 @@ Artifacts land in `src-tauri/target/<triple>/release/bundle/{dmg,nsis,msi}/`.
 
 ## 9. In-app update checker (`src/update-check.js` + `#updateBanner`)
 
-- A few seconds after startup, desktop shells (Tauri/file/tauri.localhost —
+ - A few seconds after startup, desktop shells (Tauri/file/tauri.localhost —
   never the web preview) make ONE anonymous GET of
-  `https://visidocsverse.com/version.json` (plain no-preflight GET, no
-  cookies, no headers, no identifiers; 5s timeout; Tauri http-plugin
-  fallback like the Lemon path). Offline/DNS/non-200/bad-JSON/timeout all
-  fail silently — no toast, no banner, no console error.
+  `https://visidocs-updates-site.vercel.app/version.json` (plain
+  no-preflight GET, no cookies, no headers, no identifiers; 5s timeout;
+  Tauri http-plugin fallback like the Lemon path). Offline/DNS/non-200/
+  bad-JSON/timeout all fail silently — no toast, no banner, no console error.
 - If `latestVersion` is strictly newer than `APP_VERSION`, a slim glass
   banner parks under the top pill (top edge follows the pill's live bottom)
-  with the version, release date, and up to 6 release notes, plus a "Copy
-  receipt search" button (copies `VisiDocsverse Lemon Squeezy receipt` —
-  paste into the mail-app search to find the Lemon Squeezy receipt email
-  for the free patch re-download) and Later/✕ dismiss. Dismissal is stored
-  per machine (`visidocsverse.update.v1`) for that version only — the next
-  newer version nags again.
+  with the version, release date, and up to 6 release notes, plus Download
+  (opens `downloadUrl` from version.json in the system browser), "Copy
+  receipt search" (copies `VisiDocsverse Lemon Squeezy receipt` — paste into
+  the mail-app search to find the Lemon Squeezy receipt email for the free
+  patch re-download) and Later/✕ dismiss. Dismissal is stored per machine
+  (`visidocsverse.update.v1`) for that version only — the next newer version
+  nags again.
 - Like the EULA modal, the banner sits outside every `DEV-ONLY` range and
   uses no stripped identifiers, so installers keep it.
 - Release checklist (all three, every release): bump `APP_VERSION` in
   `src/update-check.js`, bump `"version"` in
   `src-tauri/tauri.conf.json` to match, and deploy the new `version.json`
-  to the site root with schema
-  `{"latestVersion":"1.0.1","releaseDate":"2026-10-25","releaseNotes":["..."]}`.
+  to the Vercel feed with schema
+  `{"latestVersion":"1.0.1","releaseDate":"2026-10-25","releaseNotes":["..."],"downloadUrl":"https://visidocs-updates-site.vercel.app/"}`.
 - Smoke test on the built installer: with no network (or with
   `version.json` unreachable), launch is clean and silent; with a stubbed
   newer version the banner shows notes + copy works (in dev, drive it via

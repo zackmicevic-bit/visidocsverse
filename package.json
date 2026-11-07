@@ -1,6 +1,6 @@
 {
   "name": "visidocsverse",
-  "version": "1.0.0",
+  "version": "1.0.21",
   "type": "module",
   "private": false,
   "description": "VisiDocsVerse — a living 3D document universe driven by orbital physics. Standalone offline build.",

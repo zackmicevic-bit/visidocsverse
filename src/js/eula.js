@@ -67,16 +67,12 @@ This Agreement shall be governed by and construed in accordance with applicable 
 
 const EULA_KEY = 'visidocsverse.eula.v1';
 
+import { isDesktopShell } from './license.js';
+
 // True only inside a real install (desktop shell). The web preview always
 // returns false, so this gate can never fire there.
 export function needsEulaGate() {
-  try {
-    if (window.__TAURI__ || window.__TAURI_INTERNALS__ || window.__TAURI_METADATA__) return true;
-    const p = location.protocol;
-    if (p === 'file:' || p === 'tauri:' || p === 'wry:' || p === 'app:') return true;
-    if (/tauri\.localhost$/i.test(location.hostname)) return true;
-  } catch {}
-  return false;
+  return isDesktopShell();
 }
 
 export function eulaAccepted() {
@@ -118,5 +114,6 @@ export function showEulaModal() {
       resolve(true);
     };
     m.hidden = false;
+    try { document.title = 'VisiDocsVerse [boot:eula-modal]'; } catch (e) {}
   });
 }

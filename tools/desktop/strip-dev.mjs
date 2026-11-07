@@ -93,6 +93,10 @@ function stripRanges(text, startRe, endRe, label) {
     if (new RegExp(`\\b${esc}${/\w$/.test(name) ? '\\b' : ''}`).test(js))
       throw new Error(`src/app.js: leftover reference to stripped dev code: ${name}`);
   }
+  for (const name of ['BACKUP_FILES', 'buildBackupObject', 'saveAllProjects']) {
+    if (!new RegExp(`\\b${name}\\b`).test(js))
+      throw new Error(`src/app.js: required user-feature symbol missing after strip: ${name}`);
+  }
   writeFileSync(p, js);
   console.log(`src/app.js: removed ${pairs} DEV range(s), ${removed} chars + __visidocsverse dev handles`);
 }

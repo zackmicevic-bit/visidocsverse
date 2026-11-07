@@ -9,7 +9,7 @@
 //
 // license.js re-exports the Lemon Squeezy online path (see
 // licensing-manager.js); either system passing unlocks the app.
-import { verifyLicenseOnStartup, activateLicenseKey } from './licensing-manager.js';
+import { verifyLicenseOnStartup, activateLicenseKey, lemonCacheStatus, clearLemonCache } from './licensing-manager.js';
 
 // Key file shape (JSON):
 //   {"product":"visidocsverse","email":"buyer@example.com","issued":"2026-10-25","sig":"<base64url>"}
@@ -89,38 +89,87 @@ export function clearLicenseCache() {
   catch {}
 }
 
-// True only inside a real install (desktop shell) or when the dev flag says so.
-export function needsLicenseGate() {
-  if (LICENSE.enforceOnWeb) return true;
+// Fully remove this machine's activation (both paths) — the next
+// ensureLicensed() re-shows the blocking Activate modal on desktop shells.
+export function deactivateLicense() {
+  clearLemonCache();
+  clearLicenseCache();
+}
+
+// Read-only license snapshot for status surfaces (offline only, never
+// throws): {kind:'lemon'|'keyfile'|'none', email}. Once a Lemon subscription
+// cache exists on this machine it is authoritative — a legacy key file is
+// not reported as a valid license, matching ensureLicensed().
+export async function licenseStatus() {
+  let lemonPresent = false;
+  try {
+    const s = await lemonCacheStatus();
+    if (s && s.ok) return { kind: 'lemon', email: s.email || '' };
+    lemonPresent = !!(s && s.present);
+  } catch {}
+  if (lemonPresent) return { kind: 'none', email: '' };
+  try {
+    const c = cachedLicenseText();
+    if (c) {
+      const r = await verifyLicenseKey(c);
+      if (r.ok) return { kind: 'keyfile', email: r.email || '' };
+    }
+  } catch {}
+  return { kind: 'none', email: '' };
+}
+
+// True inside any real install (desktop shell): Tauri, a file://-launched
+// shell, OR Neutralino (localhost http + NL_* globals / Neutralino client).
+// The web preview is never a desktop shell, so gates can never fire there.
+export function isDesktopShell() {
   try {
     if (window.__TAURI__ || window.__TAURI_INTERNALS__ || window.__TAURI_METADATA__) return true;
-    const p = location.protocol;
+    if (window.NL_PORT != null || window.NL_TOKEN != null || window.NL_APPID != null || window.NL_VERSION != null) return true; // Neutralino runtime constants
+    if (typeof Neutralino !== 'undefined') return true; // Neutralino client API present (vendored neutralino.js)
+    const p = String(location.protocol || '').toLowerCase();
     if (p === 'file:' || p === 'tauri:' || p === 'wry:' || p === 'app:') return true;
     if (/tauri\.localhost$/i.test(location.hostname)) return true;
   } catch {}
   return false;
 }
 
-// Resolve true once this machine holds a verified key. Lemon Squeezy
-// online-cache first, then the fully-offline ECDSA key file; shows the
-// Activate modal (blocking, no dismiss) when gating and neither verifies.
-// A non-routine startup verdict (tamper, unreadable cache) is passed through
-// so the modal can say WHY it is locked, not just that it is.
+// True only inside a real install (desktop shell) or when the dev flag says so.
+export function needsLicenseGate() {
+  if (LICENSE.enforceOnWeb) return true;
+  return isDesktopShell();
+}
+
+// Resolve true once this machine holds a verified subscription. Lemon Squeezy
+// weekly-check first; the fully-offline ECDSA key file is legacy-only and is
+// tried ONLY when no Lemon subscription cache has ever existed on this
+// machine. Once a subscription cache exists, Lemon is authoritative — an
+// expired/cancelled/overdue subscription cannot be bypassed with an old key
+// file. Shows the Activate modal (blocking, no dismiss) when gating and
+// neither verifies. A non-routine startup verdict (tamper, expired, overdue)
+// is passed through so the modal can say WHY it is locked, not just that it is.
 export async function ensureLicensed() {
   if (!needsLicenseGate()) return true;
   let note = '';
+  let lemonPresent = false;
   try {
     const r = await verifyLicenseOnStartup();
     if (r && r.isValid) return true;
-    if (r && r.statusMessage && r.statusMessage !== 'No active Visi|Docsverse license found. Please enter your license key.') note = r.statusMessage;
+    if (r && r.statusMessage && r.statusMessage !== 'No active Visi|Docsverse subscription found. Please enter your license key.' && r.statusMessage !== 'No active Visi|Docsverse license found. Please enter your license key.') note = r.statusMessage;
   } catch {}
   try {
-    const c = cachedLicenseText();
-    if (c) {
-      const r = await verifyLicenseKey(c);
-      if (r.ok) return true;
-    }
-  } catch {}
+    const s = await lemonCacheStatus();
+    lemonPresent = !!(s && s.present);
+  } catch { lemonPresent = true; }
+  // Legacy key-file fallback only when Lemon was never activated here.
+  if (!lemonPresent) {
+    try {
+      const c = cachedLicenseText();
+      if (c) {
+        const r = await verifyLicenseKey(c);
+        if (r.ok) return true;
+      }
+    } catch {}
+  }
   return showLicenseModal(note);
 }
 
@@ -149,6 +198,7 @@ export function showLicenseModal(note) {
       else { err.hidden = false; err.textContent = msg; err.style.color = color || ''; }
     };
     m.hidden = false;
+    try { document.title = 'VisiDocsVerse [boot:license-modal]'; } catch (e) {}
     // Surface the lockout reason (tampered cache, unreadable store, …) when
     // the boot check supplied one; a first-run "no license yet" stays clean.
     say(note || null);
@@ -163,7 +213,7 @@ export function showLicenseModal(note) {
     if (onlineBtn) onlineBtn.onclick = async () => {
       onlineBtn.disabled = true;
       try {
-        say('Contacting Lemon Squeezy to activate Visi|Docsverse…', 'var(--mut)');
+        say('Activating Visi|Docsverse…', 'var(--mut)');
         const r = await activateLicenseKey(keyInput ? keyInput.value : '');
         if (!r.success) { say(r.message); return; }
         // Let the success land before the modal closes (then boot continues
