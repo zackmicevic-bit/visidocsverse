@@ -20,18 +20,85 @@ try { clearTimeout(window.__bootTimer); var __bs = document.getElementById('boot
 import { initUpdateChecker, checkForUpdates, showUpdateBanner, hideUpdateBanner, APP_VERSION, needsUpdateCheck } from './update-check.js';
 import { origPut, origGet, origKeys, origDelete } from './origstore.js';
 
-// Neutralino desktop shell: init the client API, then force a clean shutdown
-// when the window's X button is clicked (exitProcessOnClose alone can leave
-// the background process hanging). Guarded so plain browsers, local static
-// servers and other shells (no Neutralino global) skip it entirely.
+// Neutralino desktop shell: init the client API, then handle the window's X
+// button with an OS-level save guard. Requires TWO flags in neutralino.config.json:
+// "exitProcessOnClose": false (else the process dies on X and this windowClose
+// event never fires) and "injectGlobals": true (else Neutralino.init() has no
+// NL_PORT/NL_TOKEN and the bridge never connects). Guarded so plain browsers,
+// local static servers and other shells (no Neutralino global) skip it entirely.
+// OS-first design: the framework may hide the window on X before JS paints, so
+// a DOM-only pane can sit invisible in a hidden window (looks like "no dialog").
+// os.showMessageBox is an OS-modal native dialog — visible even if the window
+// is hidden — so it is the primary guard; the DOM pane stays as fallback.
 if (typeof Neutralino !== 'undefined') {
+  try { window.addEventListener('ready', () => { try { window.__bridgeReady = true; } catch {} }); } catch {} // bridge liveness: client + framework "ready" both need the WS
   try { Neutralino.init(); } catch {}
-  // X-button close: with canvas work that isn’t backed up to a file yet,
-  // hold the exit and ask first (custom pane); otherwise exit at once.
-  Neutralino.events.on('windowClose', () => {
-    let held = false;
-    try { held = needsBackupGuard() && showCloseGuardPane(); } catch {}
-    if (!held) { try { Neutralino.app.exit(); } catch {} }
+  // X-button close. FAIL-SAFE: any error evaluating the guard holds the exit
+  // (shows the dialogs) instead of silently quitting — a crash must never
+  // look like "no dialog". When the file backup is fresh we exit at once so
+  // empty/saved workspaces never linger as ghost processes. The re-show runs
+  // fire-and-forget (the shell may hide the window on X even though the
+  // process lives on), with one deferred retry in case the native window is
+  // still settling from the close.
+  Neutralino.events.on('windowClose', async () => {
+    let held = true;
+    try { held = needsBackupGuard(); } catch { held = true; }
+    if (!held) { try { await Neutralino.app.exit(); } catch { try { Neutralino.app.exit(); } catch {} } return; }
+    try { localStorage.setItem('visidocsverse.closeprobe', JSON.stringify({ at: Date.now() })); } catch {}
+    const reshow = () => {
+      (async () => {
+        try { await Neutralino.window.show(); } catch {}
+        try { await Neutralino.window.focus(); } catch {}
+      })();
+    };
+    reshow();
+    setTimeout(reshow, 300);
+    setTimeout(reshow, 1000);
+    // DOM FIRST (synchronous paint before any await): immediate visible
+    // feedback plus the guaranteed fallback — a hung or hidden native call
+    // can never again leave the X looking dead.
+    try { showCloseGuardPane(); } catch {}
+    // Native SECOND (OS-modal, visible even if the window is hidden).
+    // Awaited with no timeout: if it answers, its branch runs and hides the
+    // DOM pane as needed; if it never settles, the DOM pane above stays
+    // fully usable (Save / Close without saving / Keep working).
+    let choice = null;
+    try {
+      const n = workspaceDocCount();
+      let tabs = 0;
+      try { tabs = vault.tabs.filter(t => t && t.docs && t.docs.length).length; } catch {}
+      choice = await Neutralino.os.showMessageBox(
+        'Save your work before you go?',
+        `You have ${n} document${n === 1 ? '' : 's'} across ${tabs} canvas${tabs === 1 ? '' : 'es'}. Closing now loses everything that isn\u2019t backed up.\n\nYES = Save project now (app stays open)\nNO = Close without saving\nCancel = Keep working`,
+        'YES_NO_CANCEL', 'QUESTION');
+    } catch { choice = null; }
+    try {
+      const c = String(choice || '').toUpperCase();
+      if (c === 'YES') {
+        try { hideCloseGuardPane(); } catch {}
+        try {
+          const saver = window.__visidocsverse && window.__visidocsverse.saveAllProjects;
+          if (typeof saver === 'function') await saver();
+          else { try { showCloseGuardPane(); } catch {} }
+        } catch { try { showCloseGuardPane(); } catch {} }
+        reshow();
+        return;
+      }
+      if (c === 'NO') {
+        try { localStorage.removeItem('visidocsverse.closeprobe'); } catch {}
+        try { hideCloseGuardPane(); } catch {}
+        try { await Neutralino.app.exit(); } catch { try { Neutralino.app.exit(); } catch {} }
+        return;
+      }
+      // CANCEL, CLOSE, null (native call blocked/failed) → keep working with
+      // the DOM pane as the control surface (also the fallback if native failed).
+      try { showCloseGuardPane(); } catch {}
+      reshow();
+      setTimeout(reshow, 300);
+    } catch {
+      try { showCloseGuardPane(); } catch {}
+      reshow();
+    }
   });
 }
 
@@ -42,7 +109,7 @@ const $ = (s, r = document) => r.querySelector(s);
 // A finished "save project" marks the backup clean; every content edit below
 // clears it again. The guard fires only when real work exists on the canvas
 // (doc count > 0), so empty workspaces always close quietly.
-let backupClean = true; // nothing backed up yet this session
+let backupClean = false; // boot counts as unsaved: restored docs have no file backup yet this session
 function markBackupDirty() { backupClean = false; }
 function workspaceDocCount() { try { return vault.tabs.reduce((n, t) => n + (((t && t.docs) || []).length), 0); } catch { return 0; } }
 function needsBackupGuard() { return workspaceDocCount() > 0 && !backupClean; }
@@ -64,8 +131,9 @@ function showCloseGuardPane() {
   } catch {}
   return true;
 }
-function hideCloseGuardPane() { const box = $('#closeGuardPane'); if (box) box.hidden = true; }
+function hideCloseGuardPane() { const box = $('#closeGuardPane'); if (box) box.hidden = true; try { localStorage.removeItem('visidocsverse.closeprobe'); } catch {} /* user answered the guard — nothing to report next boot */ }
 function exitAppNow() {
+  try { localStorage.removeItem('visidocsverse.closeprobe'); } catch {} // deliberate exit through the dialog — nothing to report next boot
   hideCloseGuardPane();
   try { if (typeof Neutralino !== 'undefined') { Neutralino.app.exit(); return; } } catch {}
   try { window.close(); } catch {}
@@ -2433,6 +2501,13 @@ function placePinPane() {
 let notesDocId = null; // doc the open pane is showing
 let notesSessionAuto = null; // auto entry created since this open (Cancel removes it)
 let notesDraftTimer = 0, notesCloseToken = 0;
+// drag-and-drop of reader highlights into the pane: dragstart on #docBody
+// stashes the live selection + its rich passage anchor; drops onto the pane
+// (or its tab while closed) file it as a note entry, pinned like the button.
+let dragNotePayload = null; // {text, spot, docId} captured at dragstart
+let dragFromNotes = false; // a drag that began inside the pane (reorder) — never re-files
+let notesDropSpot = null; // {docId, spot} stashed when a highlight lands in the composer; consumed by the next save
+let selTipTimer = 0; // hide timer for the floating highlight cue ("Drag highlighted text…")
 function notesBand() { return glossBand(); } // same pill-to-pill vertical band
 function placeNotesTab() {
   const t = $('#notesTab'), p = $('#docPanel');
@@ -2496,7 +2571,7 @@ function setNotes(open, id) {
   if (open) {
     const doc = vault.byId(typeof id === 'string' ? id : (vault.byId(shownId) ? shownId : activeId));
     if (!doc) { toast('Open a document body first — notes live on bodies'); return; }
-    if (notesDocId !== doc.id) { notesSessionAuto = null; }
+    if (notesDocId !== doc.id) { notesSessionAuto = null; notesDropSpot = null; }
     notesDocId = doc.id;
     notesOpen = true;
     // the pane and the reader stay on the same document: when the reader is
@@ -2550,7 +2625,7 @@ function closeNotesPane(silent) {
 }
 function syncNotesPaneDoc() { // the tab + pane follow whatever the reader shows
   if (vault.byId(shownId)) {
-    if (notesDocId !== shownId) { notesDocId = shownId; notesSessionAuto = null; }
+    if (notesDocId !== shownId) { notesDocId = shownId; notesSessionAuto = null; notesDropSpot = null; }
   }
   // theme / tag / general views show no doc: keep the pane's own doc — a pane
   // explicitly opened from a sticky square stays on its notepad instead of
@@ -2559,22 +2634,187 @@ function syncNotesPaneDoc() { // the tab + pane follow whatever the reader shows
   if (notesOpen) { try { applyNotesGeom(); } catch {} try { renderNotesPane(); } catch {} }
 }
 function notesEntryDate(at) { try { return new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } }
+// APA reference: every notes surface carries a best-effort APA-style
+// reference for its document (the filename stays in the header as before).
+// Per-field priority: embedded original-file metadata (d.citeMeta, resolved
+// from the sidecar original bytes) first, mined rendered text second,
+// filename/(n.d.) last. Sparse documents yield an honest partial reference
+// (flagged "partial") instead of nothing.
+function docApaInfo(d) {
+  const out = { title: '', authors: [], year: 0, source: '', doi: '' };
+  if (!d) return out;
+  const emb = (d.citeMeta && typeof d.citeMeta === 'object' && !Array.isArray(d.citeMeta)) ? d.citeMeta : null; // original-file metadata wins
+  let base = '';
+  try { base = String(vault.titleOf(d) || '').trim(); } catch { base = ''; }
+  const human = base.replace(/[_]+/g, ' ').replace(/[-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  let text = '';
+  try { text = String(d.text || ''); } catch { text = ''; }
+  const raw = text.split('\n');
+  if (raw.length && /^\s*#\s/.test(raw[0] || '')) raw.shift(); // intake-titled first line repeats the filename
+  const lines = [];
+  for (const ln of raw.slice(0, 80)) {
+    const t = String(ln || '').replace(/\s+/g, ' ').trim();
+    if (t) lines.push(t);
+    if (lines.length >= 40) break;
+  }
+  let title = '';
+  const embTitle = emb && typeof emb.title === 'string' ? emb.title.trim().slice(0, 300) : '';
+  if (embTitle.length >= 4) title = embTitle; // embedded Title beats any rendered-text guess
+  else for (const ln of lines.slice(0, 4)) {
+    const clean = ln.replace(/^#+\s*/, '').replace(/\s+page \d+(\s+of\s+\d+)?$/i, '').trim();
+    if (clean.length >= 12 && clean.length <= 300 && !/^(abstract|contents|table of contents|introduction|page \d+)/i.test(clean) && !/intentionally (left )?blank|^\s*blank(\s+page)?\s*$/i.test(clean)) { title = clean; break; } // never crown a placeholder page
+  }
+  if (!title) title = human || 'Untitled';
+  out.title = title.slice(0, 300);
+  const WD = CITE_WD;
+  const flRe = new RegExp('\\b(' + WD + ')' + CITE_TAIL + '\\b', 'g');
+  const lfRe = new RegExp('\\b(' + WD + '),\\s+(' + WD + '|[A-Z]\\.?)', 'g');
+  const skipRe = /@|https?:|doi:|university|department|institute|college|school|journal|proceedings|conference|chapter|abstract|editors?|review|press|copyright|\u00A9|faculty|laboratory|^page\b/i;
+  const grab = (s) => {
+    const found = [];
+    let m;
+    flRe.lastIndex = 0;
+    while ((m = flRe.exec(s)) && found.length < 20) {
+      found.push({ first: m[1], last: citeTailLast(m[2]) });
+    }
+    if (!found.length) {
+      lfRe.lastIndex = 0;
+      while ((m = lfRe.exec(s)) && found.length < 20) found.push({ first: m[2].replace(/\./g, ''), last: m[1] });
+    }
+    return found;
+  };
+  const okLine = (s, names) => {
+    if (names.length < 1 || names.length > 20 || s.length > 220) return false;
+    const letters = (s.match(/[A-Za-z\u00C0-\u00FF]/g) || []).length;
+    const kept = names.map(n => ((n.first + n.last).match(/[A-Za-z\u00C0-\u00FF]/g) || []).length).reduce((a, b) => a + b, 0);
+    return letters > 0 && kept / letters >= 0.45;
+  };
+  let authors = [];
+  const embAuthors = emb && Array.isArray(emb.authors) ? cleanCiteNames(emb.authors) : [];
+  if (embAuthors.length) authors = embAuthors.slice(0, 6); // embedded Author beats any rendered-text guess
+  if (!authors.length) for (const pat of [/^\s*by\s*[:\-]?\s+(.+)$/i, /^\s*authors?\s*[:\-]\s*(.+)$/i]) {
+    for (const ln of lines.slice(0, 8)) {
+      const m = String(ln).match(pat);
+      if (!m) continue;
+      const names = grab(m[1].split(/;|\band\b|&/).join(','));
+      if (okLine(m[1], names)) { authors = names; break; }
+    }
+    if (authors.length) break;
+  }
+  if (!authors.length) {
+    for (const ln of lines.slice(1, 13)) {
+      if (skipRe.test(ln)) continue;
+      const lows = ln.match(/\b[a-z\u00E0-\u00FF]+\b/g) || [];
+      if (lows.some(w => !NAME_GLUE.has(w.toLowerCase()))) continue; // title lines leak lowercase words - names never do
+      const names = grab(ln);
+      if (okLine(ln, names)) { authors = names; break; }
+    }
+  }
+  out.authors = cleanCiteNames(authors).slice(0, 6); // stopwords kill placeholder "authors" ("This Page", "Left Blank")
+  const head = text.slice(0, 8000);
+  const nowY = new Date().getFullYear();
+  const goodY = (y) => y >= 1500 && y <= nowY;
+  let year = 0;
+  if (emb && Number.isInteger(emb.year) && goodY(emb.year)) year = emb.year; // embedded CreationDate beats any rendered-text guess
+  const par = !year && head.match(/\((1[5-9]\d{2}|20[0-2]\d)\)/);
+  if (par && goodY(+par[1])) year = +par[1];
+  if (!year) {
+    const cp = head.match(/(\u00A9|copyright)[^.\n]{0,60}(1[5-9]\d{2}|20[0-2]\d)/i);
+    if (cp && goodY(+cp[2])) year = +cp[2];
+  }
+  if (!year) {
+    const all = head.match(/\b(1[5-9]\d{2}|20[0-2]\d)\b/g) || [];
+    for (const y of all) { if (goodY(+y)) { year = +y; break; } }
+  }
+  out.year = year;
+  const doiM = head.match(/\b10\.\d{4,}\/[^\s"'<>\]\)}]+/);
+  if (doiM) out.doi = 'https://doi.org/' + doiM[0].replace(/[.,;:]+$/, '');
+  const srcSkip = /@|https?:|doi:|copyright|\u00A9/i;
+  for (const ln of lines.slice(0, 60)) {
+    if (ln.length > 200 || srcSkip.test(ln)) continue;
+    if (/(journal|proceedings|transactions|conference|symposium|review|quarterly|letters|press|books|publisher|university|institute|published\b)/i.test(ln)) { out.source = ln.slice(0, 160); break; }
+    if (/^\s*in\s+(?=[A-Z\u00C0-\u00DE])/i.test(ln) && ln.length >= 12) { out.source = ln.replace(/^\s*in\s+/i, '').slice(0, 160); break; } // "In Advances in ..." reference style
+    if (/\b(nips|neurips|icml|iclr|aaai|ijcai|cvpr|iccv|acl|emnlp|kdd|sigir|acm|ieee)\b/i.test(ln)) { out.source = ln.slice(0, 160); break; } // venue acronyms
+  }
+  const vol = head.match(/\b(\d{1,3})\s*\(\s*(\d{1,3})\s*\)\s*,\s*(\d+\s*[-\u2013\u2014]\s*\d+|\d+)\b/);
+  if (vol && out.source && !/\(\d+\)/.test(out.source)) out.source += ', ' + vol[1] + '(' + vol[2] + '), ' + vol[3].replace(/\s/g, '');
+  return out;
+}
+function apaPerson(a) { // "Last, F. M." from a mined {first, last} pair
+  const ini = String(a.first || '').trim().split(/[\s.]+/).filter(Boolean).map(w => w[0].toUpperCase() + '.').join(' ');
+  return a.last + (ini ? ', ' + ini : '');
+}
+function docApaText(d) { // plain-text citation (clipboard)
+  const info = docApaInfo(d);
+  const names = info.authors.slice(0, 20);
+  let auth = '';
+  if (names.length === 1) auth = apaPerson(names[0]);
+  else if (names.length === 2) auth = apaPerson(names[0]) + ', & ' + apaPerson(names[1]);
+  else if (names.length > 2) auth = names.slice(0, -1).map(apaPerson).join(', ') + ', & ' + apaPerson(names[names.length - 1]);
+  const yr = info.year ? '(' + info.year + ').' : '(n.d.).';
+  const ti = info.title.replace(/\s+/g, ' ').trim().replace(/\.+$/, '') + '.';
+  const bits = auth ? [auth + ' ' + yr + ' ' + ti] : [ti + ' ' + yr];
+  if (info.source) bits.push(info.source.replace(/\.+$/, '') + '.');
+  if (info.doi) bits.push(info.doi);
+  return bits.join(' ');
+}
+function docApaHtml(d) { // rendered citation (titles/sources italic, partial flagged)
+  const info = docApaInfo(d);
+  const names = info.authors.slice(0, 20);
+  let auth = '';
+  if (names.length === 1) auth = esc(apaPerson(names[0]));
+  else if (names.length === 2) auth = esc(apaPerson(names[0])) + ', &amp; ' + esc(apaPerson(names[1]));
+  else if (names.length > 2) auth = names.slice(0, -1).map(a => esc(apaPerson(a))).join(', ') + ', &amp; ' + esc(apaPerson(names[names.length - 1]));
+  const yr = info.year ? '(' + info.year + ').' : '(n.d.).';
+  const ti = '<i>' + esc(info.title.replace(/\s+/g, ' ').trim().replace(/\.+$/, '') + '.') + '</i>';
+  const bits = auth ? [auth + ' ' + esc(yr) + ' ' + ti] : [ti + ' ' + esc(yr)];
+  if (info.source) bits.push('<i>' + esc(info.source.replace(/\.+$/, '') + '.') + '</i>');
+  if (info.doi) bits.push(esc(info.doi));
+  if (!(info.authors.length && info.year && info.source)) bits.push('<span class="apa-partial" title="Partial reference - the author, year or publisher could not be found inside this document">partial</span>');
+  return bits.join(' ');
+}
+function copyApaCite(id) { // copy the mined APA reference for a doc
+  const d = vault.byId(id); if (!d) return;
+  const txt = docApaText(d);
+  if (!txt) return;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(() => toast('APA reference copied'), () => toast('Copy failed - select the reference text manually'));
+    else throw 0;
+  } catch { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast('APA reference copied'); } catch {} ta.remove(); }
+}
 function renderNotesPane() {
   const box = $('#notesPane');
   if (!box || !notesOpen) return;
   const d = vault.byId(notesDocId);
   const title = $('#notesTitle');
   if (title) title.textContent = d ? ('◉ NOTES — ' + vault.titleOf(d)) : '◉ NOTES';
+  try { // APA citation under the header: filename stays above, reference mined from the doc
+    const cw = $('#notesCiteWrap'), ce = $('#notesCite');
+    if (cw && ce) {
+      if (d) { ce.innerHTML = docApaHtml(d); ce.dataset.plain = docApaText(d); cw.hidden = false; if (d.origKey && !d.citeMeta) { try { resolveCiteMeta(d.id); } catch {} } }
+      else { ce.innerHTML = ''; ce.dataset.plain = ''; cw.hidden = true; }
+    }
+  } catch {}
   const auto = $('#notesAutoCk');
   if (auto && document.activeElement !== auto) auto.checked = notesAuto !== false;
   const hd = $('#notesHeadCount');
   const log = d ? noteLogOf(d) : [];
+  if (d && notesDocId === shownId && log.some(e => e.spot && !e.page)) {
+    // heal pre-feature pinned entries: resolve their original page the first
+    // time their doc stands open in the reader (then they carry e.page like
+    // new entries — one findSpotRange each, persisted + synced once).
+    let healed = false;
+    for (const e of log) {
+      if (e.spot && !e.page) { const pg = pageOfSpotInReader(e.spot, String(e.text || '').length); if (pg) { e.page = pg; healed = true; } }
+    }
+    if (healed) { try { vault.persist(); } catch {} try { markBackupDirty(); } catch {} try { syncNoteKin(d.id); } catch {} }
+  }
   if (hd) hd.textContent = d ? (log.length ? `${log.length} ${log.length === 1 ? 'entry' : 'entries'}` : 'empty') : '';
   const list = $('#notesList');
   if (list) {
     list.innerHTML = d ? (log.length ? log.map((e, i) =>
-      `<div class="ne${e.spot ? ' pinned' : ''}"${e.spot ? ` data-nejump="${esc(e.id)}" title="Jump to its passage in the body"` : ''}><div class="ne-head"><span class="ne-num">#${i + 1} · ${esc(notesEntryDate(e.at))}</span><button class="ne-x" data-ndel="${esc(e.id)}" title="Delete this note entry">×</button></div><div class="ne-text">${esc(e.text)}</div></div>`
-    ).join('') : '<div class="ne-empty">No notes on this document yet — write one below, highlight text in the body and send it here, or use the sticky square.</div>')
+      `<div class="ne${e.spot ? ' pinned' : ''}"${e.spot ? ` data-nejump="${esc(e.id)}" title="Jump to its passage in the body"` : ''}><div class="ne-head"><span class="ne-num">#${i + 1} · ${esc(notesEntryDate(e.at))}${esc(notePageLabel(d, e))}</span><button class="ne-x" data-ndel="${esc(e.id)}" title="Delete this note entry">×</button></div><div class="ne-text">${esc(e.text)}</div></div>`
+    ).join('') : '<div class="ne-empty">No notes on this document yet — write one below, highlight text in the body and send it here, drag the highlight straight into this pane, or use the sticky square.</div>')
     : '<div class="ne-empty">Open a document body to take notes.</div>';
   }
   const area = $('#notesArea');
@@ -2623,22 +2863,41 @@ function autoSaveNoteEntry() { // auto-save: pauses in typing land in ONE pendin
   const pend = d.notePending ? noteLogOf(d).find(e => e.id === d.notePending) : null;
   if (pend) {
     if (pend.text !== txt.slice(0, NOTE_MAX)) setNoteEntry(d.id, pend.id, txt);
+    tryAttachDropSpot(d, pend); // a highlight dropped into the composer pins the pending entry
   } else {
-    const e = addNoteEntry(d.id, txt); // persists + syncs kin + refreshes views
+    const e = addNoteEntry(d.id, txt, takeDropSpot(d.id)); // persists + syncs kin + refreshes views
     if (e) { d.notePending = e.id; notesSessionAuto = e.id; try { vault.persist(); } catch {} }
   }
+}
+function takeDropSpot(docId) { // consume the stashed composer-drop anchor for this doc's next entry
+  if (!notesDropSpot || notesDropSpot.docId !== docId) return null;
+  const sp = notesDropSpot.spot;
+  notesDropSpot = null;
+  return sp;
+}
+function tryAttachDropSpot(d, pend) { // pin the pending auto entry when its text came from a dropped highlight
+  if (!d || !pend || pend.spot) return;
+  if (!notesDropSpot || notesDropSpot.docId !== d.id) return;
+  const sp = takeDropSpot(d.id);
+  if (!sp) return;
+  pend.spot = sp;
+  try { vault.persist(); } catch {}
+  try { markBackupDirty(); } catch {}
+  try { syncNoteKin(d.id); } catch {}
+  try { refreshNoteViews(d.id); } catch {}
 }
 function saveNotesPane() { // manual push: the composed text becomes an entry now
   const area = $('#notesArea');
   const d = vault.byId(notesDocId);
   if (!d || !area) return;
   const txt = String(area.value || '');
+  const dropSp = takeDropSpot(d.id); // a highlight dropped into the composer pins this save
   if (d.notePending) {
     const pend = noteLogOf(d).find(e => e.id === d.notePending);
-    if (pend && txt.trim()) setNoteEntry(d.id, pend.id, txt);
+    if (pend && txt.trim()) { setNoteEntry(d.id, pend.id, txt); if (dropSp && !pend.spot) { pend.spot = dropSp; try { vault.persist(); } catch {} try { syncNoteKin(d.id); } catch {} } }
     else if (pend && !txt.trim()) deleteNoteEntry(d.id, pend.id);
     delete d.notePending;
-  } else if (txt.trim()) addNoteEntry(d.id, txt);
+  } else if (txt.trim()) addNoteEntry(d.id, txt, dropSp);
   else { toast('Nothing to save — write a note first'); return; }
   notesSessionAuto = null;
   try { delete d.noteDraft; } catch {}
@@ -2653,7 +2912,7 @@ function cancelNotesPane() { // discard the composed text (and this session's au
     try { deleteNoteEntry(d.id, notesSessionAuto); } catch {}
   }
   if (d) { try { delete d.noteDraft; } catch {} try { vault.persist(); } catch {} }
-  notesSessionAuto = null;
+  notesSessionAuto = null; notesDropSpot = null;
   const area = $('#notesArea'); if (area) area.value = '';
   closeNotesPane();
 }
@@ -2685,8 +2944,8 @@ function readReaderSelection() { // live reader selection + its creation anchor 
     return { text, spot: (spot && typeof spot === 'object') ? spot : null };
   } catch { return { text: '', spot: null }; }
 }
-function sendSelectionToNotes(full, spot) { // highlight text in the body -> append it as a note entry, pinned to its passage
-  const d = vault.byId(shownId);
+function sendSelectionToNotes(full, spot, docId) { // highlight text in the body -> append it as a note entry, pinned to its passage (pane sends pass their doc)
+  const d = vault.byId(docId || shownId);
   if (!d) { toast('Open a document body first — notes live on bodies'); return false; }
   let txt = String(full || ''), sp = (spot && typeof spot === 'object') ? spot : null;
   if (!txt.trim()) {
@@ -2699,6 +2958,57 @@ function sendSelectionToNotes(full, spot) { // highlight text in the body -> app
   if (!e) return false;
   toast(sp ? 'Sent to notes — its highlight stays in the body' : 'Sent to notes');
   return true;
+}
+function notesDropText(e) { // dragged text from a drop event (falls back to the dragstart stash)
+  let t = '';
+  try { t = String((e && e.dataTransfer && e.dataTransfer.getData('text/plain')) || ''); } catch {}
+  if (!t.trim() && dragNotePayload && dragNotePayload.text) t = String(dragNotePayload.text);
+  return t;
+}
+function fileDroppedHighlight(raw, targetId) { // drop a highlight onto the pane: file it as a pinned entry like the button
+  const d = vault.byId(targetId);
+  if (!d) { toast('Open a document body first — notes live on bodies'); return false; }
+  const txt = String(raw || '').trim();
+  if (!txt) { toast('Nothing to file — drag highlighted text from the body'); return false; }
+  let sp = null;
+  const sameDoc = dragNotePayload && dragNotePayload.docId === d.id;
+  if (sameDoc && dragNotePayload.spot && typeof dragNotePayload.spot === 'object') sp = dragNotePayload.spot;
+  else if (sameDoc || !dragNotePayload || !dragNotePayload.docId) {
+    const sn = txt.replace(/\s+/g, ' ').slice(0, 200); // bare snip still jumps + marks via text search when unique
+    if (sn.trim().length >= 2) sp = { snip: sn };
+  }
+  const e = addNoteEntry(d.id, txt.slice(0, NOTE_MAX), sp);
+  if (!e) return false;
+  toast(sp ? 'Dropped into notes — its highlight stays in the body' : 'Dropped into notes');
+  return true;
+}
+// highlight cue: the moment body text is highlighted, briefly float a
+// "Drag highlighted text to drop into NOTES pane" tip above the highlight.
+// pointer-events:none (CSS) so the drag itself never snags on it.
+function hideSelDropTip() {
+  try { clearTimeout(selTipTimer); } catch {}
+  try { const tip = $('#selDropTip'); if (tip) tip.hidden = true; } catch {}
+}
+function cueSelDropTip() {
+  const tip = $('#selDropTip'), root = $('#docBody');
+  if (!tip || !root) return;
+  let r = null;
+  try {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.anchorNode || !root.contains(sel.anchorNode) || (sel.focusNode && !root.contains(sel.focusNode))) return hideSelDropTip();
+    const txt = String(sel.toString() || '');
+    if (txt.trim().replace(/\s+/g, ' ').length < 3) return hideSelDropTip();
+    r = sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null;
+    if (!r || (!r.width && !r.height)) return hideSelDropTip();
+  } catch { return hideSelDropTip(); }
+  try {
+    clearTimeout(selTipTimer);
+    tip.style.left = Math.max(135, Math.min(window.innerWidth - 135, r.left + r.width / 2)) + 'px';
+    tip.hidden = false;
+    if (r.top >= 64) tip.style.top = Math.max(8, r.top - 46) + 'px';
+    else tip.style.top = Math.min(window.innerHeight - 60, r.bottom + 12) + 'px';
+    selTipTimer = setTimeout(hideSelDropTip, 2600);
+  } catch {}
 }
 // persistent note highlights: every sent passage stays marked in the open
 // reader while its entry lives (re-applied each render, like manual spots);
@@ -2713,6 +3023,102 @@ function markNoteSpots(d) {
     if (!r || r.collapsed) continue;
     wrapRangeText(root, r, 'note-mark', { 'data-noteid': e.id, title: 'Note highlight — click its box in the Notes pane to jump here' });
   }
+}
+// click a note box in the pane: jump the reader to the passage it was sent from
+// passage marks in any rendered copy of the body (reader, original overlay,
+// carousel pane): the same note-mark pills, resolved against that root.
+// dropPath drops the DOM path for foreign trees (carousel chunks);
+// atAdjust rebases a full-body stripped offset into chunk coordinates (the
+// overlay shares the reader's coordinates, so it passes 0).
+function markNoteSpotsIn(root, d, dropPath, atAdjust) {
+  if (!root || !d || !Array.isArray(d.noteLog)) return;
+  for (const e of d.noteLog) {
+    if (!e || !e.spot) continue;
+    let sp = e.spot;
+    if (typeof sp === 'object' && sp && (dropPath || atAdjust)) {
+      sp = { ...sp };
+      if (dropPath) delete sp.path;
+      if (atAdjust && isFinite(sp.at)) sp.at = Math.max(0, sp.at - atAdjust);
+    }
+    let r = null;
+    try { r = findSpotRange(root, sp, String(e.text || '').length); } catch { continue; }
+    if (!r || r.collapsed) continue;
+    try { wrapRangeText(root, r, 'note-mark', { 'data-noteid': e.id, title: 'Note highlight' }); } catch {}
+  }
+}
+function paneBaseAt(seg, ti) {
+  // stripped full-body offset where real page ti begins: preceding page prose
+  // plus every folio pill standing before it (the pane's own pill included,
+  // in the reader it stands right before the page prose).
+  try {
+    if (!seg || !Array.isArray(seg.segs)) return 0;
+    const norm = (s) => String(s || '').replace(/\s+/g, '');
+    const lab = (k) => String('p.' + (k + 1)).length;
+    let at = 0;
+    for (let k = 0; k < ti && k < seg.segs.length; k++) at += norm(seg.segs[k]).length + lab(k);
+    return at + (ti >= 0 ? lab(Math.min(Math.max(ti, 0), seg.count - 1)) : 0);
+  } catch { return 0; }
+}
+function paneSelectionSpot(root, text, baseAt, withPath) {
+  // creation anchor for a live selection inside an overlay/carousel pane:
+  // stripped offset rebased onto full-body coordinates (null baseAt gives a
+  // bare snip for unmapped chunks: jump by text search), plus the DOM path
+  // only when the pane shares the reader's exact tree (the overlay does).
+  try {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !root) return null;
+    const an = sel.anchorNode;
+    if (!an || !root.contains(an)) return null;
+    const snip = String(text != null ? text : sel.toString() || '').trim().replace(/\s+/g, ' ').slice(0, 200);
+    if (snip.length < 2) return null;
+    if (baseAt == null) return { snip };
+    const norm0 = (s) => String(s || '').replace(/\s+/g, '');
+    let at = 0;
+    try {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let tn;
+      while ((tn = walker.nextNode())) {
+        if (tn === an) { at += norm0(tn.textContent.slice(0, sel.anchorOffset)).length; break; }
+        at += norm0(tn.textContent).length;
+      }
+    } catch {}
+    const spot = { snip, at: (baseAt || 0) + at };
+    if (withPath) {
+      try {
+        const path = [];
+        let n = an, ok = true;
+        while (n && n !== root) { const p = n.parentNode; if (!p) { ok = false; break; } path.unshift([...p.childNodes].indexOf(n)); n = p; }
+        if (ok && n === root) { spot.path = path; spot.off = sel.anchorOffset; }
+      } catch {}
+    }
+    return spot;
+  } catch { return null; }
+}
+function cuePaneNoteTip(root) {
+  // settled highlight in the overlay/carousel: float the right-click tip
+  // above it (same element and timing as the reader's drag cue).
+  const tip = $('#selDropTip');
+  if (!tip) return;
+  if (!root) return hideSelDropTip();
+  let r = null;
+  try {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.anchorNode || !root.contains(sel.anchorNode) || (sel.focusNode && !root.contains(sel.focusNode))) return hideSelDropTip();
+    const txt = String(sel.toString() || '');
+    if (txt.trim().replace(/\s+/g, ' ').length < 3) return hideSelDropTip();
+    r = sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null;
+    if (!r || (!r.width && !r.height)) return hideSelDropTip();
+  } catch { return hideSelDropTip(); }
+  try {
+    clearTimeout(selTipTimer);
+    if (tip.dataset.orig == null) tip.dataset.orig = tip.textContent;
+    tip.textContent = 'Right-click the highlight to Send to notes (or drag it into the NOTES pane)';
+    tip.style.left = Math.max(135, Math.min(window.innerWidth - 135, r.left + r.width / 2)) + 'px';
+    tip.hidden = false;
+    if (r.top >= 64) tip.style.top = Math.max(8, r.top - 46) + 'px';
+    else tip.style.top = Math.min(window.innerHeight - 60, r.bottom + 12) + 'px';
+    selTipTimer = setTimeout(() => { hideSelDropTip(); try { if (tip.dataset.orig != null) tip.textContent = tip.dataset.orig; } catch {} }, 2600);
+  } catch {}
 }
 // click a note box in the pane: jump the reader to the passage it was sent from
 function jumpToNoteSpot(entryId) {
@@ -4487,6 +4893,37 @@ function cloneNoteLog(log) { // deep copy (spots carry a DOM-path array — neve
     return c;
   });
 }
+// original page of a pinned passage: resolve a note/tag-style spot anchor to
+// the real folio page via the rendered markers (nearest .pagemark at/before
+// the passage start). DOM-based, so it stays exact whatever the intake
+// offsets and whitespace-stripping do — null when the doc has no pagination.
+function pageOfSpotInReader(spot, budget) {
+  try {
+    const root = document.getElementById('docBody');
+    if (!root || !spot) return null;
+    const len = (typeof budget === 'number' && budget > 0) ? Math.min(2000, Math.round(budget)) : 80;
+    const r = findSpotRange(root, spot, len);
+    if (!r || r.collapsed) return null;
+    let page = null;
+    const marks = root.querySelectorAll('.pagemark');
+    for (const m of marks) {
+      let c = 1;
+      try { c = r.comparePoint(m, 0); } catch { break; }
+      if (c > 0) break; // this marker stands past the passage start
+      const n = parseInt(m.dataset.page, 10);
+      if (isFinite(n) && n > 0) page = n;
+    }
+    return page;
+  } catch { return null; }
+}
+function notePageLabel(d, e) { // "p. 42" / "slide 3" / "sheet 3" for a highlight-sourced entry, else ''
+  try {
+    if (!e || !Number.isInteger(e.page) || e.page <= 0) return '';
+    const kind = (d && d.pageMap && d.pageMap.kind) || 'pdf';
+    const unit = (typeof pageUnitName === 'function') ? pageUnitName(kind) : 'page';
+    return unit === 'page' ? ` · p. ${e.page}` : ` · ${unit} ${e.page}`;
+  } catch { return ''; }
+}
 function addNoteEntry(id, text, spot) { // append one entry (Notes pane, send-to-notes)
   const d = vault.byId(id); if (!d) return null;
   text = String(text ?? '').slice(0, NOTE_MAX);
@@ -4494,6 +4931,10 @@ function addNoteEntry(id, text, spot) { // append one entry (Notes pane, send-to
   const e = { id: 'n_' + Math.random().toString(36).slice(2, 10), text, at: Date.now() };
   const csp = cleanNoteSpot(spot);
   if (csp) e.spot = csp; // pinned passage: the highlight persists while this entry lives
+  if (csp && id === shownId) { // reader shows this doc: also pin the real original page number
+    const pg = pageOfSpotInReader(csp, String(text).length);
+    if (pg) e.page = pg;
+  }
   noteLogOf(d).push(e);
   delete d.note;
   vault.persist();
@@ -4554,6 +4995,7 @@ function openNoteEditor(id, cx, cy) {
   noteEditId = id;
   const elog = noteLogOf(d);
   $('#noteEditTitle').textContent = '◉ ' + vault.titleOf(d) + (elog.length ? ` (${elog.length} ${elog.length === 1 ? 'entry' : 'entries'})` : '');
+  try { const ec = $('#noteEditCite'); if (ec) { ec.innerHTML = docApaHtml(d); ec.hidden = false; } } catch {} // mined APA reference under the title
   $('#noteEditText').value = getNote(id);
   $('#noteEditCount').textContent = String(getNote(id).length);
   $('#noteEditDelete').style.display = getNote(id) ? '' : 'none';
@@ -4581,6 +5023,7 @@ function renderNotePop(editing) {
   const countLine = log.length > 1 ? `<div class="np-count">${log.length} entries in the shared notepad</div>` : '';
   if (editing || !note) {
     box.innerHTML = `<div class="np-head"><span class="np-title">◉ ${esc(vault.titleOf(d))}</span><span class="np-cap" data-np="close">✕</span></div>` +
+      `<div class="np-cite" data-np="copycite" title="APA reference for this document - click to copy">${docApaHtml(d)}</div>` +
       `<textarea class="np-area" id="notePopText" maxlength="${NOTE_MAX}" placeholder="2000 characters max…">${esc(note)}</textarea>` +
       `<div class="np-count"><span id="notePopCount">${note.length}</span>/${NOTE_MAX}</div>` + countLine +
       `<div class="rowbtns"><button class="btn" data-np="save">Save</button><button class="btn" data-np="close">Cancel</button></div>`;
@@ -4591,7 +5034,162 @@ function renderNotePop(editing) {
     }
   } else {
     box.innerHTML = `<div class="np-head"><span class="np-title">◉ ${esc(vault.titleOf(d))}</span><span class="np-cap" data-np="copy">copy</span><span class="np-cap danger" data-np="del">delete</span><span class="np-cap" data-np="edit">edit</span><span class="np-cap" data-np="pane">notes pane</span><span class="np-cap" data-np="close">✕</span></div>` +
+      `<div class="np-cite" data-np="copycite" title="APA reference for this document - click to copy">${docApaHtml(d)}</div>` +
       `<div class="np-text">${esc(note)}</div>` + countLine;
+  }
+}
+// Citation metadata from the ORIGINAL file (not the rendered text): PDFs
+// carry a document-info dict (+ XMP), Office files carry docProps/core.xml.
+// Resolved once per original (sidecar bytes are shared across lineage
+// copies), cached on the doc as d.citeMeta, then docApaInfo prefers it.
+const citeMetaCache = new Map(); // origKey -> cleaned meta ({} when the original has none)
+const citeMetaInflight = new Set(); // origKeys currently resolving
+// words that are never person names: placeholders, headings, title vocabulary.
+// Kills phantom "authors" mined from rendered text ("This Page" -> Page, T.).
+const CITE_NAME_STOP = new Set(('this,that,these,those,page,pages,left,right,blank,intentionally,introduction,chapter,section,figure,table,abstract,contents,volume,report,study,studies,document,documents,file,draft,final,note,notes,preface,foreword,appendix,index,part,edition,copy,cover,title,text,body,sheet,slides,slide,image,picture,photo,scan,' +
+'developing,development,potential,across,full,career,careers,guide,handbook,overview,summary,analysis,survey,research,science,sciences,business,management,health,education,national,international,global,world,new,complete,practical,ultimate,essential,primer,companion,paper,article,thesis,ebook,issue,number,magazine,newspaper,publishers,publishing,newsletter,workshop,fundamentals,student,students,teacher,school,course,lesson,history,law,medicine,engineering').split(','));
+// lowercase words allowed inside a person-name line (particles + connectors).
+// Title lines leak other lowercase words ("a", "of", "the") - names never do.
+const NAME_GLUE = new Set(['and', '&', 'de', 'van', 'von', 'der', 'den', 'la', 'le', 'du', 'del', 'della', 'di', 'da', 'das', 'do', 'dos', 'bin', 'ibn', 'al', 'el', 'y']);
+// shared person-name pattern: First [M.] [particle] Last - particles let
+// "Ludwig van Beethoven" parse as one person instead of no one.
+const CITE_WD = '[A-Z\u00C0-\u00DE][a-z\u00E0-\u00FE]+(?:-[A-Z\u00C0-\u00DE][a-z\u00E0-\u00FE]+)?';
+const CITE_TAIL = '((?:\\s+[A-Z]\\.?|\\s+(?:van|von|de|der|den|la|le|du|del|della|di|da|das|do|dos|bin|ibn|al|el|y))*\\s+' + CITE_WD + ')';
+function citeTailLast(tail) { // surname keeping particles ("van Beethoven"), dropping middle initials ("Q.")
+  const toks = String(tail || '').trim().split(/\s+/).filter(t => !/^[A-Z]\.?$/.test(t));
+  return toks.length ? toks.join(' ') : String(tail || '').trim().split(/\s+/).pop();
+}
+function cleanCiteNames(names) { // drop placeholder "people" (This Page, Left Blank) and fragments
+  return (Array.isArray(names) ? names : []).filter(a => {
+    const f = String((a && a.first) || '').toLowerCase().replace(/[^a-z\u00C0-\u00FF]/g, '');
+    const l = String((a && a.last) || '').toLowerCase().replace(/[^a-z\u00C0-\u00FF]/g, '');
+    return f.length >= 2 && l.length >= 2 && !CITE_NAME_STOP.has(f) && !CITE_NAME_STOP.has(l);
+  });
+}
+const CITE_SOFT_JUNK = /^(microsoft word|microsoft office|ms word|word|untitled|document\d*|adobe|acrobat|distiller|ghostscript|libreoffice|openoffice|apple|pages|pdf[^a-z]*|creator|producer|author)$/i;
+function splitCiteAuthors(s) { // embedded Author string -> [{first,last}]: "A. Smith; B. Jones", "Smith, A.", "A. Smith and B. Jones"
+  const out = [];
+  if (typeof s !== 'string' || !s.trim()) return out;
+  const chunks = s.split(/\s*;\s*/).map(t => t.trim()).filter(Boolean);
+  const parts = (chunks.length > 1 ? chunks : s.split(/\s+(?:and|&)\s+/i).map(t => t.trim()).filter(Boolean)).slice(0, 8);
+  const WD = CITE_WD;
+  for (const p of parts) {
+    if (CITE_SOFT_JUNK.test(p.replace(/[0-9.]+/g, '').trim())) continue; // software names, not people
+    let m = p.match(new RegExp('^(' + WD + '),\\s+(' + WD + '(?:\\s+[A-Z]\\.?)?|[A-Z]\\.?(?:\\s+[A-Z]\\.?)?)$'));
+    if (m && !CITE_NAME_STOP.has(m[1].toLowerCase()) && !CITE_NAME_STOP.has(m[2].toLowerCase().replace(/[^a-z\u00C0-\u00FF]/g, ''))) { out.push({ first: m[2], last: m[1] }); continue; }
+    const fl = new RegExp('\\b(' + WD + ')' + CITE_TAIL + '\\b').exec(p);
+    if (fl) { out.push({ first: fl[1], last: citeTailLast(fl[2]) }); continue; }
+  }
+  return cleanCiteNames(out);
+}
+function cleanCiteMeta(m) { // validate shape (persisted rows, sidecar parses)
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return null;
+  const out = {};
+  if (typeof m.title === 'string' && m.title.trim().length >= 4) out.title = m.title.trim().slice(0, 300);
+  const au = cleanCiteNames(m.authors);
+  if (au.length) out.authors = au.slice(0, 8);
+  if (Number.isInteger(m.year) && m.year >= 1500 && m.year <= new Date().getFullYear()) out.year = m.year;
+  return out;
+}
+async function citeMetaFromPdf(bytes) { // Title / Author / CreationDate from the real PDF dict (+ XMP)
+  const out = {};
+  let pdf = null;
+  try {
+    const pdfjs = await import('./vendor/pdf.mjs');
+    const lib = pdfjs.getDocument ? pdfjs : (pdfjs.default || {});
+    if (lib && lib.GlobalWorkerOptions && !lib.GlobalWorkerOptions.workerSrc) {
+      try { lib.GlobalWorkerOptions.workerSrc = vendorBase() + 'pdf.worker.js'; } catch {}
+    }
+    if (!lib.getDocument) return out;
+    pdf = await lib.getDocument({ data: bytes }).promise;
+    let info = null, xm = null;
+    try { const md = await pdf.getMetadata(); info = (md && md.info) || null; xm = (md && md.metadata) || null; } catch {}
+    const pick = (...vs) => { for (const v of vs) { const s = String(v == null ? '' : v).trim(); if (s) return s; } return ''; };
+    let xTitle = '', xAuth = '';
+    try { if (xm && xm.get) { xTitle = String(xm.get('dc:title') || '').trim(); xAuth = String(xm.get('dc:creator') || '').trim(); } } catch {}
+    let title = pick(xTitle, info && info.Title).replace(/^(Microsoft Word\s*-\s*|Word\s*-\s*)/i, '').trim();
+    if (title && title.length >= 4 && !CITE_SOFT_JUNK.test(title.replace(/\.[a-z0-9]+$/i, '').trim()) && !/^untitled$/i.test(title)) out.title = title.slice(0, 300);
+    const au = splitCiteAuthors(pick(info && info.Author, xAuth));
+    if (au.length) out.authors = au;
+    const ym = String(pick(info && info.CreationDate, info && info.ModDate)).match(/D:(\d{4})|^(\d{4})/);
+    const y = ym ? +(ym[1] || ym[2]) : 0;
+    if (y >= 1500 && y <= new Date().getFullYear()) out.year = y;
+  } catch (e) { console.warn('cite metadata: PDF original parse skipped', (e && e.message) || e); }
+  finally { try { if (pdf && pdf.destroy) await pdf.destroy(); } catch {} }
+  return out;
+}
+async function citeMetaFromOffice(bytes) { // dc:title / dc:creator / dcterms:created from docProps/core.xml
+  const out = {};
+  try {
+    const fflate = await import('./vendor/fflate.mjs');
+    const unzip = fflate.unzipSync || (fflate.default || {}).unzipSync;
+    if (!unzip) return out;
+    const files = unzip(bytes);
+    const key = Object.keys(files).find(k => /(^|\/)docProps\/core\.xml$/.test(k));
+    if (!key) return out;
+    const xml = new DOMParser().parseFromString(new TextDecoder().decode(files[key]), 'application/xml');
+    if (!xml || xml.querySelector('parsererror')) return out;
+    const txt = (n) => {
+      const els = xml.getElementsByTagNameNS('*', n);
+      for (const el of els) { const s = String(el.textContent || '').trim(); if (s) return s; }
+      return '';
+    };
+    const title = txt('title').replace(/^(Microsoft Word\s*-\s*)/i, '').trim();
+    if (title && title.length >= 4 && !/^untitled$/i.test(title)) out.title = title.slice(0, 300);
+    const creator = txt('creator');
+    if (creator && !/microsoft|libreoffice|openoffice|google|apple/i.test(creator)) {
+      const au = splitCiteAuthors(creator);
+      if (au.length) out.authors = au;
+    }
+    const ym = (txt('created') || txt('modified')).match(/^(\d{4})/);
+    const y = ym ? +ym[1] : 0;
+    if (y >= 1500 && y <= new Date().getFullYear()) out.year = y;
+  } catch (e) { console.warn('cite metadata: office original parse skipped', (e && e.message) || e); }
+  return out;
+}
+async function resolveCiteMeta(id) { // fill d.citeMeta from the original bytes, then repaint the notes surfaces
+  let d = null;
+  try { d = vault.byId(id) || vault.byIdAnywhere(id); } catch { return; }
+  if (!d || d.citeMeta || !d.origKey) return;
+  const key = String(d.origKey);
+  if (citeMetaInflight.has(key)) return;
+  const hit = citeMetaCache.get(key);
+  if (hit) {
+    d.citeMeta = { ...hit };
+    try { vault.persist(); } catch {}
+    try { if (notesOpen && notesDocId === d.id) renderNotesPane(); } catch {}
+    return;
+  }
+  citeMetaInflight.add(key);
+  try {
+    let bytes = null;
+    try {
+      const rec = await origGet(key);
+      const blob = rec && rec.blob;
+      if (blob) bytes = new Uint8Array(await blob.arrayBuffer());
+    } catch {}
+    let meta = {};
+    if (bytes && bytes.length) {
+      const nm = String(d.name || '').toLowerCase();
+      if (/\.pdf$/.test(nm)) meta = await citeMetaFromPdf(bytes);
+      else if (/\.(docx?|pptx?|xlsx?)$/.test(nm)) meta = await citeMetaFromOffice(bytes);
+      // txt/md/csv/images: the stored text already IS the original - text mining stands
+    }
+    const clean = cleanCiteMeta(meta) || {};
+    citeMetaCache.set(key, clean);
+    const apply = (x) => { x.citeMeta = { ...clean }; };
+    apply(d);
+    try { for (const x of kinDocs(d.id)) if (x !== d) apply(x); } catch {} // same original, same citation
+    try { vault.persist(); } catch {}
+    try { markBackupDirty(); } catch {}
+    if (notesOpen && notesDocId === id) { try { renderNotesPane(); } catch {} }
+  } catch (e) {
+    console.warn('cite metadata: original unreadable, staying with text-mined reference', (e && e.message) || e);
+    citeMetaCache.set(key, {});
+    d.citeMeta = {};
+    try { vault.persist(); } catch {}
+  } finally {
+    citeMetaInflight.delete(key);
   }
 }
 async function copyNotePop() {
@@ -4736,6 +5334,7 @@ const HOWSTART_DEFAULT = [
   '4 · Start something completely separate. Click the dashed “+” box that sits beside — outside — your project\u2019s cluster of tabs. That creates a brand-new, standalone universe: separate, and not associated with the current project cluster.',
   '5 · Copy single things easily. Right-click any body (or a box-selected bunch of bodies) and choose “⤓ Copy to …” to send it straight into any other tab, wherever that tab lives. Copies only — the originals never move.',
   '6 · Copy everything at once. Right-click a tab and choose “⧉ Copy all content”. Then either right-click the destination tab and choose “⤓ Paste …”, or simply right-click its empty canvas and choose “⤓ Paste …” there. Whole canvases travel too: click the small “save project” label on a tab to keep a backup copy on your computer, then “Open Saved Project” in the left pane to merge it into any tab — so nothing is ever stuck.',
+  'NOTE: ALWAYS SAVE YOUR WORK BEFORE CLOSING THE VISIDOCSVERSE APP. CLICK ON "SAVE PROJECT" (SAVE IS TO YOUR HARD DRIVE). THAT WAY YOUR HARD WORK IS ALWAYS SAFE. IMPORTING A SAVED PROJECT IS EASY: CLICK ON "OPEN SAVED PROJECT" (LEFT PANE) AND SELECT THE FOLDER WHERE YOUR SAVED PROJECT LIVES ON YOUR HARD DRIVE.',
 ];
 let howStartText = null; // null = pristine default above
 try { const g = localStorage.getItem('visidocsverse.howStart'); if (typeof g === 'string' && g.trim()) howStartText = g; } catch { /* fresh prefs */ }
@@ -5193,13 +5792,13 @@ function closeSrcPop() { const box = $('#srcPop'); if (box) box.hidden = true; s
 // panes (the dim backdrop), ✕, Esc or re-pressing the toggle dismisses it.
 let carOpen = false, carDocId = null, carRaf = 0, carMoved = false, carIdx = 0, carPid = null, carSettleT = 0, carLive = false, carLiveT = 0, carZoom = 100; // carLive = track still gliding (center pane keeps its 3D pose until it rests); carZoom = pane enlargement %, 100-145 (header slider)
 let carPagesArr = null, carZoomOpen = false, carZoom2 = 100, carMediaFirst = false; // expander: chunk list for scroll-to-page, overlay state, overlay zoom % (session-only); media pane leads the track
-// split prose into ≥3 (max 10) page-sized chunks, paragraph-aware; short docs
-// still get 3 panes (wordiest page splits until they do).
+// split prose into ≥3 page-sized chunks, paragraph-aware, with no upper cap;
+// short docs still get 3 panes (wordiest chunk splits until they do).
 function carouselPages(text) {
   const raw = String(text || '').replace(/^#[^\n]*\n+/, '').trim();
   const words = raw ? raw.split(/\s+/).filter(Boolean) : [];
   const paras = raw ? raw.split(/\n+/).map(s => s.trim()).filter(Boolean) : [];
-  const n = Math.max(3, Math.min(10, Math.ceil(words.length / 150) || 3));
+  const n = Math.max(3, Math.ceil(words.length / 150) || 3);
   if (!paras.length) return ['', '', ''].slice(0, n);
   const per = Math.max(1, Math.ceil(words.length / n));
   const pages = [];
@@ -5220,6 +5819,26 @@ function carouselPages(text) {
   }
   return pages;
 }
+let carReal = null; // folio map for the open carousel (null = word chunks, no real pages)
+function pageSegments(text, pageMap) {
+  // folio split for the carousel: body (sans leading H1 title) cut at the
+  // recorded page starts. Returns {unit, count, segs} or null without a usable
+  // map — mirrors the reader's renderBody split so panes land on real pages.
+  const raw = String(text || '');
+  let h1cut = 0;
+  if (/^#\s+.*$/m.test(esc(raw))) {
+    const stripped = raw.replace(/^#\s+.*$/m, '').replace(/^\s+/, '');
+    h1cut = raw.length - stripped.length;
+  }
+  const body0 = h1cut ? raw.slice(h1cut) : raw;
+  const pm = validPageMap(pageMap, raw.length);
+  if (!pm) return null;
+  const adj = pm.starts.map(s => Math.max(0, s - h1cut)).filter(s => s < body0.length);
+  const uniq = [];
+  for (const s of adj) { if (!uniq.length || s > uniq[uniq.length - 1]) uniq.push(s); }
+  if (uniq.length < 2) return null;
+  return { unit: pageUnitName(pm.kind), count: uniq.length, segs: uniq.map((s, i) => body0.slice(s, i + 1 < uniq.length ? uniq[i + 1] : body0.length)) };
+}
 function openCarousel() {
   const d = vault.byId(shownId);
   if (!d) { toast('Open a document body first — the carousel reads the Active body'); return false; }
@@ -5228,10 +5847,12 @@ function openCarousel() {
   carDocId = d.id;
   $('#carTitle').textContent = vault.titleOf(d);
   track.innerHTML = '';
-  const pages = carouselPages(d.text);
+  const seg = pageSegments(d.text, d.pageMap); // real folio pages when the import mapped them
+  const pages = seg ? seg.segs : carouselPages(d.text);
   carPagesArr = pages;
   const hasMedia = !!mediaKind(d.name, '');
   carMediaFirst = hasMedia;
+  carReal = seg ? { count: seg.count, off: hasMedia ? 1 : 0, segs: seg.segs } : null; // center-pane readout + pane anchors map back to folio pages
   const hasText = !!String(d.text || '').trim();
   const hasFigs = ((d.images || []).some(im => im && im.key));
   // media docs with no readable text get no blank filler panes (pure audio =
@@ -5239,22 +5860,22 @@ function openCarousel() {
   const textPages = hasMedia ? (hasText ? pages : (hasFigs ? [''] : [])) : pages;
   const total = textPages.length + (hasMedia ? 1 : 0);
   let paneNo = 0;
-  const phead = () => `<div class="car-phead"><span class="car-ptitle">${esc(vault.titleOf(d))}</span><span class="car-pnum">${++paneNo} / ${total}</span><button class="car-expand" title="Open this page full-size — the whole original document, zoomable (double-click works too)">⤢</button></div>`;
+  const phead = (realN) => `<div class="car-phead"><span class="car-ptitle">${esc(vault.titleOf(d))}</span><span class="car-pnum">${realN != null ? `p. ${realN} / ${seg.count}` : `${++paneNo} / ${total}`}</span><button class="car-expand" title="Open this page full-size — the whole original document, zoomable (double-click works too)">⤢</button></div>`;
   // pane 1: the original itself — photo original / video / audio player, like the reader
   if (hasMedia) {
     const mp = document.createElement('div');
     mp.className = 'car-pane glass car-media';
-    mp.innerHTML = phead() + '<div class="car-text"></div>';
+    mp.innerHTML = phead() + '<div class="car-text" title="Highlight text, then right-click to send it to notes"></div>';
     track.appendChild(mp);
     try {
       const t = mp.querySelector('.car-text');
       hydrateMedia(t, d);
     } catch {}
   }
-  textPages.forEach((chunk) => {
+  textPages.forEach((chunk, ti) => {
     const pane = document.createElement('div');
     pane.className = 'car-pane glass';
-    pane.innerHTML = phead() + `<div class="car-text">${renderBody(chunk, null) || '<span style="color:var(--mut)">(this page is blank)</span>'}</div>`;
+    pane.innerHTML = phead(seg ? ti + 1 : null) + `<div class="car-text" title="Highlight text, then right-click to send it to notes">${renderBody(chunk, null) || '<span style="color:var(--mut)">(this page is blank)</span>'}</div>`;
     track.appendChild(pane);
   });
   // original-format pictures ride on the last pane, hydrated like the reader gallery
@@ -5270,6 +5891,17 @@ function openCarousel() {
       hydrateImages(track, d.images);
     }
     if (t) hydrateSheet(t, d); // spreadsheets preview as a table, original one click away
+  } catch {}
+  try {
+    const d2c = vault.byId(carDocId);
+    if (d2c) {
+      const troot = track.querySelectorAll('.car-pane .car-text');
+      troot.forEach((t2, pi) => {
+        const ti2 = pi - (carMediaFirst ? 1 : 0);
+        if (ti2 < 0) return; // media pane: player, not prose
+        markNoteSpotsIn(t2, d2c, true, seg ? paneBaseAt(seg, ti2) : 0);
+      });
+    }
   } catch {}
   wrap.hidden = false;
   carOpen = true;
@@ -5331,7 +5963,7 @@ function openCarZoom(i) {
   const wrap = $('#carZoomWrap'), body = $('#carZoomBody'), txt = $('#carZoomText');
   if (!wrap || !body || !txt) return false;
   $('#carZoomTitle').textContent = vault.titleOf(d);
-  txt.innerHTML = renderBody(d.text, d.images) || '';
+  txt.innerHTML = renderBody(d.text, d.images, d.pageMap) || '';
   try { hydrateImages(txt, d.images); } catch {}
   try { hydrateMedia(txt, d); } catch {}
   try { hydrateSheet(txt, d); } catch {}
@@ -5339,6 +5971,8 @@ function openCarZoom(i) {
   wrap.hidden = false;
   carZoomOpen = true;
   try { applyCarZoom2(); } catch {}
+  try { syncCarZoomPageBar(d); } catch {}
+  try { markNoteSpotsIn(txt, d, false, 0); } catch {} // sent highlights stay marked in the overlay too
   // land on the chunk this pane shows: the chunk head is matched against the
   // rendered text node stream (markup spans split nodes, so single-node search
   // fails) — every occurrence is collected and the one nearest this page's
@@ -5393,6 +6027,8 @@ function openCarZoom(i) {
     }
   } catch {}
   try { $('#carZoomClose').focus({ preventScroll: true }); } catch {}
+  try { syncCarZoomPageNow(); } catch {}
+  try { syncOrigTop(); } catch {}
   return true;
 }
 function closeCarZoom() {
@@ -5401,6 +6037,7 @@ function closeCarZoom() {
   const wrap = $('#carZoomWrap');
   try { if (wrap) wrap.querySelectorAll('video,audio').forEach(m => { try { m.pause(); } catch {} }); } catch {}
   if (wrap && !wrap.hidden) wrap.hidden = true;
+  try { const ob2 = $('#origTopBtn'); if (ob2) ob2.hidden = true; } catch {} // the Top tab never outlives its pane
   return true;
 }
 function syncCarBtn() {
@@ -5432,7 +6069,10 @@ function carLayout() {
     if (dd < bestDd) { bestDd = dd; best = i; }
   });
   const cc = $('#carCount');
-  if (cc) cc.textContent = (best + 1) + ' / ' + panes.length;
+  if (cc) {
+    const ri = carReal ? best - carReal.off : -1;
+    cc.textContent = (carReal && ri >= 0 && ri < carReal.count) ? ('p. ' + (ri + 1) + ' / ' + carReal.count) : ((best + 1) + ' / ' + panes.length);
+  }
   carIdx = best; // arrows step from here — deterministic paging, no snap engine
   // the rested center pane drops out of the 3D context (transform:none) so its
   // text rasterizes flat and crisp — GPU-perspective layers blur body copy.
@@ -5535,6 +6175,30 @@ function wireCarousel() {
   if (zw) zw.addEventListener('click', (e) => { if (e.target === zw) closeCarZoom(); });
   if (zr2 && !zr2.dataset.wired) { zr2.dataset.wired = '1'; zr2.addEventListener('input', () => setCarZoom2(+zr2.value)); }
   if (zb && !zb.dataset.wired) { zb.dataset.wired = '1'; zb.addEventListener('wheel', (e) => { if (e.ctrlKey) { e.preventDefault(); setCarZoom2(carZoom2 + (e.deltaY < 0 ? 10 : -10)); } }, { passive: false }); }
+  if (zb && !zb.dataset.origWired) { zb.dataset.origWired = '1'; zb.addEventListener('scroll', () => { try { syncOrigTop(); } catch {} try { syncCarZoomPageNow(); } catch {} }, { passive: true }); }
+  const otb = $('#origTopBtn');
+  if (otb && !otb.dataset.wired) { otb.dataset.wired = '1'; otb.onclick = () => {
+    try { const b2 = $('#carZoomBody'); if (b2) { try { b2.scrollTo({ top: 0, behavior: 'auto' }); } catch {} b2.scrollTop = 0; } } catch { try { $('#carZoomBody').scrollTop = 0; } catch {} }
+    try { syncOrigTop(); } catch {}
+    try { syncCarZoomPageNow(); } catch {}
+  }; }
+  const czt = $('#carZoomText');
+  if (czt && !czt.dataset.pmWired) { czt.dataset.pmWired = '1'; czt.addEventListener('click', (ev) => {
+    // folio marker: click copies a "Title, p. N" citation (same as the reader)
+    try {
+      const pmk = ev.target && ev.target.closest ? ev.target.closest('.pagemark') : null;
+      if (pmk) {
+        const np = pmk.dataset.page || '?';
+        const zt2 = ($('#carZoomTitle') && $('#carZoomTitle').textContent) || 'document';
+        const cite = zt2 + ', p. ' + np;
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(cite).then(() => toast('Citation copied: ' + cite), () => toast(cite, 4000));
+          else toast(cite, 4000);
+        } catch { toast(cite, 4000); }
+      }
+    } catch {}
+  }); }
+  window.addEventListener('resize', () => { try { syncOrigTop(); } catch {} });
   window.addEventListener('resize', () => { if (carOpen) carLayout(); });
 }
 // manual-spot plumbing: locate a creation anchor in the rendered reader text
@@ -6306,6 +6970,108 @@ function syncNotesTop() {
   b.hidden = !(open && (list.scrollTop || 0) > 64);
   if (!b.hidden) placeNotesTop();
 }
+// original-pane back-to-top tab: appears once the whole-original overlay is
+// scrolled down, parked at the card's bottom-right; vanishes at the top.
+function placeOrigTop() {
+  const b = $('#origTopBtn'), c = $('#carZoomCard');
+  if (!b || b.hidden || !c) return;
+  const r = c.getBoundingClientRect();
+  const bw = b.offsetWidth, bh = b.offsetHeight;
+  b.style.left = Math.max(8, r.right - bw - 14) + 'px';
+  b.style.top = Math.max(8, Math.min(window.innerHeight - bh - 8, r.bottom - bh - 12)) + 'px';
+}
+function syncOrigTop() {
+  const b = $('#origTopBtn'), wrap = $('#carZoomWrap'), body = $('#carZoomBody');
+  if (!b || !wrap || !body) return;
+  const open = carZoomOpen && !wrap.hidden;
+  b.hidden = !(open && (body.scrollTop || 0) > 64);
+  if (!b.hidden) placeOrigTop();
+}
+let carZoomGeomToken = 0; // bumped whenever the original overlay body is rebuilt
+let carZoomGeomCache = { token: -1, offs: [], w: 0 }; // marker content-offsets for the live "on page N" readout
+function syncCarZoomPageBar(d) {
+  // original-overlay page bar: folio count, live position, jump, rebuild —
+  // same recipe as the reader's syncPageBar, scoped to #carZoomBody/Text.
+  const pb = $('#carZoomPageBar');
+  if (!pb) return;
+  carZoomGeomToken++; // the overlay body was just rebuilt — cached marker geometry is stale
+  const close = () => { pb.hidden = true; pb.innerHTML = ''; };
+  if (!d || !d.text) { close(); return; }
+  const pm = validPageMap(d.pageMap, String(d.text).length);
+  if (pm) {
+    const unit = pageUnitName(pm.kind);
+    const plural = pm.count === 1 ? '' : 's';
+    pb.hidden = false;
+    pb.innerHTML = `<span class="pg-info" title="Original ${unit}s recorded at import — markers in the text below name each one">▦ ${pm.count} original ${unit}${plural} · on ${unit} <b id="czNow">1</b></span>` +
+      (pm.count > 1 ? `<span class="pg-jump">jump to <input id="czJump" inputmode="numeric" autocomplete="off" aria-label="Go to original ${unit}" placeholder="1–${pm.count}"><button class="btn" id="czGo" title="Scroll to that original ${unit}">Go</button></span>` : '');
+    try {
+      const go = $('#czGo'), inp = $('#czJump');
+      const run = () => { try { gotoCarZoomPage(inp ? inp.value : 1); } catch {} };
+      if (go) go.onclick = (e) => { try { e.stopPropagation(); } catch {} run(); };
+      if (inp) inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); run(); } e.stopPropagation(); };
+    } catch {}
+    try { syncCarZoomPageNow(); } catch {}
+    return;
+  }
+  // no map: PDFs can rebuild it from the kept original bytes; anything else
+  // says so honestly (slides/sheets already carry their numbers as headers).
+  if (fileTypeKey(d.name) === 'pdf') {
+    pb.hidden = false;
+    pb.innerHTML = d.origKey
+      ? `<span class="pg-info">▦ page numbers not mapped for this import</span><button class="btn" id="czMap" title="Re-read the kept original PDF and map its real page numbers onto this text">Map pages</button>`
+      : `<span class="pg-info" title="The original file bytes were not kept for this body (older import or restored backup)">▦ no page map — re-import the PDF to enable page numbers</span>`;
+    try {
+      const mb = $('#czMap');
+      if (mb) mb.onclick = (e) => { try { e.stopPropagation(); } catch {} try { rebuildPageMap(d.id); } catch {} };
+    } catch {}
+    return;
+  }
+  close();
+}
+function syncCarZoomPageNow() {
+  // which original page is on screen in the overlay: the last folio marker
+  // at/above the overlay's scroll position (same recipe as the reader bar).
+  try {
+    const now = $('#czNow');
+    if (!now) return;
+    const sc = $('#carZoomBody');
+    const marks = [...document.querySelectorAll('#carZoomText .pagemark')];
+    if (!sc || !marks.length) { now.textContent = '1'; return; }
+    if (carZoomGeomCache.token !== carZoomGeomToken || carZoomGeomCache.offs.length !== marks.length || carZoomGeomCache.w !== sc.clientWidth) {
+      const sr = sc.getBoundingClientRect(), top = sc.scrollTop || 0;
+      carZoomGeomCache = { token: carZoomGeomToken, w: sc.clientWidth, offs: marks.map(m => m.getBoundingClientRect().top - sr.top + top) };
+    }
+    const top = sc.scrollTop || 0;
+    let cur = 1;
+    for (let i = 0; i < marks.length; i++) {
+      if (carZoomGeomCache.offs[i] <= top + 8) cur = Number(marks[i].dataset.page) || cur;
+      else break;
+    }
+    now.textContent = String(cur);
+  } catch {}
+}
+function gotoCarZoomPage(n) {
+  const marks = [...document.querySelectorAll('#carZoomText .pagemark')];
+  if (!marks.length) return false;
+  n = Math.max(1, Math.min(marks.length, Math.round(Number(n)) || 1));
+  const m = marks[n - 1];
+  // land the marker at the top of the overlay (not centered): the page below
+  // it is the one on screen, so the live "on page N" readout agrees.
+  try {
+    const sc = $('#carZoomBody');
+    if (sc) {
+      const sr = sc.getBoundingClientRect();
+      sc.scrollTop = Math.max(0, m.getBoundingClientRect().top - sr.top + (sc.scrollTop || 0) - 8);
+    } else m.scrollIntoView({ block: 'start' });
+  } catch { try { m.scrollIntoView({ block: 'start' }); } catch {} }
+  try {
+    m.classList.add('spot-flash');
+    setTimeout(() => { try { m.classList.remove('spot-flash'); } catch {} }, 1400);
+  } catch {}
+  try { syncCarZoomPageNow(); setTimeout(() => { try { syncCarZoomPageNow(); } catch {} }, 350); } catch {}
+  try { syncOrigTop(); } catch {}
+  return true;
+}
 function applyReaderFind() {
   unwrapFind();
   const root = $('#docBody');
@@ -6316,7 +7082,7 @@ function applyReaderFind() {
     while (walker.nextNode()) {
       const n = walker.currentNode;
       if (!n.nodeValue || !n.nodeValue.toLowerCase().includes(q)) continue;
-      if (n.parentElement && n.parentElement.closest && (n.parentElement.closest('.imggal') || n.parentElement.closest('.mediagal'))) continue;
+      if (n.parentElement && n.parentElement.closest && (n.parentElement.closest('.imggal') || n.parentElement.closest('.mediagal') || n.parentElement.closest('.pagemark'))) continue;
       nodes.push(n);
     }
       for (const n of nodes) {
@@ -6499,6 +7265,7 @@ function renderGeneral() {
     $('#docBody').innerHTML = `<span class="ovNote">${ovBlurb('ovNoCanvas')}</span>`;
     $('#docLinks').innerHTML = '';
     try { syncDocActionButtons(); } catch {} // the find bar stays parked even here
+    try { syncPageBar(null); } catch {} // no doc — no folio bar
     try { applyReaderFind(); } catch {} // rebuild highlights for the hint text
     try { syncResizeHandle(); } catch {} try { syncNotesPaneDoc(); } catch {} // Notes book tab/pane follow the shown doc
     return;
@@ -6562,6 +7329,7 @@ function renderGeneral() {
     }
   }
   try { syncDocActionButtons(); } catch {} // overview: action buttons hide off-doc; the find bar stays
+  try { syncPageBar(null); } catch {} // list views carry no pagination
   try { applyReaderFind(); } catch {} // rebuild highlights for the overview prose
   try { syncResizeHandle(); } catch {} try { syncNotesPaneDoc(); } catch {} // Notes book tab/pane follow the shown doc
 }
@@ -6623,12 +7391,13 @@ function renderDoc() {
   }).join('') +
     `<button class="tagpill addtagbtn" data-addtag="${d.id}" title="Declare what this document/body belongs with by assigning a +#tag to it. Bodies sharing the tag pull together, share weight, match in search, and form one Tags-view node.">+ #tag</button>` +
     `<button class="tagpill notesbtn${noteCount(d.id) ? '' : ' note-zero'}" data-notes="${d.id}" title="Notes for this body — one shared notepad (sticky square, this button and the Notes book tab all show the same entries)">${noteCount(d.id) ? NOTE_SVG_FILLED : NOTE_SVG_EMPTY}notes ·${noteCount(d.id)}</button>`;
-  $('#docBody').innerHTML = renderBody(d.text, d.images);
+  $('#docBody').innerHTML = renderBody(d.text, d.images, d.pageMap);
   hydrateImages($('#docBody'), d.images);
   hydrateMedia($('#docBody'), d);
   try { markManualSpots(d); } catch {} // persistent gold markers on manual-tag spots
   try { markNoteSpots(d); } catch {} // sent highlights stay marked while their note entry lives
   try { applyReaderFind(); } catch {} // in-body find highlights survive re-renders
+  try { syncPageBar(d); } catch {} // folio bar: original-page count, position, jump
   // shared ground -> top hover spillover menu (up to 12 tethers, scrolls)
   const res = edgeInfo.filter(e => e.kind === 'topic' && (e.source === d.id || e.target === d.id)).slice(0, 12);
   const sg = $('#docShared');
@@ -6709,6 +7478,7 @@ function renderThemeDoc(th) {
     (ungrRows.length ? `<div class="bl-head">UNGROUNDED — ${ungrRows.length} <span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="ungrounded"><span class="help-text" data-help-text="ungrounded">${esc(helpTexts.ungrounded)}</span><button class="help-edit-btn" data-help-edit="ungrounded" title="Edit this explanation">✎ edit</button></div></span></div>` +
     ungrRows.map(o => blRow(o.id, '◉', `${esc(vault.titleOf(o))}<span>${docRowSub(o, bc)}</span>`, 'ungr-row', vault.titleOf(o), o.id)).join('') : '');
   try { syncDocActionButtons(); } catch {} // derived theme — action buttons hide; the find bar stays
+  try { syncPageBar(null); } catch {} // derived bodies carry no pagination
   try { applyReaderFind(); } catch {} // rebuild highlights for the theme summary
   try { syncResizeHandle(); } catch {} try { syncNotesPaneDoc(); } catch {} // Notes book tab/pane follow the shown doc
 }
@@ -6764,13 +7534,17 @@ function renderTagDoc(tg) {
   $('#docLinks').innerHTML = (tDocRows.length ? `<div class="bl-head">GROUNDED DOCUMENTS ("BODIES") — ${tDocRows.length} <span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="grounded"><span class="help-text" data-help-text="grounded">${esc(helpTexts.grounded)}</span><button class="help-edit-btn" data-help-edit="grounded" title="Edit this explanation">✎ edit</button></div></span> <button class="viewall" data-tvexit="1" title="Leave the tags view">Exit tags view</button></div>` : '') +
     tDocRows.map(o => blRow(o.id, '◉', `${esc(vault.titleOf(o))}<span>${docRowSub(o, tbc)}</span>`, '', vault.titleOf(o), o.id)).join('');
   try { syncDocActionButtons(); } catch {} // derived tag — action buttons hide; the find bar stays
+  try { syncPageBar(null); } catch {} // derived bodies carry no pagination
   try { applyReaderFind(); } catch {} // rebuild highlights for the tag summary
   try { syncResizeHandle(); } catch {} try { syncNotesPaneDoc(); } catch {} // Notes book tab/pane follow the shown doc
 }
 
-function renderBody(text, images) {
-  // strip a leading H1 (title is already in the header), light inline markup
-  let e = esc(text).replace(/^#\s+.*$/m, '').trim();
+function renderRichChunk(raw, stripH1) {
+  // the reader's inline-markup pipeline for one chunk of prose (one printed
+  // page when folio markers stand, the whole body otherwise).
+  let e = esc(raw);
+  if (stripH1) e = e.replace(/^#\s+.*$/m, '');
+  e = e.trim();
   e = e
     .replace(/\[\[([^\[\]]+?)\]\]/g, (m, inner) => {
       const parts = inner.split('|');
@@ -6779,13 +7553,227 @@ function renderBody(text, images) {
     .replace(/(^|\s)#([A-Za-z0-9_\-/]{2,})/g, '$1<span class="tag" data-tag="$2">#$2</span>')
     .replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
-  const body = e || '<span style="color:var(--mut)">Empty body.</span>';
+  return e;
+}
+function validPageMap(pm, textLen) {
+  // sanitized copy of a doc's page map, or null: monotonic starts inside the
+  // text, at least 2 pages (a single page needs no folio markers).
+  try {
+    if (!pm || typeof pm !== 'object') return null;
+    if (pm.kind !== 'pdf' && pm.kind !== 'slides' && pm.kind !== 'sheets') return null;
+    const starts = (Array.isArray(pm.starts) ? pm.starts : [])
+      .map(s => Math.round(Number(s))).filter(s => isFinite(s) && s >= 0 && s < textLen);
+    const mono = [];
+    for (const s of starts) { if (!mono.length || s > mono[mono.length - 1]) mono.push(s); }
+    if (mono.length < 2) return null;
+    return { kind: pm.kind, count: mono.length, starts: mono };
+  } catch { return null; }
+}
+function pageUnitName(kind) {
+  return kind === 'slides' ? 'slide' : (kind === 'sheets' ? 'sheet' : 'page');
+}
+function pagemarkHtml(n, unit) {
+  // unobtrusive folio marker: ruled line + small label, click copies a
+  // "Title, p. N" citation. Find/highlight code skips these (applyReaderFind).
+  const u = unit === 'page' ? 'page' : unit;
+  return `<span class="pagemark" data-page="${n}" title="Original ${u} ${n} — click to copy a citation"><span class="pmark-rule"></span><span class="pmark-lab">p. ${n}</span><span class="pmark-rule"></span></span>`;
+}
+function renderBody(text, images, pageMap) {
+  const raw = String(text || '');
+  // strip a leading H1 first (title is already in the header), then segment
+  // what remains at the recorded page starts so markers never sit above the
+  // title or shift the H1 strip.
+  let h1cut = 0;
+  if (/^#\s+.*$/m.test(esc(raw))) {
+    const stripped = raw.replace(/^#\s+.*$/m, '').replace(/^\s+/, '');
+    h1cut = raw.length - stripped.length;
+  }
+  const body0 = h1cut ? raw.slice(h1cut) : raw;
+  const pm = validPageMap(pageMap, raw.length);
+  let prose = '';
+  if (pm) {
+    const adj = pm.starts.map(s => Math.max(0, s - h1cut)).filter(s => s < body0.length);
+    const uniq = [];
+    for (const s of adj) { if (!uniq.length || s > uniq[uniq.length - 1]) uniq.push(s); }
+    if (uniq.length >= 2) {
+      const unit = pageUnitName(pm.kind);
+      const chunks = [];
+      for (let i = 0; i < uniq.length; i++) {
+        const seg = body0.slice(uniq[i], i + 1 < uniq.length ? uniq[i + 1] : body0.length);
+        chunks.push(pagemarkHtml(i + 1, unit) + (renderRichChunk(seg, false) || `<span style="color:var(--mut)">(this ${unit} is blank in the extracted text)</span>`));
+      }
+      prose = chunks.join('');
+    }
+  }
+  if (!prose) prose = renderRichChunk(raw, true);
+  const body = prose || '<span style="color:var(--mut)">Empty body.</span>';
   if (!Array.isArray(images) || !images.length) return body;
   // embedded pictures ride below the prose (bytes hydrate in after render)
   return body + `<div class="imggal">` + images.filter(im => im && im.key).slice(0, 200).map(im => {
     const dim = (im.w && im.h) ? ` · ${im.w}×${im.h}` : '';
     return `<figure data-imgkey="${esc(im.key)}"><span class="imgph">loading image…</span><figcaption>${esc(im.cap || 'image')}${esc(dim)}</figcaption></figure>`;
   }).join('') + `</div>`;
+}
+// ---------- original-page bar: folio position, jump, rebuild ----------
+// The rendered body reflows (fonts, widths), so it cannot show real page
+// breaks by geometry — the pageMap (recorded at intake from the actual
+// pagination) is the source of truth, painted as markers above. This bar
+// names the count, tracks which original page is on screen, jumps to one,
+// and repairs legacy imports whose map predates this feature.
+function ensurePageBar() {
+  let pb = $('#pageBar');
+  if (pb) return pb;
+  const fb = $('#findBar');
+  if (!fb || !fb.parentNode) return null;
+  pb = document.createElement('div');
+  pb.id = 'pageBar';
+  pb.hidden = true;
+  fb.parentNode.insertBefore(pb, fb.nextSibling);
+  return pb;
+}
+let pageGeomToken = 0; // bumped whenever the reader body is rebuilt
+let pageGeomCache = { token: -1, offs: [] }; // marker content-offsets for the live "on page N" readout
+function syncPageBar(d) {
+  const pb = ensurePageBar();
+  if (!pb) return;
+  pageGeomToken++; // the body was just rebuilt — cached marker geometry is stale
+  const close = () => { pb.hidden = true; pb.innerHTML = ''; };
+  if (!d || !d.text) { close(); return; }
+  const pm = validPageMap(d.pageMap, String(d.text).length);
+  if (pm) {
+    const unit = pageUnitName(pm.kind);
+    const plural = pm.count === 1 ? '' : 's';
+    pb.hidden = false;
+    pb.innerHTML = `<span class="pg-info" title="Original ${unit}s recorded at import — markers in the text below name each one">▦ ${pm.count} original ${unit}${plural} · on ${unit} <b id="pgNow">1</b></span>` +
+      (pm.count > 1 ? `<span class="pg-jump">jump to <input id="pgJump" inputmode="numeric" autocomplete="off" aria-label="Go to original ${unit}" placeholder="1–${pm.count}"><button class="btn" id="pgGo" title="Scroll to that original ${unit}">Go</button></span>` : '');
+    try {
+      const go = $('#pgGo'), inp = $('#pgJump');
+      const run = () => { try { gotoPage(inp ? inp.value : 1); } catch {} };
+      if (go) go.onclick = (e) => { try { e.stopPropagation(); } catch {} run(); };
+      if (inp) inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); run(); } e.stopPropagation(); };
+    } catch {}
+    try { syncPageNow(); } catch {}
+    return;
+  }
+  // no map: PDFs can rebuild it from the kept original bytes; anything else
+  // says so honestly (slides/sheets already carry their numbers as headers).
+  if (fileTypeKey(d.name) === 'pdf') {
+    pb.hidden = false;
+    pb.innerHTML = d.origKey
+      ? `<span class="pg-info">▦ page numbers not mapped for this import</span><button class="btn" id="pgMap" title="Re-read the kept original PDF and map its real page numbers onto this text">Map pages</button>`
+      : `<span class="pg-info" title="The original file bytes were not kept for this body (older import or restored backup)">▦ no page map — re-import the PDF to enable page numbers</span>`;
+    try {
+      const mb = $('#pgMap');
+      if (mb) mb.onclick = (e) => { try { e.stopPropagation(); } catch {} try { rebuildPageMap(d.id); } catch {} };
+    } catch {}
+    return;
+  }
+  close();
+}
+function syncPageNow() {
+  // which original page is on screen: the last folio marker at/above the
+  // reader's scroll position. Runs on scroll + after every render.
+  // Geometry via getBoundingClientRect (markers' offsetParent is the pane,
+  // not the scroller, so offsetTop can't be compared to scrollTop directly);
+  // offsets are cached per body build so scrolling stays cheap on big books.
+  try {
+    const now = $('#pgNow');
+    if (!now) return;
+    const sc = $('#docScroll');
+    const marks = [...document.querySelectorAll('#docBody .pagemark')];
+    if (!sc || !marks.length) { now.textContent = '1'; return; }
+    if (pageGeomCache.token !== pageGeomToken || pageGeomCache.offs.length !== marks.length || pageGeomCache.w !== sc.clientWidth) {
+      const sr = sc.getBoundingClientRect(), top = sc.scrollTop || 0;
+      pageGeomCache = { token: pageGeomToken, w: sc.clientWidth, offs: marks.map(m => m.getBoundingClientRect().top - sr.top + top) };
+    }
+    const top = sc.scrollTop || 0;
+    let cur = 1;
+    for (let i = 0; i < marks.length; i++) {
+      if (pageGeomCache.offs[i] <= top + 8) cur = Number(marks[i].dataset.page) || cur;
+      else break;
+    }
+    now.textContent = String(cur);
+  } catch {}
+}
+function gotoPage(n) {
+  const marks = [...document.querySelectorAll('#docBody .pagemark')];
+  if (!marks.length) return false;
+  n = Math.max(1, Math.min(marks.length, Math.round(Number(n)) || 1));
+  const m = marks[n - 1];
+  // land the marker at the top of the reader (not centered): the page below
+  // it is the one on screen, so the live "on page N" readout agrees.
+  try {
+    const sc = $('#docScroll');
+    if (sc) {
+      const sr = sc.getBoundingClientRect();
+      sc.scrollTop = Math.max(0, m.getBoundingClientRect().top - sr.top + (sc.scrollTop || 0) - 8);
+    } else m.scrollIntoView({ block: 'start' });
+  } catch { try { m.scrollIntoView({ block: 'start' }); } catch {} }
+  try {
+    m.classList.add('spot-flash');
+    setTimeout(() => { try { m.classList.remove('spot-flash'); } catch {} }, 1400);
+  } catch {}
+  try { syncPageNow(); setTimeout(() => { try { syncPageNow(); } catch {} }, 350); } catch {}
+  return true;
+}
+async function rebuildPageMap(id) {
+  // legacy PDFs imported before page maps existed: re-read the KEPT original
+  // bytes page by page, then align each page's head against the stored text
+  // (sequential search, so repeated boilerplate can't misroute). Needs the
+  // original sidecar bytes — without them, only a re-import can help.
+  const d = vault.byIdAnywhere(id);
+  if (!d) return;
+  if (fileTypeKey(d.name) !== 'pdf') { toast('Page mapping is for PDFs — slides and sheets already carry their numbers as headers'); return; }
+  if (!d.origKey) { toast('Original file not kept for this body (older import or restored backup) — re-import the PDF to enable page numbers', 6000); return; }
+  toast('Mapping original pages…');
+  try {
+    const rec = await origGet(d.origKey);
+    const blob = rec && rec.blob;
+    if (!blob || !(blob.size > 0)) throw new Error('kept original is unreadable');
+    const pdfjs = await import('./vendor/pdf.mjs');
+    const lib = pdfjs.getDocument ? pdfjs : (pdfjs.default || {});
+    if (lib?.GlobalWorkerOptions && !lib.GlobalWorkerOptions.workerSrc) {
+      try { lib.GlobalWorkerOptions.workerSrc = vendorBase() + 'pdf.worker.js'; } catch {}
+    }
+    if (!lib.getDocument) throw new Error('PDF engine did not load.');
+    const pdf = await lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
+    const total = pdf.numPages || 0;
+    if (!total) throw new Error('that PDF has no pages');
+    const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+    const stored = String(d.text || '');
+    const starts = [];
+    let cursor = 0, hits = 0;
+    for (let p = 1; p <= total; p++) {
+      let s = '';
+      try { s = ((await (await pdf.getPage(p)).getTextContent()).items || []).map(i => i.str || '').join(' '); } catch { s = ''; }
+      const probe = norm(s).slice(0, 48);
+      if (probe.length < 12) continue; // blank/unreadable page — no anchor, keep counting
+      const at = stored.indexOf(probe, cursor);
+      if (at < 0) continue; // text drifted (OCR tail edits etc.) — skip, don't guess
+      // anchor at the page's true start: back up past the join whitespace the
+      // intake inserted between pages (stored region matches probe here).
+      starts.push(at);
+      cursor = at + probe.length;
+      hits++;
+    }
+    try { await pdf.destroy(); } catch {}
+    if (!starts.length || hits < Math.max(1, Math.round(total * 0.5))) {
+      toast('Could not align enough pages (' + hits + '/' + total + ') — the stored text may predate this original; re-import the PDF instead', 7000);
+      return;
+    }
+    starts.sort((a, b) => a - b);
+    const uniq = starts.filter((s, i) => i === 0 || s > starts[i - 1]);
+    d.pageMap = { kind: 'pdf', count: uniq.length, starts: uniq };
+  try { vault.persist(); } catch {}
+  try { markBackupDirty(); } catch {}
+  try { syncPageBar(d); } catch {}
+  try { if (carZoomOpen) { const cb2 = $('#carZoomBody'), ct2 = $('#carZoomText'); if (cb2 && ct2) { const st2 = cb2.scrollTop || 0; ct2.innerHTML = renderBody(d.text, d.images, d.pageMap) || ''; try { hydrateImages(ct2, d.images); } catch {} try { hydrateMedia(ct2, d); } catch {} try { hydrateSheet(ct2, d); } catch {} try { const mg2 = ct2.querySelector('.mediagal'); if (mg2 && ct2.firstChild !== mg2) ct2.insertBefore(mg2, ct2.firstChild); } catch {} cb2.scrollTop = st2; } try { syncCarZoomPageBar(d); } catch {} } } catch {}
+  try { renderDoc(); } catch {}
+    toast('Mapped ' + uniq.length + ' original pages — folio markers now stand in the text');
+  } catch (e) {
+    console.warn('page-map rebuild failed', (e && e.message) || e);
+    toast('Page mapping failed (' + ((e && e.message) || 'unreadable original') + ') — re-import the PDF instead', 6000);
+  }
 }
 // fill the gallery placeholders with sidecar bytes (object URLs cached per
 // session; misses mean a backup restored the manifest without the bytes).
@@ -6990,8 +7978,9 @@ function intakeAllowed(f) {
   if (ty === 'image/jpeg' || ty === 'image/png') return true;
   return false;
 }
-async function readFileAsText(f) {
+async function readFileAsText(f, onStep) {
   const nm = cleanName(f);
+  lastPageStarts = null; lastPageKind = null; // reset: each branch below records its own pagination (or none)
   // video + audio bodies: no transcript is extracted — the reader plays the
   // file itself (bytes live in the originals sidecar). The text below is a
   // plain-language manifest so filename words, tags and notes still tether,
@@ -7013,15 +8002,36 @@ async function readFileAsText(f) {
       const data = new Uint8Array(await f.arrayBuffer());
       if (!data.length) throw new Error('That file looks empty (0 bytes).');
       const pdf = await getDocument({ data }).promise;
-      let out = [];
-      for (let p = 1; p <= Math.min(pdf.numPages, 60); p++) {
+      // whole-document import: every page in order — an offline app must not
+      // silently drop the back of a book. The loop still stops past the
+      // intake text cap (below) so a pathological 10,000-page file can't
+      // wedge the tab; progress ticks every 20 pages so big books don't
+      // look stuck.
+      let out = [], outLen = 0;
+      const total = pdf.numPages || 0;
+      for (let p = 1; p <= total; p++) {
         const tc = await (await pdf.getPage(p)).getTextContent();
-        out.push((tc.items || []).map(i => i.str || '').join(' '));
+        const s = (tc.items || []).map(i => i.str || '').join(' ');
+        out.push(s); outLen += s.length;
+        if (typeof onStep === 'function' && (p % 20 === 0 || p === total)) {
+          try { onStep(p, total); } catch {}
+        }
+        if (outLen > INTAKE_TEXT_MAX + 50000) break;
       }
       try { await pdf.destroy(); } catch { /* done anyway */ }
-      const text = out.join('\n\n').trim();
+      const rawJoined = out.join('\n\n');
+      const text = rawJoined.trim();
+      // real pagination for the reader's folio markers: each page's start in
+      // the returned text (rebased past the trimmed leading whitespace).
+      if (text) {
+        const trimLead = rawJoined.length - rawJoined.replace(/^\s+/, '').length;
+        lastPageStarts = pageStartsFromLengths(out.map(s => s.length), 2).map(s => Math.max(0, s - trimLead));
+        lastPageKind = 'pdf';
+      } else { lastPageStarts = null; lastPageKind = null; }
       // image-only (scanned) PDF: no text layer — return empty and let the
       // page renders below carry its words into OCR (locked files throw above).
+      // (Scanned books still cite real pages: every OCR chunk + gallery
+      // figure carries its printed 'Page N' caption.)
       if (!text) return '';
       return text;
     } catch (e) {
@@ -7091,6 +8101,12 @@ async function readFileAsText(f) {
         if (csv && csv.trim()) parts.push('# Sheet: ' + name + '\n\n' + csv.trim());
       }
       const text = parts.join('\n\n').trim();
+      if (text) {
+        const rawJ = parts.join('\n\n');
+        const trimLead = rawJ.length - rawJ.replace(/^\s+/, '').length;
+        lastPageStarts = pageStartsFromLengths(parts.map(s => s.length), 2).map(s => Math.max(0, s - trimLead));
+        lastPageKind = 'sheets';
+      } else { lastPageStarts = null; lastPageKind = null; }
       // data-free sheets can still carry pictures (screenshots pasted into
       // cells) — return empty and let those carry the words into OCR.
       if (!text) return '';
@@ -7118,6 +8134,12 @@ async function readFileAsText(f) {
         if (texts.join(' ').trim()) parts.push('# Slide ' + (i + 1) + '\n\n' + texts.join(' ').trim());
       });
       const text = parts.join('\n\n').trim();
+      if (text) {
+        const rawJ = parts.join('\n\n');
+        const trimLead = rawJ.length - rawJ.replace(/^\s+/, '').length;
+        lastPageStarts = pageStartsFromLengths(parts.map(s => s.length), 2).map(s => Math.max(0, s - trimLead));
+        lastPageKind = 'slides';
+      } else { lastPageStarts = null; lastPageKind = null; }
       // image-only deck: no text runs — return empty and let the slide
       // pictures below carry its words into OCR (corrupt files throw above).
       if (!text) return '';
@@ -7223,9 +8245,30 @@ async function mediaDocText(f, nm, kind) {
 // sheets import like slide pictures). Plain text/CSV carries no pictures here.
 // Returns [{blob, cap}] — full-size blobs; the caller downscales + stores.
 // Never throws: text import must survive image failure.
-// Caps keep one monster file from stalling intake.
-const IMG_MAX_DOCX = 40, IMG_MAX_PPTX = 40, IMG_MAX_XLSX = 40, IMG_MAX_PDF_PAGES = 20;
+// Bounds keep one monster file from stalling intake. Text imports in full
+// (whole books — no 60-page / 60k-char cut); INTAKE_TEXT_MAX is only the
+// pathological-file safety valve, and the persist layer compresses past the
+// localStorage quota so full texts still restore after reload.
+const IMG_MAX_DOCX = 40, IMG_MAX_PPTX = 40, IMG_MAX_XLSX = 40, IMG_MAX_PDF_PAGES = 250;
+const INTAKE_TEXT_MAX = 2000000; // chars of extracted text kept per file (~3000 book pages)
 const IMG_MAX_DIM = 1200; // stored pictures shrink to fit inside this (px)
+// ---------- original-page capture (side-channel for the intake below) ----------
+// readFileAsText returns plain text, but PDFs/slides/sheets also carry REAL
+// pagination the reader must be able to cite. The extractor records it here:
+// lastPageStarts = char offsets where each page/slide/sheet begins in the
+// returned text (join-aware), lastPageKind = 'pdf'|'slides'|'sheets'|null.
+// ingestFiles consumes + clears both right after the call and rebases them
+// onto the final stored text (title prefix + OCR tail included).
+let lastPageStarts = null, lastPageKind = null;
+function pageStartsFromLengths(lens, sepLen) {
+  const starts = [];
+  let at = 0;
+  for (let i = 0; i < lens.length; i++) {
+    starts.push(at);
+    at += lens[i] + (i < lens.length - 1 ? sepLen : 0);
+  }
+  return starts;
+}
 const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 async function zipFiles(buf) {
   const fflate = await import('./vendor/fflate.mjs');
@@ -7372,7 +8415,7 @@ async function extractXlsxImages(files) {
   });
   return out;
 }
-async function extractPdfImages(buf) {
+async function extractPdfImages(buf, onStep) {
   const pdfjs = await import('./vendor/pdf.mjs');
   const lib = pdfjs.getDocument ? pdfjs : (pdfjs.default || {});
   if (!lib.getDocument) return [];
@@ -7385,8 +8428,9 @@ async function extractPdfImages(buf) {
   const pdf = await lib.getDocument({ data: new Uint8Array(buf) }).promise;
   const out = [];
   try {
-    const total = Math.min(pdf.numPages, 60);
+    const total = Math.min(pdf.numPages, IMG_MAX_PDF_PAGES);
     for (let p = 1; p <= total && out.length < IMG_MAX_PDF_PAGES; p++) {
+      if (typeof onStep === 'function' && (p % 20 === 0 || p === total)) { try { onStep(p, total); } catch {} }
       const page = await pdf.getPage(p);
       let hasImg = false;
       try {
@@ -7430,7 +8474,7 @@ async function downscaleImage(blob) {
   const jpg = await new Promise(r => { try { cv.toBlob(b => r(b), 'image/jpeg', 0.85); } catch { r(null); } });
   return { blob: (jpg && jpg.size > 0) ? jpg : blob, w, h };
 }
-async function extractFileImages(f) {
+async function extractFileImages(f, onStep) {
   try {
     const nm = cleanName(f);
     if (/\.docx$/i.test(nm)) {
@@ -7441,7 +8485,7 @@ async function extractFileImages(f) {
       const files = await zipFiles(await f.arrayBuffer());
       return (await extractPptxImages(files)).map((im) => ({ blob: new Blob([im.bytes], { type: im.mime || 'application/octet-stream' }), cap: im.alt || 'Slide image' }));
     }
-    if (/\.pdf$/i.test(nm)) return await extractPdfImages(await f.arrayBuffer());
+    if (/\.pdf$/i.test(nm)) return await extractPdfImages(await f.arrayBuffer(), onStep);
     if (/\.xlsx?$/i.test(nm)) {
       const files = await zipFiles(await f.arrayBuffer());
       return (await extractXlsxImages(files)).map((im) => ({ blob: new Blob([im.bytes], { type: im.mime || 'application/octet-stream' }), cap: im.alt || 'Sheet image' }));
@@ -7454,17 +8498,19 @@ async function extractFileImages(f) {
 // A diagram that says "mitochondria" should tether like the word typed out.
 // Each stored picture is OCR'd (tesseract.js, English, vendored local worker) and its
 // high-confidence words are appended to the doc text in a marked section — so
-// words, tags, search, and topic tethers all see them. Bounded (a few pictures
-// per file, per-picture timeout, confidence + length gates); any failure just
-// skips OCR while text + pictures still import.
+// words, tags, search, and topic tethers all see them. Foreground intake reads
+// the first pictures (bounded: count, per-picture timeout, confidence + length
+// gates); the rest queue for background reading (pumpOcrQueue) so whole books
+// get covered. Any failure just skips OCR while text + pictures still import.
 const OCR_MAX_IMAGES = 8, OCR_MIN_AREA = 8000, OCR_TIMEOUT_MS = 30000, OCR_MIN_CONF = 45, OCR_MAX_CHARS = 3000;
 const OCR_START_TIMEOUT_MS = 25000; // createWorker() has no built-in timeout — a stuck engine start parked whole intakes at "reading…", so race it and fail OCR fast (text still imports)
 let ocrFailedOnce = false; // engine failed: don't pay the load cost on every file
 async function ocrPictures(pics) { // [{blob, cap}] -> [{cap, text}] (high-confidence only)
   const due = (pics || []).slice(0, OCR_MAX_IMAGES);
-  if (!due.length || ocrFailedOnce) return [];
-  let worker = null;
   const found = [];
+  found.attemptedCount = 0;
+  if (!due.length || ocrFailedOnce) return found;
+  let worker = null;
   try {
     const { createWorker } = await import('./vendor/tesseract.mjs');
     // Absolute, same-origin-with-the-page URLs: the worker resolves its
@@ -7513,6 +8559,7 @@ async function ocrPictures(pics) { // [{blob, cap}] -> [{cap, text}] (high-confi
       throw e;
     }
     for (const pic of due) {
+      found.attemptedCount++;
       try {
         const job = worker.recognize(pic.blob);
         const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('OCR timed out')), OCR_TIMEOUT_MS));
@@ -7528,7 +8575,7 @@ async function ocrPictures(pics) { // [{blob, cap}] -> [{cap, text}] (high-confi
   } catch (e) {
     ocrFailedOnce = true;
     console.warn('OCR unavailable — pictures still import, just untagged', (e && e.message) || e);
-    return [];
+    return found;
   } finally {
     try { worker && await worker.terminate(); } catch { /* already gone */ }
   }
@@ -7549,8 +8596,14 @@ async function backfillOcr() {
     let sealed = false;
     const due = [];
     for (const d of docs) {
-      if (d.ocrDone === true) continue;
-      if (!d.images || !d.images.length || String(d.text || '').includes(OCR_MARK)) { d.ocrDone = true; sealed = true; continue; }
+      if (d.ocrDone === true) {
+        // resume pre-queue builds (sealed after the first pictures were read)
+        if (Array.isArray(d.images) && d.images.length > OCR_MAX_IMAGES && !Number.isInteger(d.ocrFrom) && String(d.text || '').includes(OCR_MARK)) { d.ocrFrom = OCR_MAX_IMAGES; d.ocrDone = false; sealed = true; }
+        else continue;
+      }
+      if (!d.images || !d.images.length) { d.ocrDone = true; sealed = true; continue; }
+      if (Number.isInteger(d.ocrFrom)) continue; // background queue owns this doc — no double-read
+      if (String(d.text || '').includes(OCR_MARK)) { d.ocrDone = true; sealed = true; continue; }
       due.push(d);
     }
     if (sealed) { try { vault.persist(); } catch {} }
@@ -7560,11 +8613,13 @@ async function backfillOcr() {
     for (const d of due) {
       if (!vault.tabs.some(t => (t.docs || []).includes(d))) continue; // deleted meanwhile
       const pics = [];
-      for (const im of (d.images || []).slice(0, 60)) {
+      const bimgs = (d.images || []);
+      for (let bpi = 0; bpi < bimgs.length && pics.length < OCR_MAX_IMAGES; bpi++) {
+        const im = bimgs[bpi];
         let rec = null;
         try { rec = await imgGet(im.key); } catch { rec = null; }
         if (!rec || !rec.blob) continue;
-        pics.push({ blob: rec.blob, cap: im.cap || 'image' });
+        pics.push({ blob: rec.blob, cap: im.cap || 'image', at: bpi });
       }
       const failedBefore = ocrFailedOnce;
       let sections = [];
@@ -7572,7 +8627,14 @@ async function backfillOcr() {
         try { sections = await ocrPictures(pics); }
         catch (e) { console.warn('backfill OCR failed for ' + d.name, (e && e.message) || e); sections = []; }
       }
-      d.ocrDone = sections.length ? true : (!failedBefore && !ocrFailedOnce);
+      // foreground covers the first pictures; the rest queue for background
+      const batt = Number.isInteger(sections.attemptedCount) ? sections.attemptedCount : pics.length;
+      if (pics.length && !(batt <= 0 && ocrFailedOnce)) {
+        const blast = batt > 0 ? pics[Math.min(batt, pics.length) - 1].at : -1;
+        if (Number.isInteger(blast) && blast >= 0) d.ocrFrom = blast + 1;
+      }
+      // (engine failure: ocrFrom untouched — backfill's retry/seal path governs)
+      d.ocrDone = sections.length ? (Number.isInteger(d.ocrFrom) && d.ocrFrom >= bimgs.length) : (!failedBefore && !ocrFailedOnce);
       if (d.ocrDone === true) { delete d.ocrTries; }
       else {
         // broken engine (or unreadable blobs) must not nag every boot:
@@ -7584,7 +8646,7 @@ async function backfillOcr() {
       if (!sections.length) continue;
       const before = d.words || 0;
       d.text = (d.text + '\n\n# Pictures\u2019 text (read by OCR)\n\n' +
-        sections.map(s => '[' + s.cap + ']: ' + s.text).join('\n\n')).slice(0, 90000);
+        sections.map(s => '[' + s.cap + ']: ' + s.text).join('\n\n')).slice(0, INTAKE_TEXT_MAX);
       vault.recountDoc(d);
       wordsAdded += Math.max(0, (d.words || 0) - before);
       docsFixed++;
@@ -7597,6 +8659,77 @@ async function backfillOcr() {
       toast(docsFixed + ' older doc' + (docsFixed === 1 ? '' : 's') + ' gained ' + wordsAdded + ' picture word' + (wordsAdded === 1 ? '' : 's') + ' in the counters');
     } else toast('Older pictures hold no readable text — counters unchanged');
   } catch (e) { console.warn('picture-text backfill skipped', (e && e.message) || e); }
+}
+
+// ---------- background OCR queue: every page of big scanned books gets read ----------
+// Foreground intake reads the first pictures fast so the import finishes quickly;
+// the remaining page-images queue here and are read a few at a time while the
+// user keeps working (resuming after restart — ocrFrom persists on the doc).
+// Each batch persists, so quitting mid-queue loses at most one batch.
+let ocrPumpRunning = false;
+async function pumpOcrQueue() {
+  if (ocrPumpRunning) return;
+  ocrPumpRunning = true;
+  let didWork = false, wordsAdded = 0, docsFixed = 0;
+  const docsSeen = new Set();
+  try {
+    for (;;) {
+      if (ocrFailedOnce) break; // engine dead this session — retries next boot, seals via tries below
+      const d = vault.tabs.flatMap(t => t.docs || []).find(x => x && x.ocrDone !== true && Array.isArray(x.images) && Number.isInteger(x.ocrFrom) && x.ocrFrom < x.images.length);
+      if (!d) break;
+      const batch = [];
+      let idx = d.ocrFrom;
+      while (idx < d.images.length && batch.length < OCR_MAX_IMAGES) {
+        const im = d.images[idx];
+        const at = idx; idx++;
+        const area = im && im.w > 0 && im.h > 0 ? im.w * im.h : OCR_MIN_AREA;
+        if (area < OCR_MIN_AREA) continue;
+        let rec = null;
+        try { rec = await imgGet(im.key); } catch { rec = null; }
+        if (!rec || !rec.blob) continue;
+        batch.push({ blob: rec.blob, cap: im.cap || 'image', at });
+      }
+      const fromBefore = d.ocrFrom;
+      d.ocrFrom = idx;
+      let sections = [];
+      if (batch.length) {
+        try { sections = await ocrPictures(batch); }
+        catch (e) { console.warn('background OCR failed for ' + d.name, (e && e.message) || e); sections = []; }
+      }
+      const attempted = Number.isInteger(sections.attemptedCount) ? sections.attemptedCount : batch.length;
+      if (attempted <= 0 && ocrFailedOnce) {
+        // engine died on this batch: rewind + count toward the seal (like backfill)
+        d.ocrFrom = fromBefore;
+        d.ocrTries = Math.min(99, (Number.isInteger(d.ocrTries) ? d.ocrTries : 0) + 1);
+        if (d.ocrTries >= 3) { d.ocrDone = true; try { delete d.ocrTries; } catch {} }
+        try { vault.persist(); } catch {}
+        break;
+      }
+      if (attempted < batch.length && batch.length) d.ocrFrom = batch[attempted].at; // worker stalled mid-batch: rewind un-attempted
+      if (!vault.tabs.some(t => (t.docs || []).includes(d))) continue; // deleted meanwhile — drop the batch
+      if (sections.length) {
+        const head = String(d.text || '').includes(OCR_MARK) ? '' : '\n\n# Pictures\u2019 text (read by OCR)\n\n';
+        const before = d.words || 0;
+        d.text = (d.text + head + sections.map(s => '[' + s.cap + ']: ' + s.text).join('\n\n')).slice(0, INTAKE_TEXT_MAX);
+        try { vault.recountDoc(d); } catch {}
+        try { markBackupDirty(); } catch {}
+        wordsAdded += Math.max(0, (d.words || 0) - before);
+        if (!docsSeen.has(d.id)) { docsSeen.add(d.id); docsFixed++; }
+        didWork = true;
+      }
+      if (d.ocrFrom >= d.images.length) { d.ocrDone = true; try { delete d.ocrTries; } catch {} }
+      try { vault.persist(); } catch {}
+      await new Promise(r => setTimeout(r, 120)); // breathe — the universe stays interactive
+    }
+  } finally {
+    ocrPumpRunning = false;
+    if (didWork) {
+      try { rebuildAllTabs(); } catch {}
+      try { renderDoc(); } catch {}
+      try { updateStats(); } catch {}
+      try { toast('Background reading finished: +' + wordsAdded + ' words from ' + docsFixed + ' doc' + (docsFixed === 1 ? '' : 's')); } catch {}
+    }
+  }
 }
 
 async function ingestFiles(files, ctx) {
@@ -7630,6 +8763,7 @@ async function ingestFiles(files, ctx) {
   let dupes = 0;
   let imgTotal = 0;
   let ocrTotal = 0;
+  let cappedTotal = 0;
   const seen = new Set(vault.docs.map(d => d.text.replace(/\s+/g, ' ').trim()));
   const intakeRec = { at: new Date().toISOString(), total: arr.length, allowed: list.length, skipped: skipped.length, files: [] };
   try { window.__visidocsverse.lastIntake = intakeRec; } catch {}
@@ -7644,7 +8778,13 @@ async function ingestFiles(files, ctx) {
     try {
       toast('Reading ' + cleanName(f) + '\u2026');
       if (rec.size === 0) throw new Error('That file looks empty (0 bytes) — it may be a cloud placeholder. Open it once, then download a fresh copy.');
-      const text = (await readFileAsText(f)).slice(0, 60000);
+      const rawText = await readFileAsText(f, (p, total) => updateUploadProg(upTok, upIdx + 1, upBatch.length, cleanName(f) + ' — page ' + p + ' of ' + total));
+      // consume the pagination side-channel now (before any other extractor
+      // call can overwrite it): offsets are relative to rawText.
+      const pgStarts = lastPageStarts, pgKind = lastPageKind;
+      lastPageStarts = null; lastPageKind = null;
+      let text = rawText;
+      if (text.length > INTAKE_TEXT_MAX) { text = text.slice(0, INTAKE_TEXT_MAX); cappedTotal++; rec.capped = true; console.warn('intake capped at full-text limit (' + INTAKE_TEXT_MAX + ' chars): ' + cleanName(f) + ' carried ' + rawText.length + ' chars'); }
       rec.textLen = text.length;
       // image-only files carry no text: key the dupe check on the filename so
       // re-dropping the same scanned file still dedupes within the batch.
@@ -7658,14 +8798,14 @@ async function ingestFiles(files, ctx) {
       let imgMeta = [];
       let ocrPics = [];
       try {
-        const pics = await extractFileImages(f);
-        for (const pic of pics.slice(0, 60)) {
+        const pics = await extractFileImages(f, (done, total) => updateUploadProg(upTok, upIdx + 1, upBatch.length, cleanName(f) + ' — pictures page ' + done + ' of ' + total));
+        for (const pic of pics.slice(0, 250)) {
           const fit = await downscaleImage(pic.blob);
           if (!fit.blob || !(fit.blob.size > 0)) continue;
           const k = 'img_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
           await imgPut({ key: k, blob: fit.blob, cap: pic.cap || 'image', w: fit.w, h: fit.h, at: Date.now() });
           imgMeta.push({ key: k, cap: pic.cap || 'image', w: fit.w, h: fit.h });
-          if (!(fit.w > 0 && fit.h > 0 && fit.w * fit.h < OCR_MIN_AREA)) ocrPics.push({ blob: fit.blob, cap: pic.cap || 'image' });
+          if (!(fit.w > 0 && fit.h > 0 && fit.w * fit.h < OCR_MIN_AREA)) ocrPics.push({ blob: fit.blob, cap: pic.cap || 'image', at: imgMeta.length - 1 });
         }
       } catch (e) { console.warn('storing images failed for ' + cleanName(f) + ' — text still imports', (e && e.message) || e); imgMeta = []; ocrPics = []; }
       // standalone photo bodies (.jpg/.png): the file itself is the picture —
@@ -7690,11 +8830,20 @@ async function ingestFiles(files, ctx) {
         catch (e) { console.warn('OCR failed for ' + cleanName(f) + ' — pictures still import', (e && e.message) || e); ocrSections = []; }
         ocrRan = !ocrFailedBefore && !ocrFailedOnce;
       }
+      // foreground OCR covers the first pictures; the rest queue for background
+      let ocrFrom = imgMeta.length;
+      if (ocrPics.length) {
+        const iatt = Number.isInteger(ocrSections.attemptedCount) ? ocrSections.attemptedCount : Math.min(ocrPics.length, OCR_MAX_IMAGES);
+        if (!(iatt <= 0 && ocrFailedOnce)) {
+          const ilast = iatt > 0 ? ocrPics[Math.min(iatt, ocrPics.length) - 1].at : -1;
+          if (Number.isInteger(ilast) && ilast >= 0) ocrFrom = ilast + 1;
+        } else ocrFrom = 0; // engine dead — pump's retry/seal path governs
+      }
       ocrTotal += ocrSections.length;
       let fullText = text;
       if (ocrSections.length) {
         fullText = (fullText + '\n\n# Pictures\u2019 text (read by OCR)\n\n' +
-          ocrSections.map(s => '[' + s.cap + ']: ' + s.text).join('\n\n')).slice(0, 90000);
+          ocrSections.map(s => '[' + s.cap + ']: ' + s.text).join('\n\n')).slice(0, INTAKE_TEXT_MAX);
       }
       // neither text nor picture words: importing would make a junk blank body.
       if (!fullText.trim() && !ocrSections.length) {
@@ -7704,6 +8853,17 @@ async function ingestFiles(files, ctx) {
       }
       const cn = cleanName(f);
       const d = vault.addFile(cn.replace(/\.(markdown)$/i, '.md'), '# ' + cn.replace(/\.[^.]+$/, '') + '\n\n' + fullText, imgMeta);
+      // rebase the recorded pagination onto the final stored text: the title
+      // line above prefixes every offset, and capped/OCR tails only cut or
+      // extend the END, so starts stay valid. Pages past a pathological cap
+      // are dropped (the tail they point at was never stored).
+      try {
+        if (pgStarts && pgStarts.length && (pgKind === 'pdf' || pgKind === 'slides' || pgKind === 'sheets')) {
+          const prefixLen = ('# ' + cn.replace(/\.[^.]+$/, '') + '\n\n').length;
+          const kept = pgStarts.map(s => prefixLen + s).filter(s => s < d.text.length);
+          if (kept.length) d.pageMap = { kind: pgKind, count: kept.length, starts: kept };
+        }
+      } catch (e) { console.warn('page map skipped for ' + cn, (e && e.message) || e); }
       // keep the original bytes (IndexedDB sidecar) so Download returns the
       // real file. Text import never depends on this — a store failure just
       // means this body downloads as extracted text (.txt).
@@ -7715,7 +8875,9 @@ async function ingestFiles(files, ctx) {
         } else if (f && f.size > 100 * 1024 * 1024) console.warn('original too large to keep (>100MB) — text still imports', d.name);
       } catch (e) { console.warn('keeping original failed for ' + d.name + ' — text still imports', (e && e.message) || e); }
 
-      if (ocrRan) d.ocrDone = true; // picture words already in the text — nothing to backfill
+      d.ocrFrom = ocrFrom;
+      if (ocrRan || ocrFrom >= imgMeta.length) d.ocrDone = true; // picture words already in the text — nothing to backfill
+      else d.ocrDone = false; // rest queues for background reading
       newIds.push(d.id);
       n++;
       rec.status = 'ok'; rec.docId = d.id; rec.images = imgMeta.length;
@@ -7735,13 +8897,22 @@ async function ingestFiles(files, ctx) {
   }
   const dupeNote = dupes ? ' \u00B7 ' + dupes + ' duplicate' + (dupes === 1 ? '' : 's') + ' already here' : '';
   const skipNote = skipped.length ? ' \u00B7 ' + skipped.length + ' skipped (not a document)' : '';
-  const finalMsg = n ? ((n === 1 ? '1 document captured' : n + ' documents captured') + dupeNote + skipNote)
+  const capNote = cappedTotal ? ' · ' + cappedTotal + ' file' + (cappedTotal === 1 ? '' : 's') + ' capped at the full-text limit' : '';
+  const finalMsg = n ? ((n === 1 ? '1 document captured' : n + ' documents captured') + dupeNote + skipNote + capNote)
     : (dupes ? 'Nothing new \u2014 ' + dupes + ' duplicate' + (dupes === 1 ? '' : 's') + ' already in the universe' : (errs.length ? 'Nothing imported \u2014 ' + errs[0] : 'Nothing imported'));
   intakeRec.toast = finalMsg; intakeRec.imported = n; intakeRec.errors = errs.slice(0, 5); intakeRec.images = imgTotal; intakeRec.ocr = ocrTotal;
   try { purgeImages(); } catch { /* orphan bytes sweep runs on its own */ }
   setLog(finalMsg);
   if (n) toast(finalMsg);
   else toast(finalMsg, errs.length || dupes ? 8000 : 2400);
+  try {
+    const backlog = newIds.map(id => { try { return vault.byIdAnywhere(id); } catch { return null; } }).filter(d => d && d.ocrDone !== true && Array.isArray(d.images) && Number.isInteger(d.ocrFrom) && d.ocrFrom < d.images.length);
+    const pages = backlog.reduce((s, d) => s + (d.images.length - d.ocrFrom), 0);
+    if (pages > 0) {
+      toast('Background reading queued for ' + pages + ' more page' + (pages === 1 ? '' : 's') + ' — keep working, their words fill in automatically');
+      try { pumpOcrQueue(); } catch {}
+    }
+  } catch {}
   } finally { hideUploadProg(upTok); }
 }
 
@@ -8001,7 +9172,7 @@ async function boot() {
   // picture-text backfill: older image docs gain their OCR words in the
   // background (bounded, silent on failure — new intakes OCR inline already).
   // image-store rename first: pre-release bytes move over, then backfill reads them.
-  try { (async () => { try { await migrateImageDB(); } catch {} try { await backfillOcr(); } catch {} })(); } catch {}
+  try { (async () => { try { await migrateImageDB(); } catch {} try { await backfillOcr(); } catch {} try { pumpOcrQueue(); } catch {} })(); } catch {}
   // version checker (desktop shells only — silent in the web preview): one
   // anonymous GET of version.json a few seconds after startup; a banner shows
   // only when a strictly newer version is published. Never blocks, never nags.
@@ -8795,7 +9966,7 @@ async function boot() {
   if (fxS) fxS.onclick = () => { findSideOn = false; try { syncFindBar(); } catch {} }; // × dismisses the floater (term + highlights stay; ‹ › re-summons it)
   // back-to-top tab: tracks the reader pane's scroll, jumps to top on click
   const dp = $('#docScroll'), tb = $('#docTopBtn');
-  if (dp) dp.addEventListener('scroll', () => { try { syncTopBtn(); } catch {} }, { passive: true });
+  if (dp) dp.addEventListener('scroll', () => { try { syncTopBtn(); } catch {} try { syncPageNow(); } catch {} }, { passive: true });
   if (tb) tb.onclick = () => {
     try {
       dp.scrollTo({ top: 0, behavior: 'auto' });
@@ -8835,6 +10006,20 @@ async function boot() {
   } catch {}
   // reader pictures: click to zoom into a full-screen lightbox, click out to close
   $('#docBody').addEventListener('click', (e) => {
+    // folio marker: click copies a "Title, p. N" citation for the real document
+    try {
+      const pmk = e.target && e.target.closest ? e.target.closest('.pagemark') : null;
+      if (pmk) {
+        const n = pmk.dataset.page || '?';
+        const title = ($('#docTitle') && $('#docTitle').textContent) || 'document';
+        const cite = title + ', p. ' + n;
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(cite).then(() => toast('Citation copied: ' + cite), () => toast(cite, 4000));
+          else toast(cite, 4000);
+        } catch { toast(cite, 4000); }
+        return;
+      }
+    } catch {}
     const im = e.target && e.target.closest ? e.target.closest('img[data-full]') : null;
     if (!im) return;
     // an open preview/menu eats this click instead of zooming underneath (or
@@ -8898,6 +10083,57 @@ async function boot() {
     } catch {}
     openSelTagMenu(e.clientX, e.clientY, snippet, slugTag(useRaw), anchor, useRaw, noteSpot);
   });
+  // overlay + carousel panes: right-click a highlight for the same menu.
+  // tagged, sent to notes or copied exactly like the reader, with a
+  // pane-aware spot so the Notes jump lands on the right passage.
+function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
+  // right-click on a highlight inside an overlay/carousel pane: the reader's
+  // selection menu (tag, send to notes, copy), with a pane-aware spot anchor.
+  // Init-scoped: the menu + tag slugger live in this scope.
+  const sel = window.getSelection();
+  const raw = sel ? String(sel.toString() || '') : '';
+  if (!sel || sel.isCollapsed || !raw.trim() || !root.contains(sel.anchorNode)) return; // keep the native menu
+  e.preventDefault();
+  e.stopPropagation();
+  try {
+    if (sel.anchorNode && sel.anchorNode === sel.focusNode && sel.anchorNode.nodeType === 3) {
+      const t = sel.anchorNode.textContent || '';
+      let s = Math.min(sel.anchorOffset, sel.focusOffset), ex = Math.max(sel.anchorOffset, sel.focusOffset);
+      while (s > 0 && /[a-z0-9]/i.test(t[s - 1])) s--;
+      while (ex < t.length && /[a-z0-9]/i.test(t[ex])) ex++;
+      const nr = document.createRange();
+      nr.setStart(sel.anchorNode, s); nr.setEnd(sel.anchorNode, ex);
+      sel.removeAllRanges(); sel.addRange(nr);
+    }
+  } catch {}
+  const full = String(sel.toString() || '');
+  const useRaw = full.trim() ? full : raw;
+  const spot = paneSelectionSpot(root, useRaw, baseAt, withPath);
+  const snippet = useRaw.trim().replace(/\s+/g, ' ').slice(0, 60);
+  openSelTagMenu(e.clientX, e.clientY, snippet, slugTag(useRaw), spot, useRaw, spot, onSent, docId);
+}
+  const czm = $('#carZoomText');
+  if (czm && !czm.dataset.selWired) {
+    czm.dataset.selWired = '1';
+    czm.addEventListener('contextmenu', (e) => {
+      const d = vault.byId(carDocId) || vault.byId(shownId);
+      paneSelMenu(e, czm, 0, true, d ? d.id : undefined, () => { try { if (d) markNoteSpotsIn(czm, d, false, 0); } catch {} });
+    });
+  }
+  const ctr = $('#carTrack');
+  if (ctr && !ctr.dataset.selWired) {
+    ctr.dataset.selWired = '1';
+    ctr.addEventListener('contextmenu', (e) => {
+      const t = e.target && e.target.closest ? e.target.closest('.car-pane .car-text') : null;
+      if (!t) return;
+      const panes = [...ctr.querySelectorAll('.car-pane .car-text')];
+      const ti = panes.indexOf(t) - (carMediaFirst ? 1 : 0);
+      if (ti < 0) return; // media pane: player, not prose
+      const d = vault.byId(carDocId) || vault.byId(shownId);
+      const sg = carReal && carReal.segs ? carReal : null;
+      paneSelMenu(e, t, sg ? paneBaseAt(sg, ti) : null, false, d ? d.id : undefined, () => { try { if (d) markNoteSpotsIn(t, d, true, sg ? paneBaseAt(sg, ti) : 0); } catch {} });
+    });
+  }
   // Esc closes the tags-view pop-out and the glossary pane (never while typing in a field)
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')) {
@@ -9651,7 +10887,7 @@ async function boot() {
     });
     inp.addEventListener('click', (ev) => ev.stopPropagation());
   }
-  function openSelTagMenu(x, y, snippet, slug, spot, full, noteSpot) {
+  function openSelTagMenu(x, y, snippet, slug, spot, full, noteSpot, onSent, docId) {
     ctx.innerHTML = '';
     const head = document.createElement('div');
     head.className = 'ctx-head';
@@ -9671,7 +10907,7 @@ async function boot() {
       nm.onclick = (e) => { e.stopPropagation(); openSelTagNameEditor(x, y, snippet, slug, spot, full, noteSpot); };
       ctx.appendChild(nm);
     }
-    ctx.appendChild(ctxItem('🗒  Send selection to notes', false, () => sendSelectionToNotes(full || snippet, noteSpot)));
+    ctx.appendChild(ctxItem('🗒  Send selection to notes', false, () => { if (sendSelectionToNotes(full || snippet, noteSpot, docId) && typeof onSent === 'function') { try { onSent(); } catch {} } }));
     ctx.appendChild(ctxItem('⧉  Copy selection', false, async () => {
       try { await navigator.clipboard.writeText(snippet); toast('Selection copied'); }
       catch { toast('Copy blocked by the browser'); }
@@ -10482,6 +11718,162 @@ async function boot() {
       if (ncn) ncn.onclick = cancelNotesPane;
       const nss = $('#notesSelBtn');
       if (nss) nss.onclick = () => sendSelectionToNotes();
+      const ncc = $('#notesCiteCopy');
+      if (ncc) ncc.onclick = () => copyApaCite(notesDocId);
+      // drag-and-drop: a highlight dragged from the body can be dropped onto
+      // the pane (list/background files it at once; the composer keeps it as
+      // draft text and pins the next save) or onto the Notes tab while closed.
+      try {
+        const db = $('#docBody');
+        if (db && !db.dataset.noteDrag) {
+          db.dataset.noteDrag = '1';
+          db.addEventListener('dragstart', (e) => {
+            try {
+              dragFromNotes = false;
+              const live = readReaderSelection();
+              const useTxt = String(live.text || '').trim() ? live.text : '';
+              dragNotePayload = useTxt.trim() ? { text: String(useTxt), spot: live.spot, docId: shownId } : null;
+              try { if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copy'; } catch {}
+            } catch { dragNotePayload = null; }
+          });
+          db.addEventListener('dragend', () => { setTimeout(() => { dragNotePayload = null; }, 60); });
+        }
+        const np = $('#notesPane');
+        if (np && !np.dataset.noteDrop) {
+          np.dataset.noteDrop = '1';
+          np.addEventListener('dragstart', () => { dragFromNotes = true; });
+          np.addEventListener('dragend', () => { setTimeout(() => { dragFromNotes = false; }, 60); });
+          np.addEventListener('dragover', (e) => {
+            if (dragFromNotes) return; // internal reorder — never re-files
+            try {
+              const ty = (e.dataTransfer && e.dataTransfer.types) || [];
+              const hasText = [...ty].some(t => String(t).toLowerCase().includes('text/plain') || String(t).toLowerCase().includes('text/html'));
+              if (!hasText && ty.length) return; // files etc: leave to their own targets
+            } catch {}
+            try { e.preventDefault(); } catch {}
+            try { if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; } catch {}
+            np.classList.add('drop-hi');
+          });
+          np.addEventListener('dragleave', (e) => {
+            try { if (e.target === np || (e.relatedTarget && !np.contains(e.relatedTarget))) np.classList.remove('drop-hi'); } catch {}
+            if (!np.matches(':hover')) { try { np.classList.remove('drop-hi'); } catch {} }
+          });
+          np.addEventListener('drop', (e) => {
+            try { np.classList.remove('drop-hi'); } catch {}
+            if (dragFromNotes) return; // let the native reorder land
+            const inArea = !!(e.target && e.target.closest && e.target.closest('#notesArea'));
+            const txt = notesDropText(e);
+            if (!txt.trim()) return;
+            const targetId = vault.byId(notesDocId) ? notesDocId : (vault.byId(shownId) ? shownId : null);
+            if (!targetId) { try { e.preventDefault(); } catch {} toast('Open a document body first — notes live on bodies'); return; }
+            if (inArea) {
+              // manual insert at the caret (never relies on the native drop
+              // action, so trusted + synthetic drops behave identically);
+              // stash the passage anchor so the next save pins this entry.
+              let sp = null;
+              if (dragNotePayload && dragNotePayload.docId === targetId && dragNotePayload.spot && typeof dragNotePayload.spot === 'object') sp = dragNotePayload.spot;
+              else { const sn = txt.trim().replace(/\s+/g, ' ').slice(0, 200); if (sn.trim().length >= 2) sp = { snip: sn }; }
+              const clean = (typeof cleanNoteSpot === 'function') ? cleanNoteSpot(sp) : sp;
+              notesDropSpot = clean ? { docId: targetId, spot: clean } : null;
+              try { e.preventDefault(); } catch {}
+              try { e.stopPropagation(); } catch {}
+              try {
+                const area = $('#notesArea');
+                if (area && !area.disabled) {
+                  const ins = txt.trim().slice(0, NOTE_MAX);
+                  const cur = area.value || '';
+                  let at = (typeof area.selectionStart === 'number') ? area.selectionStart : cur.length;
+                  let to = (typeof area.selectionEnd === 'number') ? area.selectionEnd : at;
+                  at = Math.max(0, Math.min(cur.length, at)); to = Math.max(0, Math.min(cur.length, to));
+                  if (to < at) { const t2 = at; at = to; to = t2; }
+                  const sep = (cur && at > 0 && at < cur.length && !/\s/.test(cur[at - 1] || '') && ins && !/^\s/.test(ins)) ? ' ' : '';
+                  const next = (cur.slice(0, at) + sep + ins + cur.slice(to)).slice(0, NOTE_MAX);
+                  area.value = next;
+                  const caret = Math.min(next.length, at + sep.length + ins.length);
+                  try { area.selectionStart = area.selectionEnd = caret; } catch {}
+                  try { area.focus({ preventScroll: true }); } catch { try { area.focus(); } catch {} }
+                  try { onNotesInput(); } catch {}
+                }
+              } catch {}
+              toast(notesAuto !== false ? 'Dropped into composer — auto-save will pin it' : 'Dropped into composer — press Save to pin it');
+              return;
+            }
+            try { e.preventDefault(); } catch {}
+            try { e.stopPropagation(); } catch {}
+            fileDroppedHighlight(txt, targetId);
+          });
+        }
+        if (nt && !nt.dataset.noteDrop) {
+          nt.dataset.noteDrop = '1';
+          nt.addEventListener('dragover', (e) => {
+            if (dragFromNotes) return;
+            try {
+              const ty = (e.dataTransfer && e.dataTransfer.types) || [];
+              const hasText = [...ty].some(t => String(t).toLowerCase().includes('text/plain') || String(t).toLowerCase().includes('text/html'));
+              if (!hasText && ty.length) return;
+            } catch {}
+            try { e.preventDefault(); } catch {}
+            try { if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; } catch {}
+            nt.classList.add('drop-hi');
+          });
+          nt.addEventListener('dragleave', () => { try { nt.classList.remove('drop-hi'); } catch {} });
+          nt.addEventListener('drop', (e) => {
+            try { nt.classList.remove('drop-hi'); } catch {}
+            if (dragFromNotes) return;
+            const txt = notesDropText(e);
+            if (!txt.trim()) return;
+            try { e.preventDefault(); } catch {}
+            try { e.stopPropagation(); } catch {}
+            const targetId = vault.byId(shownId) ? shownId : activeId;
+            if (!vault.byId(targetId)) { toast('Open a document body first — notes live on bodies'); return; }
+            if (!notesOpen) { try { setNotes(true, targetId); } catch {} }
+            fileDroppedHighlight(txt, vault.byId(notesDocId) ? notesDocId : targetId);
+          });
+        }
+      } catch {}
+      // highlight cue wiring: any settled highlight in the body briefly floats
+      // the "Drag highlighted text…" tip above it (selectionchange debounced so
+      // mid-drag mouse sweeps don't nag; mousedown/dragstart/scroll hide it).
+      try {
+        if (!document.documentElement.dataset.selTip) {
+          document.documentElement.dataset.selTip = '1';
+          let selTipPend = 0;
+          document.addEventListener('selectionchange', () => {
+              try {
+                const sel = window.getSelection();
+                const root = $('#docBody');
+                if (sel && !sel.isCollapsed && root && sel.anchorNode && root.contains(sel.anchorNode)) { try { clearTimeout(selTipPend); } catch {} selTipPend = setTimeout(cueSelDropTip, 350); return; }
+                // overlay / carousel highlight: same debounce, pane-flavoured tip
+                try {
+                  const zwrap = $('#carZoomWrap');
+                  const zroot = (zwrap && !zwrap.hidden) ? $('#carZoomText') : null;
+                  if (zroot && sel && !sel.isCollapsed && sel.anchorNode && zroot.contains(sel.anchorNode)) { try { clearTimeout(selTipPend); } catch {} selTipPend = setTimeout(() => cuePaneNoteTip(zroot), 350); return; }
+                  const trk = (typeof carOpen !== 'undefined' && carOpen && typeof carZoomOpen !== 'undefined' && !carZoomOpen) ? $('#carTrack') : null;
+                  if (trk && sel && !sel.isCollapsed && sel.anchorNode) {
+                    const an = sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement;
+                    const prot = an && an.closest ? an.closest('.car-pane .car-text') : null;
+                    if (prot) { try { clearTimeout(selTipPend); } catch {} selTipPend = setTimeout(() => cuePaneNoteTip(prot), 350); return; }
+                  }
+                } catch {}
+                hideSelDropTip(); try { clearTimeout(selTipPend); } catch {}
+              } catch {}
+            });
+          const dbTip = $('#docBody');
+          if (dbTip) {
+            dbTip.addEventListener('mousedown', hideSelDropTip);
+            dbTip.addEventListener('dragstart', hideSelDropTip);
+          }
+          const dscTip = $('#docScroll');
+          if (dscTip) dscTip.addEventListener('scroll', hideSelDropTip, { passive: true });
+            const czbTip = $('#carZoomBody');
+            if (czbTip) czbTip.addEventListener('scroll', hideSelDropTip, { passive: true });
+            const ctrTip = $('#carTrack');
+            if (ctrTip) { ctrTip.addEventListener('scroll', hideSelDropTip, { passive: true }); ctrTip.addEventListener('mousedown', hideSelDropTip); ctrTip.addEventListener('dragstart', hideSelDropTip); }
+            const cztTip = $('#carZoomText');
+            if (cztTip) { cztTip.addEventListener('mousedown', hideSelDropTip); cztTip.addEventListener('dragstart', hideSelDropTip); }
+            window.addEventListener('resize', hideSelDropTip);
+        }
+      } catch {}
       const nll = $('#notesList');
       if (nll) nll.addEventListener('click', (e) => {
         const x = e.target.closest('[data-ndel]');
@@ -10736,6 +12128,7 @@ async function boot() {
     const k = b.dataset.np;
     if (k === 'close') closeNotePop();
     else if (k === 'copy') copyNotePop();
+    else if (k === 'copycite') copyApaCite(notePopId);
     else if (k === 'del') { if (deleteNote(notePopId)) toast('Latest note entry deleted'); }
     else if (k === 'edit') renderNotePop(true);
     else if (k === 'pane') { const id = notePopId; closeNotePop(); setNotes(true, id); }
@@ -10919,7 +12312,7 @@ async function boot() {
   setRot(rotOn);
     // Save-project file bundle (NOT dev-only: buildBackupObject below needs it
   // in stripped desktop builds too, so it must stay outside the DEV range).
-  const BACKUP_FILES = ['src/app.js', 'src/vault.js', 'src/physics.js', 'src/render.js', 'src/README.md', 'src/overlays.json'];
+  const BACKUP_FILES = ['src/js/app.js', 'src/js/vault.js', 'src/js/physics.js', 'src/js/render.js', 'README.md', 'src/assets/overlays.json'];
   async function buildBackupObject() {
     const files = {};
     for (const f of BACKUP_FILES) {
@@ -10963,9 +12356,9 @@ async function boot() {
       mainPjs, indexHtml, files,
       // deep-clone doc rows: the backup must be a snapshot, not a live
       // reference — otherwise docs added after "build" leak into the file.
-      tabs: vault.tabs.map(t => ({ id: t.id, name: t.name, docs: (t.docs || []).map(d => ({ ...d, links: [...(d.links || [])], tags: [...(d.tags || [])], noteLog: Array.isArray(d.noteLog) && d.noteLog.length ? cloneNoteLog(d.noteLog) : undefined })), activeId: t.activeId, main: t.main === true, assoc: [...(t.assoc || [])], color: t.color || null, suppressedTags: [...(t.suppressedTags || [])], disassociated: vault.isIso(t) })),
+      tabs: vault.tabs.map(t => ({ id: t.id, name: t.name, docs: (t.docs || []).map(d => ({ ...d, links: [...(d.links || [])], tags: [...(d.tags || [])], pageMap: (d.pageMap && Array.isArray(d.pageMap.starts)) ? { kind: d.pageMap.kind, count: d.pageMap.count, starts: [...d.pageMap.starts] } : undefined, noteLog: Array.isArray(d.noteLog) && d.noteLog.length ? cloneNoteLog(d.noteLog) : undefined })), activeId: t.activeId, main: t.main === true, assoc: [...(t.assoc || [])], color: t.color || null, suppressedTags: [...(t.suppressedTags || [])], disassociated: vault.isIso(t) })),
       activeTabId: vault.activeTabId,
-      vault: vault.docs.map(d => ({ ...d, links: [...(d.links || [])], tags: [...(d.tags || [])], noteLog: Array.isArray(d.noteLog) && d.noteLog.length ? cloneNoteLog(d.noteLog) : undefined })), // legacy compat: active canvas docs
+      vault: vault.docs.map(d => ({ ...d, links: [...(d.links || [])], tags: [...(d.tags || [])], pageMap: (d.pageMap && Array.isArray(d.pageMap.starts)) ? { kind: d.pageMap.kind, count: d.pageMap.count, starts: [...d.pageMap.starts] } : undefined, noteLog: Array.isArray(d.noteLog) && d.noteLog.length ? cloneNoteLog(d.noteLog) : undefined })), // legacy compat: active canvas docs
       settings: {
         rotOn, rotMul, speedMul: rotMul, autoDist, simpleOrb, simpleOrb2, triOrb, docIcon, vividUniverse,
         miniX, miniY, miniW, miniH, miniFolded, tvpX, tvpY, tvpW, tvpH, tabX, tabY, hintX, hintY, pillsCentered, vw: window.innerWidth, vh: window.innerHeight, pillMinW, clusterW, glossX, glossY, glossW, glossH, glossOpen, glossDockV1: true,
@@ -11480,9 +12873,54 @@ async function boot() {
     await absorbMasterIntoCanvas(f);
   };
           window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), lemonStartup: () => verifyLicenseOnStartup(), lemonActivate: (k, n) => activateLicenseKey(k, n) } };
+  try { Object.assign(window.__visidocsverse, { docApaInfo, docApaText, docApaHtml, copyApaCite, setNotes, closeNotesPane, renderNotesPane, openNotePop, closeNotePop, openNoteEditor, closeNoteEditor, resolveCiteMeta, origPut, origGet, get notesOpen() { return notesOpen; }, get notesDocId() { return notesDocId; }, get shownId() { return shownId; }, get paneId() { return paneId; } }); } catch {} // notes/APA handles for scripted checks
   window.addEventListener('resize', () => ren.resize());
   bootStage('ready');
   try { document.title = __bootTitle0; } catch (e) {} // boot complete: restore the plain title (tracer stays silent on success)
+  // Desktop-shell close-guard self-check: runs ONLY inside the installed app
+  // (Neutralino client and/or NL_* runtime globals never exist in the browser
+  // preview), and stays silent when everything is healthy.
+  try {
+    const inShell = (window.NL_PORT != null || window.NL_TOKEN != null || window.NL_APPID != null || (typeof Neutralino !== 'undefined'));
+    if (inShell) {
+      let probe = null;
+      try { probe = JSON.parse(localStorage.getItem('visidocsverse.closeprobe') || 'null'); } catch {}
+      try { localStorage.removeItem('visidocsverse.closeprobe'); } catch {}
+      if (probe && probe.at) {
+        toast('Last time the app closed without going through its save check — your workspace was restored as-is. Use “Save project” for a file backup.', 9000);
+      }
+      if (typeof Neutralino === 'undefined') {
+        toast('Desktop bridge file failed to load (close-warning off) — reinstall, or report this.', 9000);
+      } else if (window.NL_PORT == null || window.NL_TOKEN == null) {
+        toast('Desktop runtime data missing (close-warning off) — reinstall, or report this.', 9000);
+      } else {
+        const port = window.NL_PORT;
+        // Native-API access probe: hasAPIAccess() is config-gated
+        // (enableNativeAPI). A connected bridge with blocked native calls
+        // dispatches no windowClose and rejects showMessageBox — the exact
+        // "silent X" symptom. getConfig is allowlisted (app.*); if the WS is
+        // up it resolves when allowed and rejects when blocked. If the WS
+        // never opens the call just stays queued (the bridge toast covers it).
+        setTimeout(() => {
+          try {
+            Promise.resolve(Neutralino.app.getConfig()).then(
+              () => {},
+              () => { try { toast('Desktop native API is blocked (close-warning off) — reinstall, or report this.', 12000); } catch {} });
+          } catch {}
+        }, 14000);
+        setTimeout(() => {
+          try {
+            if (!window.__bridgeReady) {
+              try { Neutralino.init(); } catch {} // one retry: the server can lose the first-race WS
+              setTimeout(() => {
+                try { if (!window.__bridgeReady) toast('Desktop bridge is not connected (close-warning off, port ' + port + ') — restart the app, or report this.', 12000); } catch {}
+              }, 8000);
+            }
+          } catch {}
+        }, 12000);
+      }
+    }
+  } catch {}
   // Viewport settle: boot sizes against a window that may still be animating
   // (maximize on launch, slow fonts) — re-assert the full layout once it
   // lands, plus on every later viewport-affecting change. fitViewport is

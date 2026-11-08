@@ -1,0 +1,20 @@
+{
+  "applicationId": "org.visidocsverse.app",
+  "version": "1.0.21",
+  "defaultMode": "window",
+  "port": 0,
+  "documentRoot": "/",
+  "url": "/",
+  "enableServer": true,
+  "enableNativeAPI": true,
+  "exitProcessOnClose": false,
+  "injectGlobals": true,
+  "window": {
+    "title": "VisiDocsverse",
+    "width": 1280,
+    "height": 800,
+    "minWidth": 800,
+    "minHeight": 600,
+    "icon": "/src/assets/icon.png"
+  }
+}

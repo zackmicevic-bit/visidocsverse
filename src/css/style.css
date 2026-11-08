@@ -1,4 +1,5 @@
-:root { --bg:#0d1117; --glass:rgba(20,26,36,.72); --line:rgba(120,150,200,.16); --txt:#dbe4f5; --mut:#7d8aa3; --acc:#5f9dff; --sun:#ffce6b; }
+
+  :root { --bg:#0d1117; --glass:rgba(20,26,36,.72); --line:rgba(120,150,200,.16); --txt:#dbe4f5; --mut:#7d8aa3; --acc:#5f9dff; --sun:#ffce6b; }
   * { box-sizing:border-box; }
   body { text-align:left; background:var(--bg); color:var(--txt); font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; margin:0; overflow:hidden; }
  #app { position:fixed; inset:0; }
@@ -151,8 +152,27 @@
   #notesTopBtn[hidden] { display:none; }
   #notesTopBtn:hover { background:rgba(95,157,255,.28); }
   body.light-canvas #notesTopBtn { color:#233044; background:rgba(255,255,255,.93); border-color:rgba(30,45,75,.28); box-shadow:0 8px 28px rgba(30,45,75,.2); }
+  /* original-document back-to-top tab: same recipe, parked at the original pane's bottom-right (above the overlay) */
+  #origTopBtn { position:absolute; z-index:209; background:rgba(10,15,24,.88); border:1px solid rgba(140,170,220,.38); color:var(--txt); border-radius:20px; padding:4px 12px; font-size:11px; cursor:pointer; box-shadow:0 8px 28px rgba(0,0,0,.5); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
+  #origTopBtn[hidden] { display:none; }
+  #origTopBtn:hover { background:rgba(95,157,255,.28); }
+  body.light-canvas #origTopBtn { color:#233044; background:rgba(255,255,255,.93); border-color:rgba(30,45,75,.28); box-shadow:0 8px 28px rgba(30,45,75,.2); }
   #docBody .find-hit { background:rgba(255,210,75,.30); border-radius:3px; }
   #docBody .find-hit.cur { background:rgba(255,210,75,.9); color:#141414; }
+  /* folio markers: real page/slide/sheet breaks from the original document */
+  #docBody .pagemark { display:flex; align-items:center; gap:8px; margin:14px 0 10px; cursor:pointer; user-select:none; -webkit-user-select:none; }
+  #docBody .pagemark:first-child { margin-top:2px; }
+  #docBody .pmark-rule { flex:1 1 0; height:1px; background:rgba(140,170,220,.35); }
+  #docBody .pmark-lab { font-size:10.5px; letter-spacing:.12em; color:var(--mut); background:rgba(140,170,220,.10); border:1px solid rgba(140,170,220,.30); border-radius:20px; padding:1px 10px; white-space:nowrap; }
+  #docBody .pagemark:hover .pmark-lab { color:#ffce6b; border-color:rgba(255,210,75,.6); }
+  #docBody .pagemark.spot-flash .pmark-lab { background:rgba(255,210,75,.45); color:#141414; }
+  /* original-page bar: folio count, live position, jump */
+  #pageBar { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:0 0 10px; font-size:11px; color:var(--mut); }
+  #pageBar[hidden] { display:none; }
+  #pageBar .pg-info b { color:var(--txt); }
+  #pageBar .pg-jump { display:inline-flex; align-items:center; gap:6px; margin-left:auto; }
+  #pageBar #pgJump { width:64px; background:rgba(10,14,20,.8); border:1px solid var(--line); color:var(--txt); border-radius:20px; padding:2px 9px; font-size:11px; outline:none; }
+  #pageBar .btn { font-size:11px; padding:2px 10px; }
   /* reader picture gallery (Word/PPT/PDF embeds live below the prose) */
   #docBody .imggal { display:grid; gap:10px; margin:12px 0 4px; }
   #docBody .imggal figure { margin:0; background:rgba(255,255,255,.03); border:1px solid var(--line); border-radius:8px; padding:8px; }
@@ -233,6 +253,20 @@
   #carZoomClose:hover { background:rgba(255,91,91,.25); border-color:rgba(255,120,120,.5); }
   #carZoomBody { overflow-y:auto; padding:18px 22px 26px; }
   #carZoomText { font-size:calc(14px * var(--czx,1)); }
+  /* original overlay page bar: folio count, live position, jump (same recipe as the reader's #pageBar) */
+  #carZoomPageBar { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:0; padding:10px 22px 0; font-size:11px; color:var(--mut); }
+  #carZoomPageBar[hidden] { display:none; }
+  #carZoomPageBar .pg-info b { color:var(--txt); }
+  #carZoomPageBar .pg-jump { display:inline-flex; align-items:center; gap:6px; margin-left:auto; }
+  #carZoomPageBar #czJump { width:64px; background:rgba(10,14,20,.8); border:1px solid var(--line); color:var(--txt); border-radius:20px; padding:2px 9px; font-size:11px; outline:none; }
+  #carZoomPageBar .btn { font-size:11px; padding:2px 10px; }
+  /* folio markers in the original overlay: same ruled-line + pill recipe as the reader (covers carousel panes too, via .car-text) */
+  .car-text .pagemark { display:flex; align-items:center; gap:8px; margin:14px 0 10px; cursor:pointer; user-select:none; -webkit-user-select:none; }
+  .car-text .pagemark:first-child { margin-top:2px; }
+  .car-text .pmark-rule { flex:1 1 0; height:1px; background:rgba(140,170,220,.35); }
+  .car-text .pmark-lab { font-size:10.5px; letter-spacing:.12em; color:var(--mut); background:rgba(140,170,220,.10); border:1px solid rgba(140,170,220,.30); border-radius:20px; padding:1px 10px; white-space:nowrap; }
+  .car-text .pagemark:hover .pmark-lab { color:#ffce6b; border-color:rgba(255,210,75,.6); }
+  .car-text .pagemark.spot-flash .pmark-lab { background:rgba(255,210,75,.45); color:#141414; }
   .cz-spot { animation:czFlash 1.6s ease-out; border-radius:4px; }
   @keyframes czFlash { 0% { background:rgba(255,206,107,.4); } 100% { background:transparent; } }
   /* reader picture lightbox: click a gallery image to zoom, click out / Esc to close */
@@ -267,6 +301,16 @@
   .np-text { font-size:12.5px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; background:rgba(233,195,60,.08); border:1px solid rgba(233,195,60,.3); border-radius:6px; padding:8px; }
   .np-area { width:100%; box-sizing:border-box; min-height:64px; font:inherit; font-size:12.5px; resize:vertical; color:#000; background:#fff; }
   .np-count { font-size:10.5px; color:var(--mut); text-align:right; }
+  /* reader pop-out APA reference: same mined citation, tap to copy */
+  .np-cite { font-size:10.5px; line-height:1.5; color:var(--mut); background:rgba(95,157,255,.06); border:1px solid var(--line); border-radius:6px; padding:5px 8px 5px 20px; text-indent:-12px; margin:0 0 8px; overflow-wrap:break-word; cursor:pointer; }
+  .np-cite:hover { border-color:#9cc2ff; }
+  .np-cite i { color:var(--txt); }
+  .np-cite .apa-partial { display:inline-block; font-size:9px; letter-spacing:.08em; border:1px solid var(--line); border-radius:8px; padding:0 6px; margin-left:6px; text-indent:none; white-space:nowrap; }
+  /* floating editor APA reference: one quiet line under the title */
+  #noteEditCite { font-size:10.5px; line-height:1.5; color:var(--mut); padding-left:14px; text-indent:-14px; margin:0 0 8px; overflow-wrap:break-word; }
+  #noteEditCite[hidden] { display:none; }
+  #noteEditCite i { color:var(--txt); }
+  #noteEditCite .apa-partial { display:inline-block; font-size:9px; letter-spacing:.08em; border:1px solid var(--line); border-radius:8px; padding:0 6px; margin-left:6px; text-indent:none; white-space:nowrap; }
   #noteEdit { position:fixed; z-index:60; width:250px; padding:10px 12px; }
   #noteEdit[hidden] { display:none; }
   #noteEdit h4 { margin:0 0 6px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -440,6 +484,10 @@
   #notesPane { position:absolute; z-index:23; display:flex; flex-direction:column; border-radius:14px; overflow:hidden; opacity:0; transform:translateX(14px); transition:opacity .24s ease, transform .24s ease; }
   #notesPane[hidden] { display:none; }
   #notesPane.show { opacity:1; transform:none; }
+  /* drag-and-drop target: a highlighted passage from the body can be dropped
+     anywhere in the pane (list, composer or tab) to file it as a note entry */
+  #notesPane.drop-hi { outline:2px dashed rgba(255,210,75,.85); outline-offset:-2px; box-shadow:0 0 0 3px rgba(255,210,75,.25), 0 18px 50px rgba(0,0,0,.5); }
+  #notesTab.drop-hi { color:#ffd24b; border-color:rgba(255,210,75,.85); box-shadow:0 0 0 2px rgba(255,210,75,.45); }
   #notesHead { display:flex; align-items:center; gap:8px; padding:8px 10px 6px 12px; font-size:10.5px; letter-spacing:.12em; color:var(--acc); flex:0 0 auto; }
   #notesTitle { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #notesHeadCount { font-size:10.5px; color:var(--mut); letter-spacing:.02em; white-space:nowrap; }
@@ -447,6 +495,15 @@
   #notesClose:hover { opacity:1; }
   #notesAutoRow { display:flex; align-items:center; gap:6px; padding:0 12px 6px; font-size:11.5px; color:var(--mut); flex:0 0 auto; }
   #notesAutoRow input { accent-color:#e9c33c; }
+  /* APA reference mined from the document: hangs under the header (filename
+     stays in #notesHead), hanging-indent like a reference list, copy chip */
+  #notesCiteWrap { display:flex; align-items:flex-start; gap:8px; margin:0 12px 8px; padding:7px 9px; background:rgba(95,157,255,.06); border:1px solid var(--line); border-radius:8px; flex:0 0 auto; }
+  #notesCiteWrap[hidden] { display:none; }
+  #notesCite { flex:1 1 auto; min-width:0; font-size:11px; line-height:1.55; color:var(--mut); padding-left:16px; text-indent:-16px; overflow-wrap:break-word; }
+  #notesCite i { color:var(--txt); }
+  #notesCite .apa-partial { display:inline-block; font-size:9px; letter-spacing:.08em; border:1px solid var(--line); border-radius:8px; padding:0 6px; margin-left:6px; text-indent:none; white-space:nowrap; }
+  #notesCiteCopy { flex:0 0 auto; background:none; border:1px solid var(--line); color:var(--mut); border-radius:6px; font-size:10px; padding:1px 8px; cursor:pointer; }
+  #notesCiteCopy:hover { color:#9cc2ff; border-color:#9cc2ff; }
   #notesList { flex:1 1 auto; min-height:60px; overflow:auto; padding:2px 12px 8px; display:flex; flex-direction:column; gap:8px; scrollbar-width:thin; }
   .ne { background:rgba(233,195,60,.07); border:1px solid rgba(233,195,60,.3); border-radius:8px; padding:7px 9px; }
   .ne-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px; }
@@ -709,6 +766,11 @@
   body.dropping #hintBar { color:var(--txt); border-color:var(--acc); }
   #toastEl { position:fixed; bottom:130px; left:50%; transform:translateX(-50%) translateY(10px); background:#1c2940; border:1px solid var(--line); color:#fff; font-size:13px; padding:9px 16px; border-radius:10px; opacity:0; transition:.25s; z-index:50; pointer-events:none; }
   #toastEl.show { opacity:1; transform:translateX(-50%) translateY(0); }
+  /* highlight cue: briefly floats above body text the moment it is
+     highlighted — "Drag highlighted text to drop into NOTES pane".
+     pointer-events:none so the drag itself never snags on it. */
+  #selDropTip { position:fixed; z-index:40; transform:translateX(-50%); background:rgba(10,15,24,.93); border:1px solid rgba(255,210,75,.6); color:#ffd98a; font-size:11.5px; letter-spacing:.02em; padding:5px 11px; border-radius:8px; box-shadow:0 6px 22px rgba(0,0,0,.5); pointer-events:none; white-space:nowrap; }
+  #selDropTip[hidden] { display:none; }
   .pickhide { position:fixed; left:8px; top:8px; width:4px; height:4px; opacity:0.01; pointer-events:none; }
   .rotrow { display:flex; align-items:center; gap:8px; margin-top:8px; min-width:0; }
   .rotrow .btn { white-space:nowrap; flex-shrink:0; width:94px; padding:4px 6px; text-align:center; }

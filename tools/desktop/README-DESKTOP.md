@@ -244,7 +244,27 @@ Artifacts land in `src-tauri/target/<triple>/release/bundle/{dmg,nsis,msi}/`.
     enters repo zips, and installer builds carry it dormant (the DEV-only
     opener is stripped, so nothing can reach it).
 
-## 11. Release day checklist (every app update)
+## 11. Inno Setup project zip (durable builder — do not hand-assemble)
+
+  The flat `visidocsverse-inno-<VER>.zip` (project files at zip root, `resources/`
+  alongside) is generated, never hand-built. Templates live in
+  `src/tools/desktop/inno/` (`setup.iss`, `build-inno.bat`, `build-inno.sh`,
+  `neutralino.config.json` with `__VERSION__` placeholders, the proven
+  `VisiDocsVerse.ico`, and `pack-inno-zip.mjs`). Regenerate after any app change:
+
+    const packInno = eval(await fs.readTextFile('src/tools/desktop/inno/pack-inno-zip.mjs') + '\npackInnoZip;');
+    await packInno(fs, tools);   // runs inside execute_js; see pack-repo-zip.mjs header
+
+  The builder chains the canonical repo recipe for fresh `resources/`, stamps every
+  version from the APP_VERSION/tauri.conf lock, and FAILS LOUD unless all of these
+  hold: flat layout (no wrapper folder), binary-safe handling (text extensions only
+  through TextReader), CRLF `.iss`/`.bat`, the owner's AppId + `VisiDocsVerse`
+  brand + admin + wildcard-Files + `/DMyAppExe` guard + ISCC auto-finder,
+  APA features present, and byte-exact binary round-trips. `src/tools/desktop/inno/`
+  itself is excluded from the repo zip (installer sources ship in the generator,
+  not in app resources — see the NOTE in `pack-repo-zip.mjs`).
+
+## 12. Release day checklist (every app update)
 
   Phase A — build the new installer:
   1. Make the code changes in the Perchance workspace; test in preview.

@@ -1,14 +1,6 @@
 {
   "name": "visidocsverse",
   "version": "1.0.21",
-  "type": "module",
-  "private": false,
-  "description": "VisiDocsVerse — a living 3D document universe driven by orbital physics. Standalone offline build.",
-  "main": "index.html",
-  "scripts": {
-    "start": "npx serve .",
-    "dev": "npx serve .",
-    "setup:scan": "node ./tools/dcp-scan.mjs"
-  },
-  "license": "SEE LICENSE IN tools/desktop/EULA.txt"
+  "private": true,
+  "description": "VisiDocsverse - a living 3D document universe (desktop resources)"
 }

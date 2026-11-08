@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="VisiDocsverse — a living 3D document universe driven by orbital physics. Gravity equals relevance. Runs 100% offline.">
-<meta name="theme-color" content="#0d0f12">
-<title>VisiDocsverse — Living 3D Document Universe</title>
-<link rel="icon" type="image/png" href="src/assets/icon-512.png">
+<title>VisiDocsverse</title>
+<link rel="icon" href="src/assets/icon-512.png">
 <link rel="stylesheet" href="src/css/style.css">
 </head>
 <body>
+
+
 <div id="app">
   <canvas id="uniCv"></canvas>
   <div id="tabBar" class="glass"></div>
@@ -130,17 +130,17 @@
       <span id="bdMul" class="value-display">55%</span>
     </div>
     <div id="bgPal" title="Canvas backdrop — pick a photo texture (click the active one again to clear)">
-      <button class="bgsw" data-bg="bg02.jpg" style="background-image:url(src/backdrops/bg02.jpg)" title="rays"></button>
-      <button class="bgsw" data-bg="bg03.jpg" style="background-image:url(src/backdrops/bg03.jpg)" title="weave"></button>
-      <button class="bgsw" data-bg="bg04.jpg" style="background-image:url(src/backdrops/bg04.jpg)" title="splash"></button>
-      <button class="bgsw" data-bg="bg05.jpg" style="background-image:url(src/backdrops/bg05.jpg)" title="dunes"></button>
-      <button class="bgsw" data-bg="bg06.jpg" style="background-image:url(src/backdrops/bg06.jpg)" title="streak"></button>
-      <button class="bgsw" data-bg="bg07.jpg" style="background-image:url(src/backdrops/bg07.jpg)" title="stone"></button>
-      <button class="bgsw" data-bg="bg08.jpg" style="background-image:url(src/backdrops/bg08.jpg)" title="sand"></button>
-      <button class="bgsw" data-bg="bg09.jpg" style="background-image:url(src/backdrops/bg09.jpg)" title="plaster"></button>
-      <button class="bgsw" data-bg="bg10.jpg" style="background-image:url(src/backdrops/bg10.jpg)" title="clay"></button>
-      <button class="bgsw" data-bg="bg11.jpg" style="background-image:url(src/backdrops/bg11.jpg)" title="granite"></button>
-      <button class="bgsw" data-bg="bg12.jpg" style="background-image:url(src/backdrops/bg12.jpg)" title="relief"></button>
+      <button class="bgsw" data-bg="bg02.jpg" style="background-image:url(src/assets/backdrops/bg02.jpg)" title="rays"></button>
+      <button class="bgsw" data-bg="bg03.jpg" style="background-image:url(src/assets/backdrops/bg03.jpg)" title="weave"></button>
+      <button class="bgsw" data-bg="bg04.jpg" style="background-image:url(src/assets/backdrops/bg04.jpg)" title="splash"></button>
+      <button class="bgsw" data-bg="bg05.jpg" style="background-image:url(src/assets/backdrops/bg05.jpg)" title="dunes"></button>
+      <button class="bgsw" data-bg="bg06.jpg" style="background-image:url(src/assets/backdrops/bg06.jpg)" title="streak"></button>
+      <button class="bgsw" data-bg="bg07.jpg" style="background-image:url(src/assets/backdrops/bg07.jpg)" title="stone"></button>
+      <button class="bgsw" data-bg="bg08.jpg" style="background-image:url(src/assets/backdrops/bg08.jpg)" title="sand"></button>
+      <button class="bgsw" data-bg="bg09.jpg" style="background-image:url(src/assets/backdrops/bg09.jpg)" title="plaster"></button>
+      <button class="bgsw" data-bg="bg10.jpg" style="background-image:url(src/assets/backdrops/bg10.jpg)" title="clay"></button>
+      <button class="bgsw" data-bg="bg11.jpg" style="background-image:url(src/assets/backdrops/bg11.jpg)" title="granite"></button>
+      <button class="bgsw" data-bg="bg12.jpg" style="background-image:url(src/assets/backdrops/bg12.jpg)" title="relief"></button>
     </div>
     <div class="rotrow control-row" title="Pane backgrounds — far left clears the Visi|Docsverse / Active body / DEV panes to just text and controls, far right is the current glass (button toggles)">
       <button class="btn" id="paBtn">&#9703; Panes</button>
@@ -188,17 +188,19 @@
   </div>
   <div id="findSide" class="glass" hidden><input id="findInput2" placeholder="Find in body…" autocomplete="off" aria-label="Find in this body"><div id="findSideRow"><button class="btn" id="findPrev2" title="Previous match (Shift+Enter)">‹</button><button class="btn" id="findNext2" title="Next match (Enter)">›</button><span id="findCount2"></span><button class="btn" id="findClose2" title="Close find bar">×</button></div></div>
   <div id="gotoSide" class="glass" hidden aria-label="Where this document sits"><div id="gotoSideCap"><span>LOCATE DOCUMENT IN:</span><button id="gotoSideX" title="Close" aria-label="Close locate floater">✕</button></div><div id="gotoSideRow"><button id="gotoMain" title="Show where this document sits in the Main view (the reader stays put)">MAIN</button><button id="gotoThematic" title="Show which theme this document grounds in the Thematic view">THEMATIC</button><button id="gotoTags" title="Show which tag this document carries in the Tags view">TAGS</button></div></div>
+  <div id="selDropTip" hidden>Drag highlighted text to drop into NOTES pane</div>
   <button id="notesTab" hidden title="Open the Notes pane — one shared notepad for this body (fixed beside the reader)"><span>Notes</span></button>
   <aside id="notesPane" class="glass" hidden aria-label="Notes for the active body">
     <div id="notesHead"><span id="notesTitle">◉ NOTES</span><span id="notesHeadCount"></span><button id="notesClose" title="Close the Notes pane (unsaved composer text is kept as a draft)">✕</button></div>
+    <div id="notesCiteWrap" hidden><div id="notesCite" title="APA-style reference mined from this document - use copy to paste it into your paper"></div><button id="notesCiteCopy" title="Copy the APA reference for this document">copy</button></div>
     <label id="notesAutoRow" title="Auto-save: every pause in typing is pushed into the notepad as an entry. Off: nothing is kept until you press Save."><input type="checkbox" id="notesAutoCk" checked> Auto-save as I type</label>
     <div id="notesList"></div>
     <div id="notesComposer">
-      <textarea id="notesArea" maxlength="2000" placeholder="Write a note about this document…" aria-label="Compose a note"></textarea>
+      <textarea id="notesArea" maxlength="2000" placeholder="Write a note about this document… or drop a highlight here" aria-label="Compose a note"></textarea>
       <div id="notesSaveWrap"><button class="btn" id="notesSave" title="Push the composed text into the notepad as a new entry">Save</button></div>
       <div id="notesCount">0/2000</div>
       <div class="rowbtns">
-        <button class="btn" id="notesSelBtn" title="Append the text currently highlighted in the body as a note entry">＋ Add selection from document</button>
+        <button class="btn" id="notesSelBtn" title="Append the text currently highlighted in the body as a note entry (or drag the highlight straight into this pane)">＋ Add selection from document</button>
         <button class="btn danger" id="notesDelAll" title="Delete every note entry on this body">Delete all</button>
         <button class="btn" id="notesCancel" title="Discard the composed text and close the pane">Cancel</button>
       </div>
@@ -290,6 +292,7 @@ Keep them broad yet specific: Use tags for cross-cutting attributes (e.g., #Stat
 
 <div id="noteEdit" class="glass" hidden>
   <h4 id="noteEditTitle">Sticky note</h4>
+  <div id="noteEditCite" hidden title="APA-style reference mined from this document"></div>
   <textarea id="noteEditText" maxlength="2000" placeholder="2000 characters max…"></textarea>
   <div class="np-count"><span id="noteEditCount">0</span>/2000</div>
   <div class="rowbtns"><button class="btn" id="noteEditSave">Save</button><button class="btn danger" id="noteEditDelete">Delete</button><button class="btn" id="noteEditCancel">Cancel</button><button class="btn" id="noteEditPane" title="Open the full Notes pane for this body">Notes pane →</button></div>
@@ -299,12 +302,15 @@ Keep them broad yet specific: Use tags for cross-cutting attributes (e.g., #Stat
   <!-- document carousel: curved glass coverflow of the Active body (reader-pane trigger) -->
   <div id="carWrap" hidden><div id="carInner"><div id="carHead"><span id="carTitle">Carousel</span><span id="carCount"></span><label id="carZoomLab" title="Enlarge the carousel panes — up to 45% bigger"><span id="carZoomVal">100%</span><input id="carZoomRg" type="range" min="100" max="145" step="5" value="100" aria-label="Carousel pane size"></label><button id="carClose" title="Close the carousel">✕</button></div><div id="carStage"><div id="carZoomTip" title="Double-click the pane (or its ⤢ button) to open the whole original document">Double click to zoom<button id="carZoomJump" title="Jump to original file view — the whole original document fullscreen, landing on this page"><svg viewBox="0 0 28 32" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3h8l5 5v21H8z"/><path d="M16 3v5h5"/><path d="M14.5 23v-9"/><path d="M11 17.5l3.5-3.5L18 17.5"/></g></svg></button></div><div id="carTrack"></div><button class="car-arrow" id="carPrevB" title="Previous page">‹</button><button class="car-arrow" id="carNextB" title="Next page">›</button></div><div id="carHint">scroll sideways · drag · ← → keys · double-click a pane for the original · click outside to close</div></div></div>
   <!-- expand-pane overlay: whole original document in reader format, zoomable, over the carousel -->
-  <div id="carZoomWrap" hidden><div id="carZoomCard" class="glass"><div id="carZoomHead"><span id="carZoomTitle"></span><span id="carZoomSub">ORIGINAL</span><label id="carZoomLab2" title="Zoom the original document (up to 2×) — or hold Ctrl and scroll"><span id="carZoomVal2">100%</span><input id="carZoomRg2" type="range" min="100" max="200" step="10" value="100" aria-label="Original document zoom"></label><button id="carZoomClose" title="Back to the carousel (Esc)">✕</button></div><div id="carZoomBody"><div id="carZoomText" class="car-text"></div></div></div></div>
+  <div id="carZoomWrap" hidden><div id="carZoomCard" class="glass"><div id="carZoomHead"><span id="carZoomTitle"></span><span id="carZoomSub">ORIGINAL</span><label id="carZoomLab2" title="Zoom the original document (up to 2×) — or hold Ctrl and scroll"><span id="carZoomVal2">100%</span><input id="carZoomRg2" type="range" min="100" max="200" step="10" value="100" aria-label="Original document zoom"></label><button id="carZoomClose" title="Back to the carousel (Esc)">✕</button></div><div id="carZoomPageBar" hidden></div><div id="carZoomBody"><div id="carZoomText" class="car-text" title="Highlight text, then right-click to send it to notes"></div></div></div></div>
+<button id="origTopBtn" class="glass" hidden title="Back to the top of the original document">↑ Top</button>
 <!-- tags-view pop-out: every tag in the verse as pills on a glass card, click out / Esc to close -->
 <div id="tagPop" hidden><div class="tvp-card tvp-clear"><div class="tvp-head" title="Drag to move — double-click resets position and size"><span class="tvp-title">ALL TAGS</span><button class="tvp-x" data-tvclose="1" title="Close">✕</button></div><div class="tvp-tags"></div><button class="tvp-go" id="tagVerseBtn" data-tvverse="1">◈ Show tags view</button><div class="tvp-tips"><span class="tvp-term">Colors:</span><span class="tvp-exp"><span class="tagpill demo">#explicit</span> hand-written in body text · <span class="tagpill auto demo">#auto</span> derived from titles · <span class="tagpill manual demo">#manual<span class="mmark">M</span></span> you tagged by hand (gold M)</span><span class="tvp-term">Merge:</span><span class="tvp-exp">drag one tag onto another — the tag you drop onto keeps its name, the dragged tag joins it and disappears.</span><span class="tvp-term">Delete:</span><span class="tvp-exp">hover a tag and click its × to remove it from every body on this canvas. Merges and deletes affect this canvas only; deleted names stay suppressed until you write #tag in a body again.</span><span class="tvp-term">Rename:</span><span class="tvp-exp">double-click (or right-click) any tag here — in the reader or on its canvas body, right-click — to rename it everywhere on this canvas (prose, manual anchors and labels follow).</span><span class="tvp-term">Tag passages:</span><span class="tvp-exp">drag a tag onto highlighted text in the reader to pin it onto that exact passage (gold M — click the pill to jump back).</span><span class="tvp-term">Gold orbs:</span><span class="tvp-exp">a gold orb means the document shown in the reader sits in that tag — orange lines only mean tags share member documents, not membership.</span><span class="tvp-term">Confirms:</span><span class="tvp-exp"><span id="tvpConfirmTxt">tag delete/merge confirmations are on</span><button class="tvp-link tvp-confirms" data-tvconfirms="1" id="tvpConfirmBtn">click to stop asking</button></span></div><button class="tvp-go" data-tvguide="1" id="tagGuideBtn" title="Open the tagging guide">The Art of Tagging: A Quick Guide on How to Tag</button><span id="tvpGrip" title="Drag to resize this pane — double-click empty space to reset position and size">⤡</span></div></div>
 <div id="tagGuidePane" hidden><div class="tvp-card tvp-clear"><div class="tgp-head"><span class="tgp-title">The Art of Tagging: A Quick Guide on How to Tag</span><button class="help-edit-btn" data-tguide-edit="1" title="Edit this guide (this machine only)">✎ edit</button><button class="tgp-x" data-tguideclose="1" title="Close">✕</button></div><div class="tgp-body" id="tagGuideBody"></div></div></div>
 <div id="howStartPane" hidden><div class="tvp-card tvp-clear"><div class="tgp-head"><span class="tgp-title">How to start</span><button class="help-edit-btn" data-how-edit="1" title="Edit this guide (this machine only)">✎ edit</button><button class="tgp-x" data-howclose="1" title="Close">✕</button></div><div class="tgp-body" id="howStartBody"></div></div></div>
 <div id="srcPop" hidden><div class="tvp-card tvp-clear svp-card"><div class="svp-head"><span class="svp-kicker">SOURCE PREVIEW</span><span class="svp-sec" id="svpSec">Opening</span><span class="svp-rel" id="svpRel">release to close</span><button class="svp-x" id="svpX" title="Close">✕</button></div><h3 class="svp-title" id="svpTitle"></h3><div class="svp-body" id="svpBody"></div><div class="svp-cap" id="svpCap" hidden></div><div class="svp-foot" id="svpFoot"></div></div></div>
+
+
 
 <script>
 // Boot tracer: window-title breadcrumbs + a visible startup-failure box

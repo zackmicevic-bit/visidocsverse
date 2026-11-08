@@ -1,6 +1,7 @@
 // VisiDocsverse vault: local-first document store (browser adaptation of the Rust/SQLite pillar).
 // - Folder intake via File System Access API (showDirectoryPicker) + drag-drop + file picker
 // - Mass = word count + reference frequency. Connections = [[wikilinks]] + shared tags.
+import { gzipSync, gunzipSync, strToU8, strFromU8 } from './vendor/fflate.mjs';
 const LS_KEY = 'visidocsverse.v1';
 const TABS_KEY = 'visidocsverse.tabsV1'; // multi-canvas store: {tabs:[{id,name,docs,activeId,main,assoc:[tabIds]}], activeTabId} (assoc is mutual; empty = isolated)
 const TABS_CORRUPT_PREFIX = 'visidocsverse.tabsV1.corrupt.'; // forensic archives: raw store bytes saved here before any reseed overwrites them
@@ -217,6 +218,7 @@ function normalizeDoc(raw, fallbackName) {
     for (const e of r.noteLog.slice(0, 200)) {
       if (!e || typeof e.text !== 'string' || !e.text.trim()) continue;
       const ne = { id: (typeof e.id === 'string' && e.id.trim()) ? e.id.trim().slice(0, 32) : uid('n_'), text: e.text.slice(0, 2000), at: isFinite(e.at) ? Math.round(e.at) : Date.now() };
+      if (Number.isInteger(e.page) && e.page > 0 && e.page <= 100000) ne.page = e.page; // original folio page of a highlight-sourced entry (shown in the Notes pane)
       // pinned passage: where a sent highlight was created (same rich-anchor
       // shape as manual-tag spots — validated identically)
       const sp = e.spot;
@@ -283,9 +285,44 @@ function normalizeDoc(raw, fallbackName) {
     }
     if (!Object.keys(doc.manualTags).length) delete doc.manualTags;
   }
+  // original-page map: where each printed page begins in the stored text
+  // ({kind:'pdf'|'slides'|'sheets', count:N, starts:[char offsets]}). Recorded
+  // at intake from the real pagination (PDF pages, PPTX slides, XLSX sheets);
+  // the reader paints unobtrusive folio markers at these offsets so the
+  // rendered version stays citable against the real document. Offsets append
+  // -safe (OCR text only ever joins at the end) and survive recounts.
+  if (r.pageMap && typeof r.pageMap === 'object' && !Array.isArray(r.pageMap)) {
+    const kind = String(r.pageMap.kind || '');
+    const rawStarts = Array.isArray(r.pageMap.starts) ? r.pageMap.starts : [];
+    const clean = [];
+    for (const s of rawStarts.slice(0, 5000)) {
+      const n = Math.round(Number(s));
+      if (!isFinite(n) || n < 0) continue;
+      if (clean.length && n < clean[clean.length - 1]) continue; // keep monotonic
+      clean.push(n);
+    }
+    if (clean.length >= 1 && (kind === 'pdf' || kind === 'slides' || kind === 'sheets')) {
+      doc.pageMap = { kind, count: clean.length, starts: clean };
+    }
+  }
   // preserve unknown future fields only when JSON-safe (skip functions/DOM)
   for (const k of ['createdAt', 'updatedAt', 'mtime', 'color']) {
     if (r[k] !== undefined && (typeof r[k] === 'string' || typeof r[k] === 'number')) doc[k] = r[k];
+  }
+  // resolved original-file citation metadata: validated shape only, so a
+  // tampered backup row can never smuggle functions/DOM into the doc
+  if (r.citeMeta && typeof r.citeMeta === 'object' && !Array.isArray(r.citeMeta)) {
+    const cm = {};
+    if (typeof r.citeMeta.title === 'string' && r.citeMeta.title.trim().length >= 4) cm.title = r.citeMeta.title.trim().slice(0, 300);
+    if (Array.isArray(r.citeMeta.authors)) {
+      const au = [];
+      for (const a of r.citeMeta.authors.slice(0, 8)) {
+        if (a && typeof a.last === 'string' && a.last.trim().length >= 2) au.push({ first: String(a.first || '').slice(0, 40), last: a.last.trim().slice(0, 40) });
+      }
+      if (au.length) cm.authors = au;
+    }
+    if (Number.isInteger(r.citeMeta.year) && r.citeMeta.year >= 1500 && r.citeMeta.year <= new Date().getFullYear()) cm.year = r.citeMeta.year;
+    doc.citeMeta = cm;
   }
   return doc;
 }
@@ -411,6 +448,12 @@ export const vault = {
     try { raw = localStorage.getItem(TABS_KEY); } catch { raw = null; }
     try {
       if (raw) {
+        if (raw.slice(0, 6) === 'vdvz1:') { // compressed persist (see persist())
+          const bin = atob(raw.slice(6));
+          const gz = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) gz[i] = bin.charCodeAt(i);
+          raw = strFromU8(gunzipSync(gz));
+        }
         const o = JSON.parse(raw);
         if (o && Array.isArray(o.tabs) && o.tabs.every(t => t && (Array.isArray(t.docs) || Array.isArray(t.documents)))) {
           if (!o.tabs.length) {
@@ -461,8 +504,19 @@ export const vault = {
     this.persist();
   },
   persist() {
-    try { localStorage.setItem(TABS_KEY, JSON.stringify({ tabs: this.tabs, activeTabId: this.activeTabId })); }
-    catch { /* quota / private mode */ }
+    const raw = JSON.stringify({ tabs: this.tabs, activeTabId: this.activeTabId });
+    try { localStorage.setItem(TABS_KEY, raw); return; }
+    catch { /* quota — try the compressed form below */ }
+    // full-book texts can outgrow the ~5MB localStorage quota: gzip the same
+    // payload (≈4x smaller for prose) under a marked key the loader detects.
+    // Older builds only read the raw form, so raw stays the first attempt.
+    try {
+      const gz = gzipSync(strToU8(raw));
+      let bin = '';
+      const CH = 8192;
+      for (let i = 0; i < gz.length; i += CH) bin += String.fromCharCode.apply(null, gz.subarray(i, i + CH));
+      localStorage.setItem(TABS_KEY, 'vdvz1:' + btoa(bin));
+    } catch { /* private mode / truly full — session simply won't restore */ }
   },
   reset() { this.tabs = []; this.activeTabId = null; this.persist(); }, // empty-canvas reset: never reseeds sample docs
   // ---------- canvases (top tabs): separate doc sets, copy bodies between them ----------
