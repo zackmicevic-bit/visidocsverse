@@ -240,6 +240,9 @@ Artifacts land in `src-tauri/target/<triple>/release/bundle/{dmg,nsis,msi}/`.
     module script rewritten `src/app.js` → `src/js/app.js`)
   - `tools/` — `dcp-scan.mjs` + `desktop/` (current workspace copies)
   - NEVER include `main.pjs` (Perchance-only) or a root `README.md`.
+  - `src/site/` (Website Development sandbox) is workspace-only: it never
+    enters repo zips, and installer builds carry it dormant (the DEV-only
+    opener is stripped, so nothing can reach it).
 
 ## 11. Release day checklist (every app update)
 

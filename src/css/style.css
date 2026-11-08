@@ -1,5 +1,4 @@
-
-  :root { --bg:#0d1117; --glass:rgba(20,26,36,.72); --line:rgba(120,150,200,.16); --txt:#dbe4f5; --mut:#7d8aa3; --acc:#5f9dff; --sun:#ffce6b; }
+:root { --bg:#0d1117; --glass:rgba(20,26,36,.72); --line:rgba(120,150,200,.16); --txt:#dbe4f5; --mut:#7d8aa3; --acc:#5f9dff; --sun:#ffce6b; }
   * { box-sizing:border-box; }
   body { text-align:left; background:var(--bg); color:var(--txt); font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; margin:0; overflow:hidden; }
  #app { position:fixed; inset:0; }
@@ -135,6 +134,7 @@
   #findSideRow { display:flex; align-items:center; gap:6px; }
   #findInput2 { width:100%; box-sizing:border-box; background:rgba(10,14,20,.8); border:1px solid var(--line); color:var(--txt); border-radius:20px; padding:2px 9px; font-size:11px; outline:none; }
   #findCount2 { font-size:11px; color:var(--mut); white-space:nowrap; min-width:36px; text-align:center; }
+  #findClose2{margin-left:auto}
   body.light-canvas #findSide { color:#233044; background:rgba(255,255,255,.93); border-color:rgba(30,45,75,.28); box-shadow:0 8px 28px rgba(30,45,75,.2); }
   /* back-to-top tab: parked at the reader pane's bottom-right while scrolled */
   #docTopBtn { position:absolute; z-index:22; transition:transform .45s ease; background:rgba(10,15,24,.88); border:1px solid rgba(140,170,220,.38); color:var(--txt); border-radius:20px; padding:4px 12px; font-size:11px; cursor:pointer; box-shadow:0 8px 28px rgba(0,0,0,.5); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
@@ -318,6 +318,9 @@
   /* tagging guide: dev-editable glass pane opened from the tags card */
   #tagGuidePane { position:fixed; inset:0; z-index:220; display:flex; align-items:center; justify-content:center; padding:4vmin; box-sizing:border-box; pointer-events:none; }
   #tagGuidePane[hidden] { display:none; }
+  /* how-to-start pane: beginner guide, same glass card recipe as the tagging guide */
+  #howStartPane { position:fixed; inset:0; z-index:220; display:flex; align-items:center; justify-content:center; padding:4vmin; box-sizing:border-box; pointer-events:none; }
+  #howStartPane[hidden] { display:none; }
   #tagGuideBtn { margin-top:12px; white-space:normal; text-align:center; line-height:1.5; }
   .tgp-head { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
   .tgp-head .help-edit-btn { margin-top:0; flex:0 0 auto; }
@@ -479,7 +482,9 @@
      ink, bottomless, tilted, bases plugged through the card's bottom edge). */
   #gotoSide { position:absolute; z-index:22; display:flex; flex-direction:column; gap:6px; width:250px; background:rgba(10,15,24,.88); border:1px solid rgba(140,170,220,.38); border-radius:14px; padding:8px 8px 0; box-shadow:0 8px 28px rgba(0,0,0,.5); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
   #gotoSide[hidden] { display:none; }
-  #gotoSideCap { font-size:10px; letter-spacing:.14em; color:var(--mut); }
+  #gotoSideCap { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:10px; letter-spacing:.14em; color:var(--mut); }
+  #gotoSideX { background:none; border:none; color:inherit; cursor:pointer; font-size:11px; line-height:1; opacity:.7; padding:0 0 0 4px; }
+  #gotoSideX:hover { opacity:1; }
   #gotoSideRow { display:flex; gap:3px; }
   #gotoSideRow button { position:relative; flex:1 1 0; min-width:0; box-sizing:border-box; font-size:10.5px; font-weight:800; letter-spacing:.04em; line-height:1.5; text-align:center; color:#ffce6b; background:none; border:none; box-shadow:none; transform:translateY(8px); padding:4px 0 5px; cursor:pointer; white-space:nowrap; }
   #gotoSideRow button::before { content:''; position:absolute; inset:0; z-index:-1; background:var(--maintabbg, #11161f); border:1px solid rgba(255,200,100,.55); border-bottom:none; border-radius:9px 9px 0 0; transform:perspective(60px) rotateX(12deg); transform-origin:50% 100%; box-shadow:0 -2px 9px rgba(0,0,0,.4); }
@@ -684,7 +689,8 @@
   body.light-canvas #tabBar .tab.iso.tinted { color:#1a2a4a; }
   body.light-canvas #tabBar .tab.iso.tinted.active { color:#fff; background:rgba(200,40,40,.78); }
   body.light-canvas #tabBar .tabadd { color:#8a6a1f; }
-  body.light-canvas #tabBar .tabadd-out { color:#7a5c14; } /* standalone "+": deeper bronze for light canvas */
+  body.light-canvas #tabBar .tabadd-out { color:#7a5c14; border-color:rgba(154,98,0,.55); } /* standalone "+": deeper bronze for light canvas */
+  body.light-canvas #tabBar .tabadd-out:hover { color:#5a3c00; border-color:#8a6a1f; background:rgba(150,100,10,.14); }
   body.light-canvas #tabBar .tab.tabghost { color:#5a6b8c; border-color:rgba(35,80,180,.45); }
   body.light-canvas #tabBar .tab.tabghost:hover { color:#0a1430; border-color:#8a6a1f; background:rgba(150,100,10,.14); }
   body.light-canvas #tabBar .ugroup.ugroupghost { border-color:rgba(35,80,180,.45); }
@@ -1451,6 +1457,8 @@
       inset 0 1px 2px rgba(255,240,210,.25);
   }
   #tabBar.lux .tabadd, #tabBar.lux .tabadd-out { color:#E8C97A; }
+  #tabBar.lux .tab.tabadd-out { border-color:rgba(232,201,122,.6); }
+  #tabBar.lux .tab.tabadd-out:hover { border-color:#E8C97A; background:rgba(232,201,122,.10); }
   #tabBar.lux .vm { color:rgba(226,201,155,.7); }
   #tabBar.lux .vm:hover, #tabBar.lux .vm.on { color:#FFF3D6; }
   #tabBar.lux .vm.pilltoggle:hover { background:rgba(226,201,155,.18); border-color:rgba(226,201,155,.6); color:#FFF3D6; }
@@ -1748,7 +1756,7 @@
   /* permanently-dark floating surfaces keep light ink no matter the pane theme
      (their backgrounds never change, so their text must never follow it) */
   .glass, #tabBar, .sg-help-pop, .sg-menu { --txt:#dbe4f5; --mut:#7d8aa3; --line:rgba(120,150,200,.16); --acc:#5f9dff; --sun:#ffce6b; }
-  #ctxMenu { position:fixed; z-index:60; min-width:220px; padding:6px; }
+  #ctxMenu { position:fixed; z-index:340; min-width:220px; padding:6px; } /* above tagPop(210)/srcPop(215)/guide(220)/confirm(300)/license(310)/eula(320): rename + context menus must win over every pane */
   #ctxMenu .ctx-head { font-size:11px; color:var(--sun); padding:6px 10px 4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:260px; }
   #ctxMenu .ctx-item { display:block; width:100%; text-align:left; background:none; border:0; color:var(--txt); font-size:13px; padding:7px 10px; border-radius:7px; cursor:pointer; }
   #ctxMenu .ctx-item:hover { background:rgba(95,157,255,.18); }
@@ -1805,7 +1813,8 @@
   #tabBar .tab.iso.tinted:hover { background:color-mix(in srgb, var(--tabc) 28%, transparent); border-color:var(--tabc); color:#fff; }
   #tabBar .tab.iso.tinted.active { background:rgba(255,59,59,.40); border-color:rgba(255,120,120,.9); color:#fff; box-shadow:0 0 12px rgba(255,59,59,.5); }
   #tabBar .tabadd { color:var(--sun); font-weight:700; font-size:14px; }
-  #tabBar .tabadd-out { color:#e8a83e; } /* standalone-Universe "+": deeper amber, vs the inside-frame joining gold */
+  #tabBar .tab.tabadd-out { color:#e8a83e; background:none; border-style:dashed; border-color:rgba(232,168,62,.6); } /* standalone-Universe "+": always standing in its dashed box (deeper amber, vs the inside-frame joining gold) */
+  #tabBar .tab.tabadd-out:hover { color:#ffe1a1; border-color:#e8a83e; background:rgba(232,168,62,.10); }
   /* empty-row placeholders: dashed "add tab" frames that hold the pill's width when no projects exist (click starts one) */
   #tabBar .tab.tabghost { background:none; border-style:dashed; border-color:rgba(140,170,220,.5); color:var(--mut); }
   #tabBar .tab.tabghost:hover { color:#fff; border-color:var(--sun); background:rgba(255,206,107,.10); }
@@ -1822,10 +1831,13 @@
   #tabBar .viewmodes { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; row-gap:2px; gap:7px; padding:3px 4px 1px; font-size:11px; color:var(--mut); letter-spacing:.04em; position:relative; }
   /* true-centered tabs: Tag Inventory parks right of the row so the three folder tabs (+ their ?s) center on the pill alone; the ▴ toggle lives top-right beside the glass orb */
   #tabBar .viewmodes .taginv { position:absolute; right:2px; top:50%; transform:translateY(calc(-50% + 12px)); } /* parked hard right: clears the TAGS tab face (was 8px under it at pill width) */
+  #tabBar .viewmodes .howstart { position:absolute; left:2px; top:50%; transform:translateY(calc(-50% + 12px)); background:none; border:none; box-shadow:none; color:var(--mut); font-size:9.6px; letter-spacing:.06em; padding:4px 6px; white-space:nowrap; cursor:pointer; } /* discrete beginner link, parked hard left */
+  #tabBar .viewmodes .howstart:hover { color:var(--txt); text-decoration:underline; }
   #tabBar > .pilltoggle { position:absolute; right:8px; top:2px; transform:none; margin-left:0; }
   #tabBar .vm.pilltoggle { width:24px; height:24px; padding:0; line-height:1; font-size:15px; background:rgba(95,157,255,.12); color:var(--txt); border:1px solid var(--line); border-radius:7px; cursor:pointer; }
   #tabBar .vm.pilltoggle:hover { background:rgba(95,157,255,.28); color:#fff; text-decoration:none; }
   @media (max-width:760px) { #tabBar .viewmodes .taginv { position:relative; transform:none; } }
+  @media (max-width:760px) { #tabBar .viewmodes .howstart { position:relative; transform:none; } }
   #tabBar .vm { background:none; border:none; padding:1px 2px; font:inherit; font-size:11px; letter-spacing:.04em; color:var(--mut); cursor:pointer; }
   #tabBar .vm:hover { color:#fff; text-decoration:underline; }
   #tabBar .vm.on { color:var(--sun); font-weight:700; }
@@ -1887,6 +1899,13 @@
   #confirmModal h3 { margin:0 0 8px; font-size:16px; overflow-wrap:anywhere; }
   #confirmMsg { font-size:13px; line-height:1.6; color:var(--txt); overflow-wrap:anywhere; }
   #confirmModal .rowbtns { margin-top:14px; }
+  /* close guard: the "save before you go?" pane that holds a desktop window-close
+     while the file backup is stale (z-350 sits above every other modal). */
+  #closeGuardPane { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:350; width:min(400px,92vw); padding:18px 20px; }
+  #closeGuardPane[hidden] { display:none; }
+  #closeGuardPane h3 { margin:0 0 8px; font-size:16px; overflow-wrap:anywhere; }
+  #closeGuardMsg { font-size:13px; line-height:1.6; color:var(--txt); overflow-wrap:anywhere; }
+  #closeGuardPane .rowbtns { margin-top:14px; }
   /* upload progress tracker: centered popup that stays up while documents
      load — regular glass by default, gold cosmic-glass under luxury */
   #uploadProg { position:fixed; top:0; left:0; transform:translate(-50%,-50%); z-index:250; width:min(380px,92vw); padding:18px 20px; text-align:center; } /* JS-centered on the live canvas (placeUploadProg): midpoint of the free lane between the side panes and pills, clamped on-screen */

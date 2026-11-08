@@ -26,12 +26,52 @@ import { origPut, origGet, origKeys, origDelete } from './origstore.js';
 // servers and other shells (no Neutralino global) skip it entirely.
 if (typeof Neutralino !== 'undefined') {
   try { Neutralino.init(); } catch {}
+  // X-button close: with canvas work that isn’t backed up to a file yet,
+  // hold the exit and ask first (custom pane); otherwise exit at once.
   Neutralino.events.on('windowClose', () => {
-      Neutralino.app.exit();
+    let held = false;
+    try { held = needsBackupGuard() && showCloseGuardPane(); } catch {}
+    if (!held) { try { Neutralino.app.exit(); } catch {} }
   });
 }
 
 const $ = (s, r = document) => r.querySelector(s);
+// close-guard state lives at module TOP LEVEL on purpose: the content-
+// mutation call sites (closeCanvas, deletes, notes, tags, ingest, ...) are
+// top-level functions, while saveAllProjects itself is defined inside boot().
+// A finished "save project" marks the backup clean; every content edit below
+// clears it again. The guard fires only when real work exists on the canvas
+// (doc count > 0), so empty workspaces always close quietly.
+let backupClean = true; // nothing backed up yet this session
+function markBackupDirty() { backupClean = false; }
+function workspaceDocCount() { try { return vault.tabs.reduce((n, t) => n + (((t && t.docs) || []).length), 0); } catch { return 0; } }
+function needsBackupGuard() { return workspaceDocCount() > 0 && !backupClean; }
+function showCloseGuardPane() {
+  const box = $('#closeGuardPane');
+  if (!box) return false;
+  try {
+    const n = workspaceDocCount();
+    const tabs = vault.tabs.filter(t => t && t.docs && t.docs.length).length;
+    $('#closeGuardMsg').textContent = `You have ${n} document${n === 1 ? '' : 's'} across ${tabs} canvas${tabs === 1 ? '' : 'es'}. Closing now loses everything that isn’t backed up — if you skip “Save project”, that work will be gone. “Save project” keeps a backup copy on your computer first.`;
+  } catch {}
+  box.hidden = false;
+  try {
+    const ex = $('#closeGuardExit');
+    ex.disabled = true; // arm the destructive button: the X-click that
+    setTimeout(() => { try { ex.disabled = false; } catch {} }, 500); // summoned the pane can’t instantly confirm the loss
+    const sv = $('#closeGuardSave');
+    if (sv) sv.focus();
+  } catch {}
+  return true;
+}
+function hideCloseGuardPane() { const box = $('#closeGuardPane'); if (box) box.hidden = true; }
+function exitAppNow() {
+  hideCloseGuardPane();
+  try { if (typeof Neutralino !== 'undefined') { Neutralino.app.exit(); return; } } catch {}
+  try { window.close(); } catch {}
+  toast('This preview cannot close its own window — close it yourself when ready', 5000);
+}
+
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 // Vendor-asset base URL (pdf.js worker, tesseract core/lang/worker): the
 // directory layout differs between the live preview (src/*.js + src/vendor/,
@@ -45,7 +85,7 @@ function vendorBase() {
     const m = new URL('./vendor/', import.meta.url);
     if (m.origin === location.origin) return m.href;
   } catch { /* cross-origin module base (live preview) — fall through */ }
-  return new URL('src/vendor/', location.href).href;
+  return new URL('src/js/vendor/', location.href).href;
 }
 
 let uni = null; // active canvas universe (each canvas keeps its own persistent universe)
@@ -836,6 +876,14 @@ function syncInkContrast() {
         ink = best;
       }
       tb.style.setProperty('--saveink', ink);
+    }
+    for (const bid of ['tetherDotsBtn', 'tetherSparseBtn', 'tetherDashedBtn']) { // Tethers 2/3/4 pills sit transparent over live canvas: same contrast rule
+      const bb = document.getElementById(bid); if (!bb || bb.getBoundingClientRect().width < 2) continue;
+      if (bb.classList.contains('on')) { bb.style.color = ''; continue; } // active pill keeps its .on ink
+      let bbg = sampleBase(bb.getBoundingClientRect());
+      const sp = bb.closest('.splitab');
+      const sc2 = sp ? rgba(getComputedStyle(sp).backgroundColor) : null; if (sc2) bbg = over(sc2, bbg);
+      bb.style.color = lum(bbg) > 0.45 ? '#17222f' : '#eef2fb';
     }
   } catch {}
 }
@@ -3167,12 +3215,14 @@ function closeHelpEditor() {
   helpEditingKey = null;
   glossEditingWord = null;
   guideEditing = false;
+  howEditing = false;
   const modal = document.querySelector('#helpEditModal');
   if (modal) { modal.hidden = true; modal.style.zIndex = ''; } // clear any confirm-modal bump (see confirmDlg editKey)
 }
 function saveHelpEditor(reset) {
   if (glossEditingWord) { saveGlossEditor(reset); return; }
   if (guideEditing) { saveGuideEditor(reset); return; }
+  if (howEditing) { saveHowEditor(reset); return; }
   if (!helpEditingKey) return;
   const area = document.querySelector('#helpEditText');
   if (reset) {
@@ -3680,8 +3730,11 @@ function fillTabRow() {
       if (!ghost) return;
       groups = [ghost];
     }
-    // the "+" buttons are overflow controls: park them out of the way while measuring (they reappear below if nothing fits)
-    const plusBtns = [...row.querySelectorAll('.ugroup [data-addto]:not([data-filltab])'), ...row.querySelectorAll(':scope > [data-addtab]:not([data-filltab])')];
+    // the inside-frame join "+" buttons are overflow controls: park them out of
+    // the way while measuring (they reappear below if nothing fits). The
+    // standalone outside-frame "+" always stands in its dashed box, so it is
+    // measured in place and never parked.
+    const plusBtns = [...row.querySelectorAll('.ugroup [data-addto]:not([data-filltab])')];
     plusBtns.forEach(b => { b.style.display = 'none'; });
     const makeGhost = (joinId, joinTitle) => {
       const g = document.createElement('button');
@@ -3728,7 +3781,7 @@ function fillTabRow() {
     }
     if (floorBumped) { try { saveUi(); } catch {} }
     try { window.__filldbg = {clusterW, placed, groups: groups.length, trace, barW: Math.round(bar.getBoundingClientRect().width), at: Date.now()}; } catch {}
-    // the "+" buttons only appear when the row is full and a new tab would open a second row (fills carry data-addto too, so exclude them)
+    // the join "+" buttons only appear when the row is full and a new tab would open a second row (fills carry data-addto too, so exclude them); the standalone "+" stands always in its dashed box
     const showPlus = placed === 0;
     plusBtns.forEach(b => { b.style.display = showPlus ? '' : 'none'; });
     try { placeTabBar(); } catch {} // re-clamp with the filled row (exact right-edge fit, floor ratchet)
@@ -3813,7 +3866,8 @@ function renderTabs() {
   // Lone tabs are universes of one — the "+" sits right after them.
   // Members never carry one. The ACTIVE universe's frame additionally carries
   // a standalone "+" right after the frame: same one-click creation, but the
-  // newcomer starts outside every universe instead of joining this one.
+  // newcomer starts outside every universe instead of joining this one — it
+  // always stands in its dashed box (never parked as an overflow control).
   const plusAfter = new Map(); // last-box tab id -> carrier tab (whose universe a "+" joins)
   for (const t of vault.tabs) {
     const g = projectGroup(t.id);
@@ -3850,7 +3904,7 @@ function renderTabs() {
     }).join('');
   })() + (vault.tabs.length
     ? '' // no trailing add button: every universe already carries its own "+"
-    : `<span class="ugroup ugroupghost live" title="Empty universe — click Create a project to start your first project"><button class="tab tabghost" data-addtab="1" title="${esc(plusCaption('createTab'))}">Create a project</button></span>`) + `</span>` + `<span class="viewmodes"><span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="viewMain"><span class="help-text" data-help-text="viewMain">${esc(helpTexts.viewMain)}</span><button class="help-edit-btn" data-help-edit="viewMain" title="Edit this explanation">✎ edit</button></div></span><button class="vm vmpill" data-vm="main" title="Main view — the regular canvas universe (one body per document)">MAIN</button><span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="viewThematic"><span class="help-text" data-help-text="viewThematic">${esc(helpTexts.viewThematic)}</span><button class="help-edit-btn" data-help-edit="viewThematic" title="Edit this explanation">✎ edit</button></div></span><button class="vm vmpill" data-vm="thematic" title="Thematic view — the ideas the documents share, distilled into theme bodies">THEMATIC</button><span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="viewTag"><span class="help-text" data-help-text="viewTag">${esc(helpTexts.viewTag)}</span><button class="help-edit-btn" data-help-edit="viewTag" title="Edit this explanation">✎ edit</button></div></span><button class="vm vmpill" data-vm="tag" title="Tags view — the labels on the documents, one body per tag (same as Show tags view in the tags pane)">TAGS</button><button class="vm taginv" data-tagpop="1" title="See Tags Inventory — every tag in this verse as pills on a glass card">See Tags Inventory</button></span><button class="vm pilltoggle" data-pilltoggle="1" title="${pillCollapsed ? 'Restore the projects pill' : 'Collapse the projects pill (view modes stay)'}">${pillCollapsed ? '▾' : '▴'}</button>`
+    : `<span class="ugroup ugroupghost live" title="Empty universe — click Create a project to start your first project"><button class="tab tabghost" data-addtab="1" title="${esc(plusCaption('createTab'))}">Create a project</button></span>`) + `</span>` + `<span class="viewmodes"><span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="viewMain"><span class="help-text" data-help-text="viewMain">${esc(helpTexts.viewMain)}</span><button class="help-edit-btn" data-help-edit="viewMain" title="Edit this explanation">✎ edit</button></div></span><button class="vm howstart" data-howstart="1" title="How to start — a quick guide to projects, tabs and separate universes">How to start</button><button class="vm vmpill" data-vm="main" title="Main view — the regular canvas universe (one body per document)">MAIN</button><span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="viewThematic"><span class="help-text" data-help-text="viewThematic">${esc(helpTexts.viewThematic)}</span><button class="help-edit-btn" data-help-edit="viewThematic" title="Edit this explanation">✎ edit</button></div></span><button class="vm vmpill" data-vm="thematic" title="Thematic view — the ideas the documents share, distilled into theme bodies">THEMATIC</button><span class="hw"><span class="sg-help" data-sghelp tabindex="0">?</span><div class="sg-help-pop" role="note" data-help-pop="viewTag"><span class="help-text" data-help-text="viewTag">${esc(helpTexts.viewTag)}</span><button class="help-edit-btn" data-help-edit="viewTag" title="Edit this explanation">✎ edit</button></div></span><button class="vm vmpill" data-vm="tag" title="Tags view — the labels on the documents, one body per tag (same as Show tags view in the tags pane)">TAGS</button><button class="vm taginv" data-tagpop="1" title="See Tags Inventory — every tag in this verse as pills on a glass card">See Tags Inventory</button></span><button class="vm pilltoggle" data-pilltoggle="1" title="${pillCollapsed ? 'Restore the projects pill' : 'Collapse the projects pill (view modes stay)'}">${pillCollapsed ? '▾' : '▴'}</button>`
   bar.classList.toggle('pillCollapsed', pillCollapsed);
   const pillDot = bar.querySelector('.glassDot'); if (pillDot) pillDot.onclick = glazeDotClick; // renderTabs rebuilds the pill, so re-wire its dot every render
   const pillLux = bar.querySelector('.luxDot'); if (pillLux) pillLux.onclick = luxDotClick; // same: luxury orb is rebuilt too
@@ -3938,6 +3992,7 @@ async function closeCanvas(id) {
     renderDoc();
     updateStats();
     renderTabs();
+    markBackupDirty();
     toast(`Canvas “${t.name}” closed`);
     return;
   }
@@ -3966,6 +4021,7 @@ async function closeCanvas(id) {
     updateStats();
   }
   renderTabs();
+  markBackupDirty();
   toast(`Canvas “${t.name}” closed`);
 }
 
@@ -3984,6 +4040,7 @@ async function removeFromCanvas(id) {
   if (!await confirmDlg(`Remove “${vault.titleOf(d)}” from “${vault.tab().name}” only?${elsewhere ? ` (Still in ${elsewhere} other canvas${elsewhere === 1 ? '' : 'es'}.)` : ''}`, 'Remove')) return;
   const wasSun = id === activeId;
   vault.remove(id);
+  markBackupDirty();
   selSet.delete(id); // drop it from any box selection too
   if (!selSet.size) hideBoxSel();
   if (activeId != null && (wasSun || !vault.byId(activeId))) activeId = vault.docs[0]?.id || null; // general state (null) stays general
@@ -4004,6 +4061,7 @@ async function deleteEverywhere(id) {
     : `“${vault.tab().name}” only (isolated verse — other canvases keep their copies)`;
   if (!await confirmDlg(`Delete “${vault.titleOf(d)}” from ${where}? This cannot be undone.`, 'Delete everywhere')) return;
   const n = vault.removeEverywhere(id);
+  markBackupDirty();
   pruneSel(); // universe-wide purge can take selected bodies with it
   rebuildAllTabs();
   if (activeId != null && !vault.byId(activeId)) activeId = vault.docs[0]?.id || null; // general state (null) stays general
@@ -4028,6 +4086,7 @@ async function removeAllFromCanvas() {
   activeId = null;
   rebuild(null);
   renderTabs();
+  markBackupDirty();
   toast(`Removed everything from “${t.name}”`);
     purgeImages(); // picture bytes nobody references anymore get swept
 }
@@ -4050,6 +4109,7 @@ async function removeIdsFromCanvas(ids) {
   renderDoc();
   updateStats();
   renderTabs();
+  markBackupDirty();
   toast(`Deleted ${targets.length} ${targets.length === 1 ? 'body' : 'bodies'} (+ docs) from “${t.name}”`);
     purgeImages(); // picture bytes nobody references anymore get swept
 }
@@ -4069,6 +4129,7 @@ async function removeUniverseFromCanvas() {
   renderDoc();
   updateStats();
   renderTabs();
+  markBackupDirty();
   toast(`Deleted the “${t.name}” universe + docs`);
     purgeImages(); // picture bytes nobody references anymore get swept
 }
@@ -4374,6 +4435,26 @@ function refreshNoteViews(id) {
   if (notePopId === id && !$('#notePop').hidden) renderNotePop(false);
   try { if (notesOpen && notesDocId === id) renderNotesPane(); } catch {}
   try { syncNotesTab(); } catch {}
+  try { paintNoteBoxes(id); } catch {} // inventory note boxes flip yellow the moment a note lands — no list rebuild needed
+}
+function paintNoteBoxes(id) { // repaint every visible row note box for a doc (and its kin copies): filled sticky vs empty outline + count title
+  let ids = [id];
+  try { for (const x of kinDocs(id)) if (x && x.id && !ids.includes(x.id)) ids.push(x.id); } catch {}
+  for (const nid of ids) {
+    let n = 0; try { n = noteCount(nid) || 0; } catch {}
+    const svg = n ? NOTE_SVG_FILLED : NOTE_SVG_EMPTY;
+    const tip = n ? ` (${n} ${n === 1 ? 'entry' : 'entries'})` : ' (no notes yet)';
+    let boxes = [];
+    try { boxes = [...document.querySelectorAll('.bl-note[data-notes-pane="' + CSS.escape(String(nid)) + '"]')]; } catch { continue; }
+    for (const b of boxes) {
+      try {
+        b.classList.toggle('empty', !n);
+        b.innerHTML = svg;
+        const base = String(b.title || '').split(' (')[0];
+        b.title = base + tip;
+      } catch {}
+    }
+  }
 }
 function saveNote(id, text) { // legacy quick editors: rewrite the latest entry (or append the first)
   const d = vault.byId(id); if (!d) return false;
@@ -4384,6 +4465,7 @@ function saveNote(id, text) { // legacy quick editors: rewrite the latest entry 
     else log.push({ id: 'n_' + Math.random().toString(36).slice(2, 10), text, at: Date.now() });
   } else if (log.length) log.pop(); // saving empty clears the latest entry
   delete d.note;
+  markBackupDirty();
   vault.persist();
   syncNoteKin(id);
   refreshNoteViews(id);
@@ -4415,6 +4497,7 @@ function addNoteEntry(id, text, spot) { // append one entry (Notes pane, send-to
   noteLogOf(d).push(e);
   delete d.note;
   vault.persist();
+  markBackupDirty();
   syncNoteKin(id);
   refreshNoteViews(id);
   return e;
@@ -4427,6 +4510,7 @@ function setNoteEntry(id, entryId, text) {
   if (!text.trim()) return deleteNoteEntry(id, entryId);
   e.text = text;
   vault.persist();
+  markBackupDirty();
   syncNoteKin(id);
   refreshNoteViews(id);
   return true;
@@ -4437,6 +4521,7 @@ function deleteNoteEntry(id, entryId) {
   const i = log.findIndex(x => x.id === entryId);
   if (i < 0) return false;
   log.splice(i, 1);
+  markBackupDirty();
   if (d.notePending === entryId) delete d.notePending;
   delete d.note;
   vault.persist();
@@ -4449,6 +4534,7 @@ function clearNoteEntries(id) {
   const n = noteLogOf(d).length;
   if (!n) return 0;
   d.noteLog = [];
+  markBackupDirty();
   delete d.notePending; delete d.note;
   vault.persist();
   syncNoteKin(id);
@@ -4564,16 +4650,24 @@ function openTagPop(hiDisp) {
   applyTvpGeom();
   box.hidden = false;
   // sun linkage: the highlighted tag (explicit, else the canvas-selected one)
-  // glows gold; off-screen pills auto-scroll into view
+  // glows gold; off-screen pills auto-scroll into view (explicit list scroll
+  // so a pill below the fold always lands fully in view)
   try {
     let hi = hiDisp;
     if (!hi && typeof activeId === 'string') { const sr = tagById(activeId); hi = sr && sr.terms && sr.terms[0]; }
     const listHi = box.querySelector('.tvp-tags');
     if (hi && listHi) {
-      const pill = listHi.querySelector(`[data-tpill="${CSS.escape(hi)}"]`);
+      let pill = null;
+      try { pill = listHi.querySelector(`[data-tpill="${CSS.escape(hi)}"]`); } catch {}
+      if (!pill) {
+        const want = String(hi).trim().toLowerCase();
+        for (const p of listHi.querySelectorAll('[data-tpill]')) {
+          if (String(p.dataset.tpill || '').trim().toLowerCase() === want) { pill = p; break; }
+        }
+      }
       if (pill) {
         pill.classList.add('sunlit');
-        try { pill.scrollIntoView({ block: 'nearest' }); } catch {}
+        try { ensureTvpPillVisible(listHi, pill); } catch {}
       }
     }
   } catch {}
@@ -4629,10 +4723,87 @@ function openTagGuide() {
   box.hidden = false;
 }
 function closeTagGuide() { const box = $('#tagGuidePane'); if (box) box.hidden = true; }
+// ---------- how-to-start: the same glass card recipe as the tagging guide,
+// opened from the discrete "How to start" link at the pill's bottom-left.
+// Machine-only like the guide (localStorage `visidocsverse.howStart`): edits
+// never ship to installers or backups, and the ✎ button only appears in the
+// editor preview (body.help-can-edit gates it via CSS, same as every helper).
+// Paragraphs starting with "N · Title." keep their bold lead when rendered.
+const HOWSTART_DEFAULT = [
+  '1 · Create your first project. Click the “Create a project” tab at the top of the top pill. That tab is also called a canvas — it is your document universe. Then double-click the new tab to rename it anything you like.',
+  '2 · Upload your files or a whole folder. In the left pane, click “⤓ Folder” to bring in a whole folder, or “⤓ Files” to pick individual files — or simply drop files straight onto the canvas. Each file becomes a body in your universe. Your originals never move: they stay right where they are on your computer.',
+  '3 · Add tabs when you need room. The “+” inside your project\u2019s frame adds more tabs to the same universe. Extra tabs are handy for isolating a smaller part of the main tab\u2019s document universe, or for spreading out when the main canvas gets crowded. They always stay connected to the main universe tab — uploads, copies, deletes and twin motion span the whole group.',
+  '4 · Start something completely separate. Click the dashed “+” box that sits beside — outside — your project\u2019s cluster of tabs. That creates a brand-new, standalone universe: separate, and not associated with the current project cluster.',
+  '5 · Copy single things easily. Right-click any body (or a box-selected bunch of bodies) and choose “⤓ Copy to …” to send it straight into any other tab, wherever that tab lives. Copies only — the originals never move.',
+  '6 · Copy everything at once. Right-click a tab and choose “⧉ Copy all content”. Then either right-click the destination tab and choose “⤓ Paste …”, or simply right-click its empty canvas and choose “⤓ Paste …” there. Whole canvases travel too: click the small “save project” label on a tab to keep a backup copy on your computer, then “Open Saved Project” in the left pane to merge it into any tab — so nothing is ever stuck.',
+];
+let howStartText = null; // null = pristine default above
+try { const g = localStorage.getItem('visidocsverse.howStart'); if (typeof g === 'string' && g.trim()) howStartText = g; } catch { /* fresh prefs */ }
+function howStartRaw() {
+  return (typeof howStartText === 'string' && howStartText.trim()) ? howStartText : HOWSTART_DEFAULT.join('\n\n');
+}
+function saveHowStart() {
+  try {
+    if (typeof howStartText === 'string' && howStartText.trim()) localStorage.setItem('visidocsverse.howStart', howStartText);
+    else localStorage.removeItem('visidocsverse.howStart');
+  } catch { /* private mode */ }
+}
+function renderHowStart() {
+  const b = $('#howStartBody');
+  if (!b) return;
+  b.innerHTML = howStartRaw().split(/\n\s*\n/).map(p => {
+    const t = p.trim();
+    if (!t) return '';
+    const m = t.match(/^(\d+\s*·[^.]*\.)\s*/);
+    const body = m ? t.slice(m[1].length).trim() : t;
+    return `<p>${m ? `<b>${esc(m[1])}</b> ` : ''}${esc(body).replace(/\n/g, '<br>')}</p>`;
+  }).join('');
+}
+function openHowStart() {
+  const box = $('#howStartPane');
+  if (!box) return;
+  const card = box.querySelector('.tvp-card');
+  const darkCanvas = (typeof bgShade === 'number' ? bgShade : 1) > 0.5;
+  if (card) {
+    card.classList.toggle('tvp-clear', darkCanvas);
+    card.classList.toggle('tvp-frost', !darkCanvas);
+  }
+  renderHowStart();
+  box.hidden = false;
+}
+function closeHowStart() { const box = $('#howStartPane'); if (box) box.hidden = true; }
+let howEditing = false;
+function openHowEditor() {
+  if (!helpEditAllowed()) return;
+  howEditing = true; glossEditingWord = null; helpEditingKey = null; guideEditing = false;
+  const modal = document.querySelector('#helpEditModal');
+  const title = document.querySelector('#helpEditTitle');
+  const area = document.querySelector('#helpEditText');
+  const hint = document.querySelector('#helpEditHint');
+  if (!modal || !area) return;
+  if (title) title.textContent = 'Edit How to start guide';
+  if (hint) hint.textContent = 'Saved on this machine only — the guide never rides backups or installers. A blank line starts a new paragraph. Begin a paragraph with “N · Title.” to keep its bold lead.';
+  area.value = howStartRaw();
+  modal.hidden = false;
+  setTimeout(() => { try { area.focus(); area.select(); } catch {} }, 30);
+}
+function saveHowEditor(reset) {
+  if (reset) howStartText = null;
+  else {
+    const area = document.querySelector('#helpEditText');
+    const v = area ? area.value.trim() : '';
+    howStartText = v || null;
+  }
+  saveHowStart();
+  renderHowStart();
+  howEditing = false;
+  closeHelpEditor();
+  toast(reset ? 'How to start guide reset to default' : 'How to start guide saved (this machine only)');
+}
 let guideEditing = false;
 function openGuideEditor() {
   if (!helpEditAllowed()) return;
-  guideEditing = true; glossEditingWord = null; helpEditingKey = null;
+  guideEditing = true; glossEditingWord = null; helpEditingKey = null; howEditing = false;
   const modal = document.querySelector('#helpEditModal');
   const title = document.querySelector('#helpEditTitle');
   const area = document.querySelector('#helpEditText');
@@ -5601,6 +5772,49 @@ function focusTagOrigin(disp) {
   toast(`#${d} → “${vault.titleOf(doc)}”`);
   return true;
 }
+// reader tag -> ALL TAGS pane linkage: when the tag pane stands open,
+// a reader click gilds the same pill there (gold sunlit) and scrolls it
+// into view, without rebuilding the pane or stealing its scroll.
+function ensureTvpPillVisible(list, pill) {
+  // guaranteed in-list scroll: brings the pill fully inside the visible
+  // band of the tags list (8px breathing room). Operates only on the
+  // list's own scrollTop, so the page/reader never jump. Falls back to
+  // scrollIntoView constrained to the list when measures are unavailable.
+  const lr = list.getBoundingClientRect();
+  const pr = pill.getBoundingClientRect();
+  if (!lr.height || !pr.height) { try { pill.scrollIntoView({ block: 'nearest' }); } catch {} return; }
+  if (pr.top < lr.top) list.scrollTop -= (lr.top - pr.top) + 8;
+  else if (pr.bottom > lr.bottom) list.scrollTop += (pr.bottom - lr.bottom) + 8;
+  // final guard: fractional/rrounding edge still clipping -> nudge into view
+  try {
+    const lr2 = list.getBoundingClientRect();
+    const pr2 = pill.getBoundingClientRect();
+    if (pr2.top < lr2.top - 1) list.scrollTop -= (lr2.top - pr2.top) + 8;
+    else if (pr2.bottom > lr2.bottom + 1) list.scrollTop += (pr2.bottom - lr2.bottom) + 8;
+  } catch {}
+}
+function highlightTagInPop(disp) {
+  try {
+    const box = document.querySelector('#tagPop');
+    if (!box || box.hidden) return false;
+    const list = box.querySelector('.tvp-tags');
+    if (!list) return false;
+    const want = String(disp || '').trim().toLowerCase().replace(/^(auto|manual)\//, '');
+    if (!want) return false;
+    const pills = list.querySelectorAll('[data-tpill]');
+    if (!pills.length) return false;
+    let hit = null;
+    pills.forEach(p => {
+      const v = String(p.dataset.tpill || p.dataset.tag || '').trim().toLowerCase().replace(/^(auto|manual)\//, '');
+      if (v === want && !hit) hit = p;
+    });
+    if (!hit) return false;
+    pills.forEach(p => { if (p !== hit) p.classList.remove('sunlit'); });
+    hit.classList.add('sunlit');
+    try { ensureTvpPillVisible(list, hit); } catch {}
+    return true;
+  } catch { return false; }
+}
 // click a tag in the ALL TAGS pane: enter the TAGS view and sun that exact tag
 // body, so the pane and the TAGS canvas agree. Entering from Main/Thematic (or
 // a stale lens) swaps the universe first, then the tag body is claimed as the
@@ -5635,6 +5849,13 @@ function focusTagInTagsView(disp) {
   try { centerCamOn(rec.id, false); } catch {}
   // pane stays open: re-highlight it on the picked tag so card and canvas agree
   try { openTagPop(d); } catch {}
+  // manual-tag pick: remember it for the reader (gold clone pill in doc TAGS
+  // rows) and feed the find box so every instance lights up in the reader
+  try {
+    const manDocs = (t.docs || []).filter(x => (x.tags || []).some(tg => String(tg).toLowerCase().startsWith('manual/') && normDisp(tg) === d));
+    if (manDocs.length) { selManualTag = d; setReaderFind(d, true); }
+    else if (selManualTag) { if (findTerm === selManualTag) clearReaderFind(); selManualTag = null; }
+  } catch {}
   try { $('#searchPop').innerHTML = ''; $('#searchInput').value = ''; matchSet = null; } catch {}
   if (window.innerWidth <= 760) $('#docPanel').classList.add('open');
   toast(`#${d} in Tags view — grounds ${rec.members.length} ${rec.members.length === 1 ? 'body' : 'bodies'}`);
@@ -5663,6 +5884,7 @@ function deleteTag(disp) {
   vault.persist();
   try { rebuild(activeId); } catch {}
   try { if (!$('#tagPop').hidden) openTagPop(); } catch {}
+  markBackupDirty();
   toast(`Deleted #${d} from ${carriers.length} ${carriers.length === 1 ? 'body' : 'bodies'} — write #${d} in any body to bring it back`);
   return carriers.length;
 }
@@ -5705,6 +5927,7 @@ function mergeTags(src, dst) {
   vault.persist();
   try { rebuild(activeId); } catch {}
   try { if (!$('#tagPop').hidden) openTagPop(); } catch {}
+  markBackupDirty();
   toast(`Merged #${s} into #${g} — ${carriers.length} ${carriers.length === 1 ? 'body' : 'bodies'} now carry #${g}`);
   return carriers.length;
 }
@@ -5750,6 +5973,7 @@ function deleteTagEverywhere(disp) {
   vault.persist();
   try { rebuild(activeId); } catch {}
   try { if (!$('#tagPop').hidden) openTagPop(); } catch {}
+  markBackupDirty();
   toast(`Deleted #${d} from ${bodies} ${bodies === 1 ? 'body' : 'bodies'} across ${tabs.length} ${tabs.length === 1 ? 'tab' : 'tabs'} — write #${d} in any body to bring it back`);
   return bodies;
 }
@@ -5856,6 +6080,7 @@ function renameTag(oldDisp, newRaw) {
     }
   } catch {}
   try { if (!$('#tagPop').hidden) openTagPop(); } catch {}
+  markBackupDirty();
   toast(`Renamed #${s} to #${g} — ${carriers.length} ${carriers.length === 1 ? 'body' : 'bodies'} now ${carriers.length === 1 ? 'carries' : 'carry'} #${g}`);
   return carriers.length;
 }
@@ -5907,6 +6132,8 @@ function applyTvpGeom() {
 // text), re-applied after each reader render, cleared with Esc (or by
 // deleting the term).
 let findTerm = '', findSpans = [], findIdx = -1, lastSearchQ = '', findSideOn = false;
+let selManualTag = null; // manual tag picked in ALL TAGS: its clone pill gilds gold in doc TAGS rows + find auto-fills
+let lastFindDocId = null; // find terms never carry between documents: cleared whenever a new doc renders
 const MAX_FIND_HITS = 500;
 function unwrapFind() {
   const root = $('#docBody');
@@ -5964,7 +6191,7 @@ function syncFindBar() {
   const p = $('#docPanel');
   const panelOpen = p && !p.hidden && p.offsetParent !== null && !p.classList.contains('collapsed');
   // the side bar, once summoned by ‹ ›, stays put even when the term is
-  // cleared to empty (only Esc dismisses it) so retyping never loses it
+  // cleared to empty (only Esc or the × dismisses it) so retyping never loses it
   side.hidden = !(hasProse && panelOpen && findSideOn);
   if (fi2 && document.activeElement !== fi2 && fi2.value !== findTerm) fi2.value = findTerm;
   if (fc2) fc2.textContent = count;
@@ -6014,13 +6241,15 @@ function syncGotoSide() {
   const panelOpen = p && !p.hidden && p.offsetParent !== null && !p.classList.contains('collapsed');
   let doc = null;
   try { doc = vault.byId(shownId); } catch {}
-  box.hidden = !(doc && panelOpen);
   if (gotoPicked && gotoPicked.docId !== shownId) gotoPicked = null; // new doc — no VIEW IN pick yet
+  if (gotoSideClosedFor && gotoSideClosedFor !== shownId) gotoSideClosedFor = null; // new doc — the locate floater stands again
   applyGotoPicked();
+  box.hidden = !(doc && panelOpen) || gotoSideClosedFor === shownId;
   if (!box.hidden) placeGotoSide();
 }
 // VIEW IN pick: the last-clicked jump button wears the red frame until the reader moves to another doc
 let gotoPicked = null; // {docId, view:'main'|'thematic'|'tags'} | null
+let gotoSideClosedFor = null; // shownId the locate floater was ×-dismissed on: stays shut until the reader moves on
 function applyGotoPicked() {
   try {
     const m = { main: $('#gotoMain'), thematic: $('#gotoThematic'), tags: $('#gotoTags') };
@@ -6367,6 +6596,17 @@ function renderDoc() {
     return;
   }
   readerIsList = false; // a real doc is focused — Back is available again
+  // find terms never carry between documents: a newly opened doc starts with
+  // a clean box — except the selected manual tag, which stays while the new
+  // doc carries it (gold pill + highlights travel together)
+  try {
+    if (lastFindDocId !== d.id) {
+      const keepTag = selManualTag && String(findTerm).trim().toLowerCase() === selManualTag &&
+        (d.tags || []).some(tg => String(tg).toLowerCase().startsWith('manual/') && normDisp(tg) === selManualTag);
+      if (!keepTag && (findTerm || findSideOn)) clearReaderFind();
+    }
+    lastFindDocId = d.id;
+  } catch {}
   if (paneId && paneId !== activeId) setKicker('◉ READING — CANVAS UNCHANGED');
   else setKicker('◉ ACTIVE BODY — GRAVITATIONAL CENTER');
   $('#docTitle').textContent = vault.titleOf(d);
@@ -6376,9 +6616,10 @@ function renderDoc() {
     const disp = vault.stripAuto(t);
     const low = String(t).toLowerCase();
     const cls = low.startsWith('auto/') ? ' auto' : (low.startsWith('manual/') ? ' manual' : '');
+    const hot = !!selManualTag && low.startsWith('manual/') && String(disp).toLowerCase() === selManualTag; // ALL-TAGS manual pick: gold clone pill
     const mark = low.startsWith('manual/') ? '<span class="mmark" title="Manually created tag">M</span>' : '';
-    const tip = low.startsWith('manual/') ? `Manually created tag — click to search · right-click to rename` : `#${esc(disp)} — click to search · right-click to rename`;
-    return `<button class="tagpill${cls}" data-tag="${esc(disp)}" title="${tip}">#${esc(disp)}${mark}</button>`;
+    const tip = low.startsWith('manual/') ? `Manually created tag — click to search · right-click to rename${hot ? ' · selected in ALL TAGS' : ''}` : `#${esc(disp)} — click to search · right-click to rename`;
+    return `<button class="tagpill${cls}${hot ? ' sunlit' : ''}" data-tag="${esc(disp)}" title="${tip}">#${esc(disp)}${mark}</button>`;
   }).join('') +
     `<button class="tagpill addtagbtn" data-addtag="${d.id}" title="Declare what this document/body belongs with by assigning a +#tag to it. Bodies sharing the tag pull together, share weight, match in search, and form one Tags-view node.">+ #tag</button>` +
     `<button class="tagpill notesbtn${noteCount(d.id) ? '' : ' note-zero'}" data-notes="${d.id}" title="Notes for this body — one shared notepad (sticky square, this button and the Notes book tab all show the same entries)">${noteCount(d.id) ? NOTE_SVG_FILLED : NOTE_SVG_EMPTY}notes ·${noteCount(d.id)}</button>`;
@@ -7481,6 +7722,7 @@ async function ingestFiles(files, ctx) {
     } catch (e) { const msg = ((e && e.message) || String(e)); errs.push(cleanName(f) + ': ' + msg); rec.status = 'error'; rec.error = msg; console.warn('import failed', cleanName(f), e); }
   }
   try { vault.persist(); } catch {} // seals post-addFile ocrDone flags
+  if (n) markBackupDirty(); // fresh bodies aboard — the file backup is stale
   rebuild(activeId);
   // a lens has no doc bodies to crown — light up where the files situated instead
   if (newIds.length && (lensThematic || lensTags)) highlightIntakeLanding(newIds);
@@ -8279,8 +8521,23 @@ async function boot() {
     if (tvg) { e.stopPropagation(); openTagGuide(); return; }
     const tvgc = e.target.closest('[data-tguideclose]');
     if (tvgc) { e.stopPropagation(); closeTagGuide(); return; }
+    // how-to-start: the discrete bottom-left link opens the beginner pane,
+    // its ✕ (or a backdrop click, or Esc) closes it again
+    const hso = e.target.closest('[data-howstart]');
+    if (hso) { e.stopPropagation(); openHowStart(); return; }
+    const hsc = e.target.closest('[data-howclose]');
+    if (hsc) { e.stopPropagation(); closeHowStart(); return; }
+    const cgs = e.target.closest('[data-cgsave]');
+    if (cgs) { e.stopPropagation(); hideCloseGuardPane(); saveAllProjects(); return; }
+    const cge = e.target.closest('[data-cgexit]');
+    if (cge) { e.stopPropagation(); exitAppNow(); return; }
+    const cgt = e.target.closest('[data-cgstay]');
+    if (cgt) { e.stopPropagation(); hideCloseGuardPane(); return; }
+    if (e.target && e.target.id === 'howStartPane') { closeHowStart(); return; }
     const tge = e.target.closest('[data-tguide-edit]');
     if (tge) { e.stopPropagation(); openGuideEditor(); return; }
+    const hge = e.target.closest('[data-how-edit]');
+    if (hge) { e.stopPropagation(); openHowEditor(); return; }
     const tvv = e.target.closest('[data-tvverse]');
     if (tvv) { e.stopPropagation(); setTagsVerse(!lensTags); return; }
     const tve = e.target.closest('[data-tvexit]');
@@ -8481,6 +8738,7 @@ async function boot() {
       const disp = tp.dataset.tpill;
       if (tvpClickTimer) { // second click fast = double-click: rename, don't focus
         clearTimeout(tvpClickTimer); tvpClickTimer = null;
+        e.stopImmediatePropagation(); // same-node closeCtx listener would see this click (pill outside ctx) and instantly shut the editor we are about to open
         try {
           const r = tp.getBoundingClientRect();
           openTagRenameEditor(r.left + r.width / 2, r.top + r.height / 2, disp);
@@ -8491,7 +8749,7 @@ async function boot() {
       return;
     }
     const t = e.target.closest('[data-tag]');
-    if (t) { inp.value = '#' + t.dataset.tag; inp.dispatchEvent(new Event('input')); }
+    if (t) { inp.value = '#' + t.dataset.tag; inp.dispatchEvent(new Event('input')); try { highlightTagInPop(t.dataset.tag); } catch {} }
   });
   // keyboard "click" for the ? helps (they're spans, so Enter fires no native
   // click — route it through the same toggle; all helps are click-to-open)
@@ -8533,6 +8791,8 @@ async function boot() {
   if (fpS) fpS.onclick = () => stepFind(-1);
   const fnS = $('#findNext2');
   if (fnS) fnS.onclick = () => stepFind(1);
+  const fxS = $('#findClose2');
+  if (fxS) fxS.onclick = () => { findSideOn = false; try { syncFindBar(); } catch {} }; // × dismisses the floater (term + highlights stay; ‹ › re-summons it)
   // back-to-top tab: tracks the reader pane's scroll, jumps to top on click
   const dp = $('#docScroll'), tb = $('#docTopBtn');
   if (dp) dp.addEventListener('scroll', () => { try { syncTopBtn(); } catch {} }, { passive: true });
@@ -9175,6 +9435,31 @@ async function boot() {
       ctx.appendChild(ctxItem('✕  Remove', true, () => removeFromCanvas(id)));
       ctx.appendChild(ctxItem('✕  Remove from everywhere', true, () => deleteEverywhere(id)));
     } else {
+      // whole-tab clipboard: a Copy-all-content stash drops here too, so the
+      // user can paste right onto the destination canvas without hunting its
+      // tab menu (same offer the tab menu shows; never offered on the source)
+      {
+        const t = vault.tab();
+        const offer = t ? liveTabClip(t) : null;
+        if (offer) {
+          const pn = offer.ids.length;
+          const pp = ctxItem(`⤓  Paste ${pn} ${pn === 1 ? 'body' : 'bodies'} from “${offer.src.name}”`, false, () => {
+            const r = vault.copyTabDocs(t.id, offer.src.id, offer.ids);
+            if (!r) { setTabClip(null); renderTabs(); toast('Paste failed — the copied tab is gone'); return; }
+            if (r.copied.length) {
+              if (unis.has(t.id)) rebuildTab(t.id);
+              else edgeByTab.delete(t.id);
+              renderTabs();
+              if (t.id === vault.activeTabId) { try { renderDoc(); } catch {} }
+              toast(`Pasted ${r.copied.length} ${r.copied.length === 1 ? 'body' : 'bodies'} from “${offer.src.name}”${r.skipped ? ` (${r.skipped} already here)` : ''}`);
+            } else { renderTabs(); toast(`Everything from “${offer.src.name}” is already here`); }
+          });
+          pp.title = `Paste the copied bodies into “${t.name}”`;
+          ctx.appendChild(pp);
+          const hrP = document.createElement('hr');
+          ctx.appendChild(hrP);
+        }
+      }
       if (lensThematic) {
         // whole-canvas associated documents: every theme's members at once
         ctx.appendChild(ctxItem('⧉  Show all associated documents for entire canvas (with labels)', false, () => showAssocAll(true)));
@@ -9266,6 +9551,7 @@ async function boot() {
     vault.persist();
     try { rebuild(activeId); } catch {}
     try { if (!$('#tagPop').hidden) openTagPop(); } catch {}
+    markBackupDirty();
     toast(`Tagged as #${slug} M — manual tag (tethers like a written #tag)`);
     return true;
   }
@@ -9283,6 +9569,7 @@ async function boot() {
     vault.persist();
     try { rebuild(activeId); } catch {}
     try { if (!$('#tagPop').hidden) openTagPop(); } catch {}
+    markBackupDirty();
     toast(`Wrote #${slug} into “${vault.titleOf(d)}” — explicit tag (hand-written, lives in the prose)`);
     return true;
   }
@@ -9328,7 +9615,7 @@ async function boot() {
     ctx.appendChild(head);
     const note = document.createElement('div');
     note.className = 'ctx-note';
-    note.innerHTML = 'Declare what this document/body belongs with by assigning a +#tag to it. Bodies sharing the tag pull together, share weight, match in search, and form one Tags-view node. This tag button is the same as the +#Tag function/button <img src="src/addtag-pill.png" alt="+ #tag" style="height:1.15em;vertical-align:-0.25em;"> in the document reading/display view.';
+    note.innerHTML = 'Declare what this document/body belongs with by assigning a +#tag to it. Bodies sharing the tag pull together, share weight, match in search, and form one Tags-view node. This tag button is the same as the +#Tag function/button <img src="src/assets/addtag-pill.png" alt="+ #tag" style="height:1.15em;vertical-align:-0.25em;"> in the document reading/display view.';
     ctx.appendChild(note);
     const inp = document.createElement('input');
     inp.value = '';
@@ -9451,7 +9738,25 @@ async function boot() {
     ctx.innerHTML = '';
     const head = document.createElement('div');
     head.className = 'ctx-head';
-    head.textContent = `✎ Rename #${s}`;
+    head.style.display = 'flex';
+    head.style.alignItems = 'center';
+    head.style.justifyContent = 'space-between';
+    head.style.gap = '8px';
+    const headTitle = document.createElement('span');
+    headTitle.textContent = `✎ Rename #${s}`;
+    headTitle.style.overflow = 'hidden';
+    headTitle.style.textOverflow = 'ellipsis';
+    headTitle.style.whiteSpace = 'nowrap';
+    head.appendChild(headTitle);
+    const headX = document.createElement('button');
+    headX.textContent = '✕';
+    headX.title = 'Close';
+    headX.setAttribute('aria-label', 'Close rename');
+    headX.style.cssText = 'flex:none;background:none;border:0;color:var(--mut);font-size:12px;font-weight:700;padding:2px 6px;border-radius:6px;cursor:pointer;opacity:.7;';
+    headX.onmouseenter = () => { headX.style.opacity = '1'; headX.style.background = 'rgba(255,120,120,.18)'; };
+    headX.onmouseleave = () => { headX.style.opacity = '.7'; headX.style.background = 'none'; };
+    headX.onclick = (e) => { e.stopPropagation(); closeCtx(); };
+    head.appendChild(headX);
     ctx.appendChild(head);
     const note = document.createElement('div');
     note.className = 'ctx-note';
@@ -9531,9 +9836,18 @@ async function boot() {
     openCtx(e.clientX, e.clientY, n ? n.id : null);
   });
   document.addEventListener('click', (e) => { if (!ctx.hidden && !ctx.contains(e.target)) closeCtx(); });
+  // window/tab close in browser shells: only the browser’s own
+  // leave-confirmation can interrupt an unload (a custom pane can’t pause
+  // one), so arm that while the file backup is stale. The editor preview
+  // (help-can-edit) is exempt, so dev reloads never trip a native dialog.
+  window.addEventListener('beforeunload', (e) => {
+    let guard = false;
+    try { guard = !document.body.classList.contains('help-can-edit') && needsBackupGuard(); } catch {}
+    if (guard) { e.preventDefault(); e.returnValue = true; }
+  });
   document.addEventListener('click', (e) => { const m = $('#openProjMenu'); if (m && !m.hidden && !m.contains(e.target) && !e.target.closest('[data-openproj]')) m.hidden = true; });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { closeCtx(); hideOpenProjMenu(); selSet.clear(); hideBoxSel(); closeSrcPop(); if (!closeCarZoom()) closeCarousel(); $('#propsModal').hidden = true; try { $('#imgLight').hidden = true; } catch {} closeHelpEditor(); closeNoteEditor(); closeNotePop(); if (notesOpen) closeNotesPane(); if (pinOpenWord != null) setPin(null); const w2 = document.querySelector('#docShared'); document.querySelectorAll('.help-open').forEach(w => shutHelpPop(w)) }
+    if (e.key === 'Escape') { closeCtx(); hideOpenProjMenu(); selSet.clear(); hideBoxSel(); closeSrcPop(); if (!closeCarZoom()) closeCarousel(); $('#propsModal').hidden = true; try { $('#imgLight').hidden = true; } catch {} closeHelpEditor(); closeNoteEditor(); closeNotePop(); closeHowStart(); hideCloseGuardPane(); if (notesOpen) closeNotesPane(); if (pinOpenWord != null) setPin(null); const w2 = document.querySelector('#docShared'); document.querySelectorAll('.help-open').forEach(w => shutHelpPop(w)) }
     // box-selection shortcut: Delete/Backspace removes the shift-dragged
     // bodies outright (same confirm as the right-click menu)
     if ((e.key === 'Delete' || e.key === 'Backspace') && selSet.size && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')) {
@@ -9611,7 +9925,7 @@ async function boot() {
   ren.triOrb = triOrb;
   ren.docIcon = docIcon;
   ren.vivid = false; // nebula retired: vivid stays off everywhere
-  fetch('src/overlays.json').then(r => r.json()).then(list => ren.loadOverlays(list)).catch(() => {});
+  fetch('src/assets/overlays.json').then(r => r.json()).then(list => ren.loadOverlays(list)).catch(() => {});
   const ovSlider = $('#ovAlpha'), ovLbl = $('#ovMul'), ovBtnEl = $('#ovBtn');
   ovSlider.value = Math.round(ovAlpha * 100);
   const syncOv = () => { ovLbl.textContent = Math.round(ovAlpha * 100) + '%'; ren.overlayAlpha = ovAlpha; saveUi(); };
@@ -9763,9 +10077,19 @@ async function boot() {
   // halo glow radius: slider 0 (none) .. 50 (current) .. 100 (double), button = on/off toggle
   // canvas backdrop: photo texture behind everything, own opacity row (Overlay-style)
   const BACKDROPS = ['bg01.jpg', 'bg02.jpg', 'bg03.jpg', 'bg04.jpg', 'bg05.jpg', 'bg06.jpg', 'bg07.jpg', 'bg08.jpg', 'bg09.jpg', 'bg10.jpg', 'bg11.jpg', 'bg12.jpg'];
+  // Same-origin URLs keep the canvas origin-clean (see Renderer.absSrc) —
+  // the editor preview resolves relative URLs to the apex domain, which
+  // cross-origin-taints the canvas permanently. Fall back to the relative
+  // URL if the absolute one fails (e.g. file:// desktop contexts).
   const backdropImgs = new Map(BACKDROPS.map(f => {
+    const rel = 'src/assets/backdrops/' + f;
     const im = new Image();
-    im.src = 'src/backdrops/' + f;
+    im.onerror = () => {
+      if (im.__fb || im.src === rel) return;
+      im.__fb = true;
+      try { im.src = rel; } catch {}
+    };
+    try { im.src = Renderer.absSrc(rel); } catch { im.src = rel; }
     return [f, im];
   }));
   const applyBackdrop = () => {
@@ -10177,6 +10501,8 @@ async function boot() {
       if (gM) gM.onclick = () => { const id = shownId; gotoViewFor(id, 'main'); gotoPicked = { docId: id, view: 'main' }; applyGotoPicked(); };
       if (gT) gT.onclick = () => { const id = shownId; gotoViewFor(id, 'thematic'); gotoPicked = { docId: id, view: 'thematic' }; applyGotoPicked(); };
       if (gG) gG.onclick = () => { const id = shownId; gotoViewFor(id, 'tags'); gotoPicked = { docId: id, view: 'tags' }; applyGotoPicked(); };
+      const gX = $('#gotoSideX');
+      if (gX) gX.onclick = () => { gotoSideClosedFor = shownId; const box = $('#gotoSide'); if (box) box.hidden = true; };
     } catch {}
   } catch {}
   // bottom pill "Tethers" button: show/hide the tether lines (bodies always stay put)
@@ -10533,10 +10859,10 @@ async function boot() {
         if (!t.docs.length) { toast(`“${t.name}” is empty — nothing to copy`); return; }
         setTabClip({ srcTabId: t.id, srcName: t.name, ids: t.docs.map(d => d.id) });
         renderTabs();
-        toast(`${t.docs.length} ${t.docs.length === 1 ? 'body' : 'bodies'} copied — open another tab's menu to paste`);
+        toast(`${t.docs.length} ${t.docs.length === 1 ? 'body' : 'bodies'} copied — right-click another tab (or its empty canvas) to paste`);
         openTabCtx(x, y, vault.tabs.find(v => v.id === t.id) || t); // menu stays open
       });
-      cp.title = `Copy every body in “${t.name}” — paste it into any tab from its menu`;
+      cp.title = `Copy every body in “${t.name}” — paste it into any tab from its menu or its empty canvas`;
       ctx.appendChild(cp);
       const offer = liveTabClip(t);
       if (offer) {
@@ -10683,6 +11009,7 @@ async function boot() {
       downloadMasterFile(obj, `visidocsverse-projects-${stamp}.json`);
       toast(`Saved ${n} document${n === 1 ? '' : 's'} to your computer — this file is your backup`);
       setLog(`Projects saved to computer — ${n} documents (backup copy; the in-app copy keeps autosaving)`);
+      backupClean = true; // the file on the computer now matches the workspace
     } catch (e) { toast(`Could not save projects (${(e && e.message) || e})`, 6000); }
   }
   // "Open Project" dropdown: master-file rows (load / merge from a
@@ -11152,7 +11479,7 @@ async function boot() {
     if (!f) return;
     await absorbMasterIntoCanvas(f);
   };
-          window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), lemonStartup: () => verifyLicenseOnStartup(), lemonActivate: (k, n) => activateLicenseKey(k, n) } };
+          window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), lemonStartup: () => verifyLicenseOnStartup(), lemonActivate: (k, n) => activateLicenseKey(k, n) } };
   window.addEventListener('resize', () => ren.resize());
   bootStage('ready');
   try { document.title = __bootTitle0; } catch (e) {} // boot complete: restore the plain title (tracer stays silent on success)

@@ -7,11 +7,9 @@
 <meta name="theme-color" content="#0d0f12">
 <title>VisiDocsverse — Living 3D Document Universe</title>
 <link rel="icon" type="image/png" href="src/assets/icon-512.png">
+<link rel="stylesheet" href="src/css/style.css">
 </head>
 <body>
-<link rel="stylesheet" href="src/css/style.css">
-
-
 <div id="app">
   <canvas id="uniCv"></canvas>
   <div id="tabBar" class="glass"></div>
@@ -132,17 +130,17 @@
       <span id="bdMul" class="value-display">55%</span>
     </div>
     <div id="bgPal" title="Canvas backdrop — pick a photo texture (click the active one again to clear)">
-      <button class="bgsw" data-bg="bg02.jpg" style="background-image:url(src/assets/backdrops/bg02.jpg)" title="rays"></button>
-      <button class="bgsw" data-bg="bg03.jpg" style="background-image:url(src/assets/backdrops/bg03.jpg)" title="weave"></button>
-      <button class="bgsw" data-bg="bg04.jpg" style="background-image:url(src/assets/backdrops/bg04.jpg)" title="splash"></button>
-      <button class="bgsw" data-bg="bg05.jpg" style="background-image:url(src/assets/backdrops/bg05.jpg)" title="dunes"></button>
-      <button class="bgsw" data-bg="bg06.jpg" style="background-image:url(src/assets/backdrops/bg06.jpg)" title="streak"></button>
-      <button class="bgsw" data-bg="bg07.jpg" style="background-image:url(src/assets/backdrops/bg07.jpg)" title="stone"></button>
-      <button class="bgsw" data-bg="bg08.jpg" style="background-image:url(src/assets/backdrops/bg08.jpg)" title="sand"></button>
-      <button class="bgsw" data-bg="bg09.jpg" style="background-image:url(src/assets/backdrops/bg09.jpg)" title="plaster"></button>
-      <button class="bgsw" data-bg="bg10.jpg" style="background-image:url(src/assets/backdrops/bg10.jpg)" title="clay"></button>
-      <button class="bgsw" data-bg="bg11.jpg" style="background-image:url(src/assets/backdrops/bg11.jpg)" title="granite"></button>
-      <button class="bgsw" data-bg="bg12.jpg" style="background-image:url(src/assets/backdrops/bg12.jpg)" title="relief"></button>
+      <button class="bgsw" data-bg="bg02.jpg" style="background-image:url(src/backdrops/bg02.jpg)" title="rays"></button>
+      <button class="bgsw" data-bg="bg03.jpg" style="background-image:url(src/backdrops/bg03.jpg)" title="weave"></button>
+      <button class="bgsw" data-bg="bg04.jpg" style="background-image:url(src/backdrops/bg04.jpg)" title="splash"></button>
+      <button class="bgsw" data-bg="bg05.jpg" style="background-image:url(src/backdrops/bg05.jpg)" title="dunes"></button>
+      <button class="bgsw" data-bg="bg06.jpg" style="background-image:url(src/backdrops/bg06.jpg)" title="streak"></button>
+      <button class="bgsw" data-bg="bg07.jpg" style="background-image:url(src/backdrops/bg07.jpg)" title="stone"></button>
+      <button class="bgsw" data-bg="bg08.jpg" style="background-image:url(src/backdrops/bg08.jpg)" title="sand"></button>
+      <button class="bgsw" data-bg="bg09.jpg" style="background-image:url(src/backdrops/bg09.jpg)" title="plaster"></button>
+      <button class="bgsw" data-bg="bg10.jpg" style="background-image:url(src/backdrops/bg10.jpg)" title="clay"></button>
+      <button class="bgsw" data-bg="bg11.jpg" style="background-image:url(src/backdrops/bg11.jpg)" title="granite"></button>
+      <button class="bgsw" data-bg="bg12.jpg" style="background-image:url(src/backdrops/bg12.jpg)" title="relief"></button>
     </div>
     <div class="rotrow control-row" title="Pane backgrounds — far left clears the Visi|Docsverse / Active body / DEV panes to just text and controls, far right is the current glass (button toggles)">
       <button class="btn" id="paBtn">&#9703; Panes</button>
@@ -188,8 +186,8 @@
   <button id="docTiltBtn" aria-pressed="false" title="Tilt the reader pane 30° clockwise (click again to straighten) — unavailable while the stretched pane covers the pills">↻</button>
   <button id="carPaneBtn" aria-pressed="false" title="Carousel: read the Active body as a curved left/right-scrollable glass-pane carousel on the canvas (pictures, video, audio and spreadsheets ride along)"><svg viewBox="0 0 28 32" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M14 1v30"/><path d="M14 6H8.5Q6.5 6 6.5 8v4.5"/><path d="M14 6h5.5q2 0 2 2v4.5"/><path d="M2.8 14.5v9.5h5.5"/><path d="M3.8 12.5h5.4l2 2v10H3.8z"/><path d="M9.2 12.5v2h2"/><path d="M5.6 17.5h3.8M5.6 20h3.8"/><path d="M25.2 14.5v9.5h-5.5"/><path d="M24.2 12.5h-5.4l-2 2v10h7.4z"/><path d="M18.8 12.5v2h-2"/><path d="M22.4 17.5h-3.8M22.4 20h-3.8"/></g></svg></button>
   </div>
-  <div id="findSide" class="glass" hidden><input id="findInput2" placeholder="Find in body…" autocomplete="off" aria-label="Find in this body"><div id="findSideRow"><button class="btn" id="findPrev2" title="Previous match (Shift+Enter)">‹</button><button class="btn" id="findNext2" title="Next match (Enter)">›</button><span id="findCount2"></span></div></div>
-  <div id="gotoSide" class="glass" hidden aria-label="Where this document sits"><div id="gotoSideCap">LOCATE DOCUMENT IN:</div><div id="gotoSideRow"><button id="gotoMain" title="Show where this document sits in the Main view (the reader stays put)">MAIN</button><button id="gotoThematic" title="Show which theme this document grounds in the Thematic view">THEMATIC</button><button id="gotoTags" title="Show which tag this document carries in the Tags view">TAGS</button></div></div>
+  <div id="findSide" class="glass" hidden><input id="findInput2" placeholder="Find in body…" autocomplete="off" aria-label="Find in this body"><div id="findSideRow"><button class="btn" id="findPrev2" title="Previous match (Shift+Enter)">‹</button><button class="btn" id="findNext2" title="Next match (Enter)">›</button><span id="findCount2"></span><button class="btn" id="findClose2" title="Close find bar">×</button></div></div>
+  <div id="gotoSide" class="glass" hidden aria-label="Where this document sits"><div id="gotoSideCap"><span>LOCATE DOCUMENT IN:</span><button id="gotoSideX" title="Close" aria-label="Close locate floater">✕</button></div><div id="gotoSideRow"><button id="gotoMain" title="Show where this document sits in the Main view (the reader stays put)">MAIN</button><button id="gotoThematic" title="Show which theme this document grounds in the Thematic view">THEMATIC</button><button id="gotoTags" title="Show which tag this document carries in the Tags view">TAGS</button></div></div>
   <button id="notesTab" hidden title="Open the Notes pane — one shared notepad for this body (fixed beside the reader)"><span>Notes</span></button>
   <aside id="notesPane" class="glass" hidden aria-label="Notes for the active body">
     <div id="notesHead"><span id="notesTitle">◉ NOTES</span><span id="notesHeadCount"></span><button id="notesClose" title="Close the Notes pane (unsaved composer text is kept as a draft)">✕</button></div>
@@ -241,6 +239,11 @@ Keep them broad yet specific: Use tags for cross-cutting attributes (e.g., #Stat
   <button class="help-edit-btn" id="confirmEditBtn" style="display:none" title="Edit this notice (dev only — locked in desktop builds)">✎ edit</button>
   <div class="rowbtns"><button class="btn danger" id="confirmOk">Confirm</button><button class="btn" id="confirmCancel">Cancel</button></div>
   <label id="confirmSkip" hidden><input type="checkbox" id="confirmSkipBox"> <span id="confirmSkipLabel">Don't ask again</span></label>
+</div>
+<div id="closeGuardPane" class="glass" hidden>
+  <h3>Save your work before you go?</h3>
+  <div id="closeGuardMsg">Closing now loses everything that isn't backed up — if you skip “Save project”, that work will be gone.</div>
+  <div class="rowbtns"><button class="btn" id="closeGuardSave" data-cgsave="1" title="Back up every project to a file on your computer first (the standard save box)">Save project</button><button class="btn danger" id="closeGuardExit" data-cgexit="1" title="Close now without backing up — unsaved work will be lost">Close without saving</button><button class="btn" id="closeGuardStay" data-cgstay="1" title="Stay in the app">Keep working</button></div>
 </div>
 <div id="uploadProg" class="glass" hidden role="status" aria-live="polite" aria-label="Upload progress">
   <h3>◈ Upload Progress</h3>
@@ -300,6 +303,7 @@ Keep them broad yet specific: Use tags for cross-cutting attributes (e.g., #Stat
 <!-- tags-view pop-out: every tag in the verse as pills on a glass card, click out / Esc to close -->
 <div id="tagPop" hidden><div class="tvp-card tvp-clear"><div class="tvp-head" title="Drag to move — double-click resets position and size"><span class="tvp-title">ALL TAGS</span><button class="tvp-x" data-tvclose="1" title="Close">✕</button></div><div class="tvp-tags"></div><button class="tvp-go" id="tagVerseBtn" data-tvverse="1">◈ Show tags view</button><div class="tvp-tips"><span class="tvp-term">Colors:</span><span class="tvp-exp"><span class="tagpill demo">#explicit</span> hand-written in body text · <span class="tagpill auto demo">#auto</span> derived from titles · <span class="tagpill manual demo">#manual<span class="mmark">M</span></span> you tagged by hand (gold M)</span><span class="tvp-term">Merge:</span><span class="tvp-exp">drag one tag onto another — the tag you drop onto keeps its name, the dragged tag joins it and disappears.</span><span class="tvp-term">Delete:</span><span class="tvp-exp">hover a tag and click its × to remove it from every body on this canvas. Merges and deletes affect this canvas only; deleted names stay suppressed until you write #tag in a body again.</span><span class="tvp-term">Rename:</span><span class="tvp-exp">double-click (or right-click) any tag here — in the reader or on its canvas body, right-click — to rename it everywhere on this canvas (prose, manual anchors and labels follow).</span><span class="tvp-term">Tag passages:</span><span class="tvp-exp">drag a tag onto highlighted text in the reader to pin it onto that exact passage (gold M — click the pill to jump back).</span><span class="tvp-term">Gold orbs:</span><span class="tvp-exp">a gold orb means the document shown in the reader sits in that tag — orange lines only mean tags share member documents, not membership.</span><span class="tvp-term">Confirms:</span><span class="tvp-exp"><span id="tvpConfirmTxt">tag delete/merge confirmations are on</span><button class="tvp-link tvp-confirms" data-tvconfirms="1" id="tvpConfirmBtn">click to stop asking</button></span></div><button class="tvp-go" data-tvguide="1" id="tagGuideBtn" title="Open the tagging guide">The Art of Tagging: A Quick Guide on How to Tag</button><span id="tvpGrip" title="Drag to resize this pane — double-click empty space to reset position and size">⤡</span></div></div>
 <div id="tagGuidePane" hidden><div class="tvp-card tvp-clear"><div class="tgp-head"><span class="tgp-title">The Art of Tagging: A Quick Guide on How to Tag</span><button class="help-edit-btn" data-tguide-edit="1" title="Edit this guide (this machine only)">✎ edit</button><button class="tgp-x" data-tguideclose="1" title="Close">✕</button></div><div class="tgp-body" id="tagGuideBody"></div></div></div>
+<div id="howStartPane" hidden><div class="tvp-card tvp-clear"><div class="tgp-head"><span class="tgp-title">How to start</span><button class="help-edit-btn" data-how-edit="1" title="Edit this guide (this machine only)">✎ edit</button><button class="tgp-x" data-howclose="1" title="Close">✕</button></div><div class="tgp-body" id="howStartBody"></div></div></div>
 <div id="srcPop" hidden><div class="tvp-card tvp-clear svp-card"><div class="svp-head"><span class="svp-kicker">SOURCE PREVIEW</span><span class="svp-sec" id="svpSec">Opening</span><span class="svp-rel" id="svpRel">release to close</span><button class="svp-x" id="svpX" title="Close">✕</button></div><h3 class="svp-title" id="svpTitle"></h3><div class="svp-body" id="svpBody"></div><div class="svp-cap" id="svpCap" hidden></div><div class="svp-foot" id="svpFoot"></div></div></div>
 
 <script>
@@ -354,6 +358,5 @@ window.__bootTimer = setTimeout(function () {
 </script>
 <script src="src/js/neutralino.js"></script>
 <script type="module" src="src/js/app.js"></script>
-
 </body>
 </html>

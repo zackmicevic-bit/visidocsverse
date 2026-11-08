@@ -65,6 +65,17 @@ function dSegSeg(ax, ay, bx, by, cx, cy, dx, dy) {
     dPtSeg(cx, cy, ax, ay, bx, by), dPtSeg(dx, dy, ax, ay, bx, by));
 }
 export class Renderer {
+  // Same-origin image URLs keep the canvas origin-clean (readback, recording,
+  // and the ink-contrast sampler keep working). The editor preview sets
+  // document.baseURI to the apex domain while the page lives on a subdomain,
+  // so plain relative URLs load cross-origin and permanently taint the canvas.
+  static absSrc(u) {
+    try {
+      if (/^https?:/i.test(u) || /^blob:|^data:/i.test(u)) return u;
+      if (!/^https?:/i.test(location.origin)) throw 0;
+      return location.origin + '/' + String(u).replace(/^\/+/, '');
+    } catch { return u; }
+  }
   constructor(canvas) {
     this.cv = canvas;
     this.ctx = canvas.getContext('2d');
@@ -261,8 +272,12 @@ export class Renderer {
     (urls || []).forEach((u, i) => {
       const im = new Image();
       im.onload = () => { this.overlayImgs[i] = im; };
-      im.onerror = () => { /* that slot stays gradient */ };
-      im.src = u;
+      im.onerror = () => {
+        if (im.__fb || im.src === u) { /* that slot stays gradient */ return; }
+        im.__fb = true;
+        try { im.src = u; } catch { /* that slot stays gradient */ }
+      };
+      try { im.src = Renderer.absSrc(u); } catch { im.src = u; }
     });
   }
   reshuffleOverlays() { this.overlaySeed++; }
