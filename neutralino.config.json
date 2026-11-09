@@ -8,13 +8,13 @@
   "enableServer": true,
   "enableNativeAPI": true,
   "exitProcessOnClose": false,
-  "injectGlobals": true,
   "window": {
     "title": "VisiDocsverse",
     "width": 1280,
     "height": 800,
     "minWidth": 800,
     "minHeight": 600,
-    "icon": "/src/assets/icon.png"
+    "icon": "/src/assets/icon.png",
+    "exitProcessOnClose": false
   }
 }

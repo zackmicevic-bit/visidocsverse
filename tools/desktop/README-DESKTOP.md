@@ -107,22 +107,40 @@ Artifacts land in `src-tauri/target/<triple>/release/bundle/{dmg,nsis,msi}/`.
 ## 6. Installer smoke test (on the built installer, before signing)
 
 1. `pnpm tauri dev` (or the built app): left panel shows the Open Project
-   button under the Folder/Files row (the vault-folder disk mirror is removed —
-   originals live in the in-app store and download from the body menu).
+   button under the Folder/Files row. Originals live in the on-disk app vault
+   (`<AppLocalData>/VisiDocsverse Vault/originals/`, one file per `orig_…`
+   key — books of any size, no cap) and download byte-identical from the body
+   menu; the old vault-folder mirror stays removed.
 2. Open Project → menu shows "From a computer file" (Load/Merge) + the
    recently-closed shelf; both pickers work.
 3. Drop in a `.md` + a `.pdf`: both bodies appear; the body menu offers
-   "Download original" byte-identical (diff them).
+   "Download original" byte-identical (diff them). Drop in a >100MB file too:
+   desktop keeps it on disk (the 100MB cap is web-sidecar-only now).
 4. If anything reports denied/unknown: compare
    `src-tauri/capabilities/default.json` identifiers against the installed
    plugins (`cargo add` pulls current v2 names; correct and rebuild). (The
-   fs/dialog/opener permissions once used by the vault folder are now unused
-   by the frontend but harmless — leave them unless you're auditing perms.)
+   fs `$HOME/**` + `$APPDATA/**` allows serve the on-disk originals vault;
+   dialog/opener stay for the folder picker and reveal-in-Finder.)
 5. Windows installers: the setup wizard shows the EULA license page (from
    `bundle.licenseFile` → `../EULA.txt`) with an I-Agree / accept control —
    Next stays blocked until the user accepts (NSIS), or the LicenseAgreement
    radio must be set to accept (MSI). Declining aborts the install.
    Cancel/decline on purpose once to confirm nothing installs.
+7. Close-guard (every installer, both shells): with documents on canvases and
+   no fresh “Save project”, press the window X — a save guard must appear
+   (Inno/Neutralino: native YES/NO/Cancel plus the on-page pane; Tauri:
+   the on-page pane). YES/Save project backs up and keeps the app open;
+   NO/Close-without-saving exits; Cancel/Keep-working stays. A clean or
+   empty workspace closes at once with no dialog. If the X ever quits
+   silently again, the cause is config, not code — `neutralino.config.json`
+   MUST keep `modes.window.exitProcessOnClose: false`, top-level
+   `enableNativeAPI: true` (that exact casing), and `"window.*"` in
+   `nativeAllowList`. It must NEVER set `modes.window.injectGlobals` (or
+   `injectClientLibrary`): NL_TOKEN is one-time and the served neutralino.js
+   already carries the globals — the injector steals the token and every
+   launch dies with NE_CL_IVCTOKN (`pack-inno-zip.mjs` fails the build if any
+   of this regresses). Tauri needs no config for this — the guard rides on the
+   vendored `src/vendor/tauri-api-window.bundle.mjs`.
 6. First launch of the installed app (any OS, incl. macOS where the .dmg
    cannot show a wizard page): a blocking End User License Agreement modal
    appears with the same text — the I Accept button stays disabled until

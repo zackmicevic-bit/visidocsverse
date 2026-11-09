@@ -19,13 +19,21 @@ bootStage('module');
 try { clearTimeout(window.__bootTimer); var __bs = document.getElementById('bootStall'); if (__bs) __bs.remove(); } catch (e) {}
 import { initUpdateChecker, checkForUpdates, showUpdateBanner, hideUpdateBanner, APP_VERSION, needsUpdateCheck } from './update-check.js';
 import { origPut, origGet, origKeys, origDelete } from './origstore.js';
+import { diskUsable, diskVaultDir, diskPut, diskGetBlob, diskDelete, diskListKeys, diskVaultLabel } from './diskvault.js';
 
 // Neutralino desktop shell: init the client API, then handle the window's X
-// button with an OS-level save guard. Requires TWO flags in neutralino.config.json:
-// "exitProcessOnClose": false (else the process dies on X and this windowClose
-// event never fires) and "injectGlobals": true (else Neutralino.init() has no
-// NL_PORT/NL_TOKEN and the bridge never connects). Guarded so plain browsers,
-// local static servers and other shells (no Neutralino global) skip it entirely.
+// button with an OS-level save guard. Requires in neutralino.config.json:
+// modes.window "exitProcessOnClose": false (else the process dies on X and
+// this windowClose event never fires), top-level "enableNativeAPI": true with
+// that exact casing (enableNativeApi does nothing — native calls stay
+// blocked), and nativeAllowList including "window.*" (reshow needs
+// window.show/focus). Do NOT enable modes.window injectGlobals (or
+// injectClientLibrary): the framework serves neutralino.js with the globals
+// prepended, and NL_TOKEN is one-time — the injector would consume it at
+// window setup, the served script would carry an empty token, and every
+// launch would die with NE_CL_IVCTOKN (this exact regression shipped once).
+// Guarded so plain browsers, local static servers and other shells (no
+// Neutralino global) skip it entirely.
 // OS-first design: the framework may hide the window on X before JS paints, so
 // a DOM-only pane can sit invisible in a hidden window (looks like "no dialog").
 // os.showMessageBox is an OS-modal native dialog — visible even if the window
@@ -43,63 +51,133 @@ if (typeof Neutralino !== 'undefined') {
   Neutralino.events.on('windowClose', async () => {
     let held = true;
     try { held = needsBackupGuard(); } catch { held = true; }
-    if (!held) { try { await Neutralino.app.exit(); } catch { try { Neutralino.app.exit(); } catch {} } return; }
+    if (!held) { try { await Neutralino.app.exit(); } catch { try { await Neutralino.app.exit(); } catch {} } neutralinoExitLadder(); return; }
     try { localStorage.setItem('visidocsverse.closeprobe', JSON.stringify({ at: Date.now() })); } catch {}
     const reshow = () => {
       (async () => {
         try { await Neutralino.window.show(); } catch {}
         try { await Neutralino.window.focus(); } catch {}
-      })();
+      })().catch(() => {});
     };
     reshow();
     setTimeout(reshow, 300);
     setTimeout(reshow, 1000);
-    // DOM FIRST (synchronous paint before any await): immediate visible
-    // feedback plus the guaranteed fallback — a hung or hidden native call
-    // can never again leave the X looking dead.
-    try { showCloseGuardPane(); } catch {}
-    // Native SECOND (OS-modal, visible even if the window is hidden).
-    // Awaited with no timeout: if it answers, its branch runs and hides the
-    // DOM pane as needed; if it never settles, the DOM pane above stays
-    // fully usable (Save / Close without saving / Keep working).
+    // Native dialog ONLY (OS-modal, visible even if the window is hidden).
+    // One popup, never two: the in-app pane below stays hidden unless the
+    // native call answers nothing (blocked/failed) — it is the fallback
+    // control surface (Save / Close without saving / Keep working), not a
+    // second prompt on top of the first.
+    // One popup only: the native call is raced against a 30s timeout so a
+    // hung call can never leave the X looking dead. If the dialog answers,
+    // its choice runs; if the call fails or never settles, the in-app pane
+    // below is the single fallback prompt.
     let choice = null;
+    let nativeTimedOut = false;
     try {
       const n = workspaceDocCount();
       let tabs = 0;
       try { tabs = vault.tabs.filter(t => t && t.docs && t.docs.length).length; } catch {}
-      choice = await Neutralino.os.showMessageBox(
-        'Save your work before you go?',
-        `You have ${n} document${n === 1 ? '' : 's'} across ${tabs} canvas${tabs === 1 ? '' : 'es'}. Closing now loses everything that isn\u2019t backed up.\n\nYES = Save project now (app stays open)\nNO = Close without saving\nCancel = Keep working`,
-        'YES_NO_CANCEL', 'QUESTION');
+      const answer = await Promise.race([
+        Neutralino.os.showMessageBox(
+          'Save your work before you go?',
+          `You have ${n} document${n === 1 ? '' : 's'} across ${tabs} canvas${tabs === 1 ? '' : 'es'}. Closing now loses everything that isn\u2019t backed up.\n\nYES = Save project and close\nNO = Close without saving\nCancel = Keep working`,
+          'YES_NO_CANCEL', 'QUESTION'),
+        new Promise(res => setTimeout(() => res('__TIMEOUT__'), 30000))
+      ]);
+      if (answer === '__TIMEOUT__') {
+        nativeTimedOut = true;
+        try { lastGuardNote = 'system dialog did not answer'; } catch {}
+      } else choice = answer;
     } catch { choice = null; }
     try {
       const c = String(choice || '').toUpperCase();
       if (c === 'YES') {
-        try { hideCloseGuardPane(); } catch {}
+        // Guard save means "save, then leave": finish the backup and exit at
+        // once, so no second X — and no background enrichment (OCR, citations,
+        // page-map) landing between the save and that click — can re-arm the
+        // guard and make the X look dead.
         try {
           const saver = window.__visidocsverse && window.__visidocsverse.saveAllProjects;
           if (typeof saver === 'function') await saver();
-          else { try { showCloseGuardPane(); } catch {} }
-        } catch { try { showCloseGuardPane(); } catch {} }
+          else { try { lastGuardNote = 'save function missing'; } catch {} }
+        } catch (e) { try { lastGuardNote = 'save call failed: ' + ((e && e.message) || e); } catch {} }
+        let clean = false;
+        try { clean = !needsBackupGuard(); } catch {}
+        if (clean) { try { exitCommitted = true; lastGuardNote = 'saved ok, exit requested'; } catch {} exitAfterGuardSave(); return; }
+        try { if (!lastGuardNote) lastGuardNote = 'save did NOT complete clean'; } catch {}
+        try { toast(`Save did not finish (${lastGuardNote}) — fix it, or use “Close without saving” [${BUILD_TAG}]`, 9000); } catch {}
+        try { showCloseGuardPane(); } catch {}
         reshow();
         return;
       }
       if (c === 'NO') {
         try { localStorage.removeItem('visidocsverse.closeprobe'); } catch {}
         try { hideCloseGuardPane(); } catch {}
-        try { await Neutralino.app.exit(); } catch { try { Neutralino.app.exit(); } catch {} }
+        try { await Neutralino.app.exit(); } catch { try { await Neutralino.app.exit(); } catch {} }
+        neutralinoExitLadder();
         return;
       }
-      // CANCEL, CLOSE, null (native call blocked/failed) → keep working with
-      // the DOM pane as the control surface (also the fallback if native failed).
-      try { showCloseGuardPane(); } catch {}
+      // Explicit Cancel/close of the system dialog → stay open quietly. The
+      // dialog already offered all three choices, so popping the in-app
+      // panel here would be the redundant second popup. The pane appears
+      // ONLY when no dialog could be shown (blocked/failed/timed-out native
+      // call) or when an exit was requested but the window survived it.
       reshow();
       setTimeout(reshow, 300);
+      if (!nativeTimedOut && c) return; // explicit dismiss — silent stay
+      try { showCloseGuardPane(); } catch {}
     } catch {
       try { showCloseGuardPane(); } catch {}
       reshow();
     }
   });
+}
+
+// Tauri desktop shell (macOS .dmg / Windows NSIS+MSI): intercept the window's
+// X button via onCloseRequested. Tauri webviews do not honor beforeunload for
+// window closing, so without this the X quits silently — the same "no dialog"
+// symptom as a misconfigured Neutralino shell. The window submodule is
+// vendored locally (src/vendor/tauri-api-window.bundle.mjs — no CDN, the app
+// must work fully offline), and the dynamic import runs only when Tauri IPC
+// exists, so the web preview never fetches it. Semantics mirror the
+// Neutralino guard: clean/empty workspaces close at once; dirty ones are held
+// with the DOM pane as the control surface (Save project / Close without
+// saving / Keep working).
+let tauriCloseAllowed = false; // deliberate exit through the dialog — one close, no re-guard
+let tauriWinPromise = null;
+function tauriWindow() {
+  if (!tauriWinPromise) {
+    tauriWinPromise = (async () => {
+      try {
+        if (!window.__TAURI_INTERNALS__) return null;
+        const w = await import('./vendor/tauri-api-window.bundle.mjs');
+        if (!w || typeof w.getCurrentWindow !== 'function') return null;
+        return w.getCurrentWindow();
+      } catch { return null; }
+    })();
+  }
+  return tauriWinPromise;
+}
+if (typeof window !== 'undefined') {
+  try {
+    if (window.__TAURI_INTERNALS__) {
+      (async () => {
+        try {
+          const win = await tauriWindow();
+          if (!win || typeof win.onCloseRequested !== 'function') return;
+          await win.onCloseRequested(async (e) => {
+            if (tauriCloseAllowed) return; // deliberate exit — let the default destroy run
+            let held = true;
+            try { held = needsBackupGuard(); } catch { held = true; }
+            if (!held) return; // clean — the default destroy closes at once
+            try { e.preventDefault(); } catch {}
+            try { localStorage.setItem('visidocsverse.closeprobe', JSON.stringify({ at: Date.now() })); } catch {}
+            try { showCloseGuardPane(); } catch {}
+          });
+        } catch {}
+      })();
+    }
+  } catch {}
 }
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -110,16 +188,25 @@ const $ = (s, r = document) => r.querySelector(s);
 // clears it again. The guard fires only when real work exists on the canvas
 // (doc count > 0), so empty workspaces always close quietly.
 let backupClean = false; // boot counts as unsaved: restored docs have no file backup yet this session
-function markBackupDirty() { backupClean = false; }
+let exitCommitted = false; // a guard save finished clean and exit was requested: a
+// background job (OCR, citations, page-map) landing between that save and the
+// actual exit must NOT re-arm the guard. Any real content edit below clears
+// the latch via markBackupDirty, so the guard stays exact.
+const BUILD_TAG = 'g9'; // one-build diagnostic stamp: guard pane + save/exit
+// toasts carry it, so a screenshot proves which build is actually installed.
+let lastGuardNote = ''; // breadcrumb of the last guard step (saved ok / save
+// failed + reason / exit requested) — surfaced in the pane message so a
+// failure is persistent, not a missed 7-second toast.
+function markBackupDirty() { backupClean = false; exitCommitted = false; }
 function workspaceDocCount() { try { return vault.tabs.reduce((n, t) => n + (((t && t.docs) || []).length), 0); } catch { return 0; } }
-function needsBackupGuard() { return workspaceDocCount() > 0 && !backupClean; }
+function needsBackupGuard() { return workspaceDocCount() > 0 && !backupClean && !exitCommitted; }
 function showCloseGuardPane() {
   const box = $('#closeGuardPane');
   if (!box) return false;
   try {
     const n = workspaceDocCount();
     const tabs = vault.tabs.filter(t => t && t.docs && t.docs.length).length;
-    $('#closeGuardMsg').textContent = `You have ${n} document${n === 1 ? '' : 's'} across ${tabs} canvas${tabs === 1 ? '' : 'es'}. Closing now loses everything that isn’t backed up — if you skip “Save project”, that work will be gone. “Save project” keeps a backup copy on your computer first.`;
+    $('#closeGuardMsg').textContent = `You have ${n} document${n === 1 ? '' : 's'} across ${tabs} canvas${tabs === 1 ? '' : 'es'}. Closing now loses everything that isn’t backed up — if you skip “Save project”, that work will be gone. “Save project” keeps a backup copy on your computer first.${lastGuardNote ? `\n\nLast step: ${lastGuardNote}` : ''}\n\n(build ${BUILD_TAG})`;
   } catch {}
   box.hidden = false;
   try {
@@ -135,9 +222,49 @@ function hideCloseGuardPane() { const box = $('#closeGuardPane'); if (box) box.h
 function exitAppNow() {
   try { localStorage.removeItem('visidocsverse.closeprobe'); } catch {} // deliberate exit through the dialog — nothing to report next boot
   hideCloseGuardPane();
-  try { if (typeof Neutralino !== 'undefined') { Neutralino.app.exit(); return; } } catch {}
+  try { if (typeof Neutralino !== 'undefined') { neutralinoExitLadder(); return; } } catch {}
+  // Tauri shell: the X is held by onCloseRequested above, so flip the one-shot
+  // allow flag and ask the backend to close again — this time the guard lets
+  // the default destroy run. Falls through to window.close elsewhere.
+  try {
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) {
+      tauriCloseAllowed = true;
+      try { hideCloseGuardPane(); } catch {}
+      tauriWindow().then((win) => {
+        try { if (win && typeof win.close === 'function') win.close(); else window.close(); }
+        catch { try { window.close(); } catch {} }
+      }).catch(() => { try { window.close(); } catch {} });
+      return;
+    }
+  } catch {}
   try { window.close(); } catch {}
   toast('This preview cannot close its own window — close it yourself when ready', 5000);
+}
+// Neutralino exit ladder: app.exit() is clean (stops the server, closes the
+// window) but on some machines the window survives it — retried once, then
+// app.killProcess() terminates the process directly (TerminateProcess on
+// Windows), bypassing window teardown entirely. Only runs after a deliberate
+// exit with a clean backup (or an explicit close-without-saving), so killing
+// can never lose work. If even the kill leaves us alive (dead bridge), the
+// failure is LOUD — pane back with the reason — never a dead-looking X.
+function neutralinoExitLadder() {
+  try { Promise.resolve(Neutralino.app.exit()).catch(() => {}); } catch {}
+  setTimeout(() => {
+    try { Promise.resolve(Neutralino.app.exit()).catch(() => {}); } catch {}
+    setTimeout(() => {
+      try { Promise.resolve(Neutralino.app.killProcess()).catch(() => {}); } catch {}
+      setTimeout(() => {
+        try { toast(`Close requested but the window stayed [${BUILD_TAG}] — click “Close without saving” again, or close it yourself`, 9000); } catch {}
+        try { lastGuardNote = 'exit requested but window stayed'; } catch {}
+        try { showCloseGuardPane(); } catch {}
+      }, 1500);
+    }, 1500);
+  }, 1500);
+}
+// Deliberate exit right after a guard save: hide the pane and run the ladder.
+function exitAfterGuardSave() {
+  try { hideCloseGuardPane(); } catch {}
+  try { exitAppNow(); } catch {}
 }
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -5164,8 +5291,7 @@ async function resolveCiteMeta(id) { // fill d.citeMeta from the original bytes,
   try {
     let bytes = null;
     try {
-      const rec = await origGet(key);
-      const blob = rec && rec.blob;
+      const blob = await origBlob(d);
       if (blob) bytes = new Uint8Array(await blob.arrayBuffer());
     } catch {}
     let meta = {};
@@ -5716,9 +5842,9 @@ function openSrcPop(id, x, y, sticky) {
       try {
         let url = mediaUrlCache.get(d.origKey);
         if (!url) {
-          const rec = await origGet(d.origKey);
-          if (!rec || !rec.blob || !(rec.blob.size > 0)) throw 0;
-          url = URL.createObjectURL(rec.blob); mediaUrlCache.set(d.origKey, url);
+          const blob0 = await origBlob(d);
+          if (!blob0 || !(blob0.size > 0)) throw 0;
+          url = URL.createObjectURL(blob0); mediaUrlCache.set(d.origKey, url);
         }
         if (box.hidden || $('#svpTitle').textContent !== titleAtOpen) return; // moved on
         body.innerHTML = '';
@@ -7812,6 +7938,26 @@ async function hydrateImages(rootEl, images) {
 // keys). Backup-restored docs without bytes get the same honest placeholder
 // the picture gallery uses.
 const mediaUrlCache = new Map(); // origKey -> objectURL
+// Original bytes, wherever they live: the desktop disk vault first when the
+// doc says so, the browser sidecar otherwise — each side tried in turn, so a
+// half-migrated library still resolves. Null when the bytes are kept nowhere.
+async function origBlob(d) {
+  if (!d || !d.origKey) return null;
+  const order = d.origWhere === 'disk' ? ['disk', 'idb'] : ['idb', 'disk'];
+  for (const w of order) {
+    try {
+      if (w === 'disk') {
+        const b = await diskGetBlob(d.origKey, d.origFile || d.name);
+        if (b && b.size > 0) return b;
+      } else {
+        const rec = await origGet(d.origKey);
+        const b = rec && rec.blob;
+        if (b && b.size > 0) return b;
+      }
+    } catch { /* try the other vault */ }
+  }
+  return null;
+}
 async function hydrateMedia(rootEl, d) {
   if (!rootEl || !d || !mediaKind(d.name, '')) return;
   const kind = mediaKind(d.name, '');
@@ -7824,8 +7970,7 @@ async function hydrateMedia(rootEl, d) {
   rootEl.appendChild(box);
   if (!d.origKey) { cap.textContent = 'media kept on the original device — not in this backup'; return; }
   try {
-    const rec = await origGet(d.origKey);
-    const blob = rec && rec.blob;
+    const blob = await origBlob(d);
     if (!blob || !(blob.size > 0)) { cap.textContent = 'media kept on the original device — not in this backup'; return; }
     if (!vault.byId(d.id)) { box.remove(); return; } // deleted while the bytes were loading — never append a stale player
     let url = mediaUrlCache.get(d.origKey);
@@ -7866,8 +8011,7 @@ async function hydrateSheet(rootEl, d) {
   rootEl.appendChild(box);
   if (!d.origKey) { cap.textContent = 'spreadsheet kept on the original device — not in this backup'; return; }
   try {
-    const rec = await origGet(d.origKey);
-    const blob = rec && rec.blob;
+    const blob = await origBlob(d);
     if (!blob || !(blob.size > 0)) { cap.textContent = 'spreadsheet kept on the original device — not in this backup'; return; }
     if (!vault.byId(d.id)) { box.remove(); return; } // deleted while loading
     const wide = blob.size > 15 * 1048576;
@@ -7927,8 +8071,50 @@ async function purgeImages() {
       const grabOrig = (docs) => { for (const d of (docs || [])) if (d && d.origKey) usedOrig.add(d.origKey); };
       for (const t of (vault.tabs || [])) grabOrig(t.docs);
       for (const k of await origKeys()) if (!usedOrig.has(k)) await origDelete(k);
+      // desktop disk vault: same sweep on the hard-drive originals.
+      if (await diskUsable()) {
+        for (const k of await diskListKeys()) {
+          if (usedOrig.has(k)) continue;
+          try { await diskDelete(k); } catch (e) { console.warn('disk vault sweep missed ' + k, (e && e.message) || e); }
+        }
+      }
     } catch (e) { console.warn('original purge skipped', (e && e.message) || e); }
-  } catch (e) { console.warn('image purge skipped', (e && e.message) || e); }
+    } catch (e) { console.warn('image purge skipped', (e && e.message) || e); }
+}
+
+// ---------- desktop disk vault: adopt the browser sidecar's originals ----------
+// First boot with a working disk vault moves every IndexedDB original onto
+// the hard drive (books of any size included), then deletes the sidecar copy
+// so a 300-page scan isn't stored twice. Idempotent: later runs only see
+// leftovers (e.g. files imported while the disk was unavailable).
+async function migrateIdbOriginalsToDisk() {
+  try {
+    if (!(await diskUsable())) return;
+    const keys = await origKeys();
+    if (!keys.length) return;
+    const byKey = new Map();
+    for (const t of (vault.tabs || [])) for (const d of (t.docs || [])) {
+      if (d && d.origKey && !byKey.has(d.origKey)) byKey.set(d.origKey, d);
+    }
+    let moved = 0, failed = 0, skipped = 0;
+    for (const k of keys) {
+      const d = byKey.get(k);
+      if (!d) { skipped++; continue; } // orphan — the purge sweep takes it
+      if (d.origWhere === 'disk') { try { await origDelete(k); moved++; } catch { failed++; } continue; }
+      try {
+        const rec = await origGet(k);
+        const blob = rec && rec.blob;
+        if (!blob || !(blob.size > 0)) { skipped++; continue; }
+        d.origFile = await diskPut(k, blob, (rec && rec.name) || d.name);
+        d.origKey = k; d.origWhere = 'disk'; delete d.origSkipped;
+        await origDelete(k);
+        moved++;
+      } catch (e) { failed++; console.warn('disk vault adoption missed ' + k, (e && e.message) || e); }
+    }
+    if (moved) { try { vault.persist(); } catch {} try { markBackupDirty(); } catch {} }
+    try { await purgeImages(); } catch {}
+    if (moved || failed) toast(`App vault: ${moved} original${moved === 1 ? '' : 's'} moved to the hard drive${failed ? ` · ${failed} still in the browser store` : ''}`, 6000);
+  } catch (e) { console.warn('disk vault adoption skipped', (e && e.message) || e); }
 }
 
 // ---------- intake: real folder select + files + drop ----------
@@ -8036,7 +8222,12 @@ async function readFileAsText(f, onStep) {
       return text;
     } catch (e) {
       if (e && /scanned|locked|readable|empty|engine/i.test(e.message || '')) throw e;
-      throw new Error('Could not read that PDF (' + ((e && e.message) || 'parse failed') + ').');
+      let srv = '';
+      try {
+        const r = await fetch(vendorBase() + 'pdf.mjs', { headers: { Range: 'bytes=0-0' } });
+        srv = ` — server says ${r.status}${r.statusText ? ' ' + r.statusText : ''} for the PDF engine file`;
+      } catch (fe) { srv = ` — PDF engine file unreachable (${(fe && fe.message) || fe})`; }
+      throw new Error('Could not read that PDF (' + ((e && e.message) || 'parse failed') + srv + ').');
     }
   }
   if (/\.docx$/i.test(nm)) {
@@ -8249,8 +8440,9 @@ async function mediaDocText(f, nm, kind) {
 // (whole books — no 60-page / 60k-char cut); INTAKE_TEXT_MAX is only the
 // pathological-file safety valve, and the persist layer compresses past the
 // localStorage quota so full texts still restore after reload.
-const IMG_MAX_DOCX = 40, IMG_MAX_PPTX = 40, IMG_MAX_XLSX = 40, IMG_MAX_PDF_PAGES = 250;
+const IMG_MAX_DOCX = 40, IMG_MAX_PPTX = 40, IMG_MAX_XLSX = 40, IMG_MAX_PDF_PAGES = 500;
 const INTAKE_TEXT_MAX = 2000000; // chars of extracted text kept per file (~3000 book pages)
+const ORIG_IDB_MAX = 100 * 1048576; // browser-sidecar cap for original bytes (100MB): bigger files still import whole, their bytes ride the desktop disk vault instead (no cap there)
 const IMG_MAX_DIM = 1200; // stored pictures shrink to fit inside this (px)
 // ---------- original-page capture (side-channel for the intake below) ----------
 // readFileAsText returns plain text, but PDFs/slides/sheets also carry REAL
@@ -8797,17 +8989,21 @@ async function ingestFiles(files, ctx) {
       // the batch.
       let imgMeta = [];
       let ocrPics = [];
+      let imgFails = 0;
       try {
         const pics = await extractFileImages(f, (done, total) => updateUploadProg(upTok, upIdx + 1, upBatch.length, cleanName(f) + ' — pictures page ' + done + ' of ' + total));
-        for (const pic of pics.slice(0, 250)) {
-          const fit = await downscaleImage(pic.blob);
-          if (!fit.blob || !(fit.blob.size > 0)) continue;
-          const k = 'img_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
-          await imgPut({ key: k, blob: fit.blob, cap: pic.cap || 'image', w: fit.w, h: fit.h, at: Date.now() });
-          imgMeta.push({ key: k, cap: pic.cap || 'image', w: fit.w, h: fit.h });
-          if (!(fit.w > 0 && fit.h > 0 && fit.w * fit.h < OCR_MIN_AREA)) ocrPics.push({ blob: fit.blob, cap: pic.cap || 'image', at: imgMeta.length - 1 });
+        for (const pic of pics.slice(0, 500)) {
+          try {
+            const fit = await downscaleImage(pic.blob);
+            if (!fit.blob || !(fit.blob.size > 0)) continue;
+            const k = 'img_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+            await imgPut({ key: k, blob: fit.blob, cap: pic.cap || 'image', w: fit.w, h: fit.h, at: Date.now() });
+            imgMeta.push({ key: k, cap: pic.cap || 'image', w: fit.w, h: fit.h });
+            if (!(fit.w > 0 && fit.h > 0 && fit.w * fit.h < OCR_MIN_AREA)) ocrPics.push({ blob: fit.blob, cap: pic.cap || 'image', at: imgMeta.length - 1 });
+          } catch (pe) { imgFails++; console.warn('storing a picture failed for ' + cleanName(f) + ' — keeping the rest', (pe && pe.message) || pe); }
         }
-      } catch (e) { console.warn('storing images failed for ' + cleanName(f) + ' — text still imports', (e && e.message) || e); imgMeta = []; ocrPics = []; }
+      } catch (e) { console.warn('storing images failed for ' + cleanName(f) + ' — text still imports', (e && e.message) || e); }
+      if (imgFails) toast(imgFails + ' picture' + (imgFails === 1 ? '' : 's') + ' could not be stored — text and the rest still imported', 5000);
       // standalone photo bodies (.jpg/.png): the file itself is the picture —
       // run it through the same OCR pipeline so photographed text counts.
       if (!ocrPics.length && /\.(jpe?g|png)$/i.test(cleanName(f))) {
@@ -8865,14 +9061,35 @@ async function ingestFiles(files, ctx) {
         }
       } catch (e) { console.warn('page map skipped for ' + cn, (e && e.message) || e); }
       // keep the original bytes (IndexedDB sidecar) so Download returns the
-      // real file. Text import never depends on this — a store failure just
-      // means this body downloads as extracted text (.txt).
+      // real file. Desktop installs file them in the on-disk app vault (no
+      // size cap — books of any length keep their bytes); everywhere else the
+      // browser sidecar carries files up to ORIG_IDB_MAX. Text import never
+      // depends on this — when neither vault can keep the bytes, the body
+      // still imports whole and downloads as extracted text (.txt), with an
+      // honest toast saying why (never silent).
       try {
-        if (f && typeof f.size === 'number' && f.size > 0 && f.size <= 100 * 1024 * 1024) {
-          const okey = 'orig_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
-          await origPut({ key: okey, blob: f, name: d.name, type: (f && f.type) || '', at: Date.now() });
-          d.origKey = okey;
-        } else if (f && f.size > 100 * 1024 * 1024) console.warn('original too large to keep (>100MB) — text still imports', d.name);
+        let kept = '';
+        const okey = 'orig_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+        if (f && typeof f.size === 'number' && f.size > 0 && await diskUsable()) {
+          try {
+            d.origFile = await diskPut(okey, f, d.name);
+            d.origKey = okey; d.origWhere = 'disk'; delete d.origSkipped; kept = 'disk';
+          } catch (e) { console.warn('disk vault keep failed for ' + d.name + ' — trying the browser store', (e && e.message) || e); }
+        }
+        if (!kept && f && typeof f.size === 'number' && f.size > 0 && f.size <= ORIG_IDB_MAX) {
+          try {
+            await origPut({ key: okey, blob: f, name: d.name, type: (f && f.type) || '', at: Date.now() });
+            d.origKey = okey; d.origWhere = 'idb'; delete d.origFile; delete d.origSkipped; kept = 'idb';
+          } catch (e) { console.warn('keeping original failed for ' + d.name + ' — text still imports', (e && e.message) || e); }
+        }
+        if (!kept) {
+          delete d.origKey; delete d.origWhere; delete d.origFile;
+          d.origSkipped = (f && f.size > ORIG_IDB_MAX) ? 'too-large-for-browser-store' : 'keep-failed';
+          try { vault.persist(); } catch {}
+          toast(d.origSkipped === 'too-large-for-browser-store'
+            ? `Original not kept for “${d.name}” (over the 100MB browser-store limit — desktop installs keep originals of any size on disk) — text and pictures still imported whole`
+            : `Original could not be kept for “${d.name}” on this machine — text and pictures still imported whole`, 7000);
+        }
       } catch (e) { console.warn('keeping original failed for ' + d.name + ' — text still imports', (e && e.message) || e); }
 
       d.ocrFrom = ocrFrom;
@@ -9172,7 +9389,7 @@ async function boot() {
   // picture-text backfill: older image docs gain their OCR words in the
   // background (bounded, silent on failure — new intakes OCR inline already).
   // image-store rename first: pre-release bytes move over, then backfill reads them.
-  try { (async () => { try { await migrateImageDB(); } catch {} try { await backfillOcr(); } catch {} try { pumpOcrQueue(); } catch {} })(); } catch {}
+  try { (async () => { try { await migrateImageDB(); } catch {} try { await migrateIdbOriginalsToDisk(); } catch {} try { await backfillOcr(); } catch {} try { pumpOcrQueue(); } catch {} })(); } catch {}
   // version checker (desktop shells only — silent in the web preview): one
   // anonymous GET of version.json a few seconds after startup; a banner shows
   // only when a strictly newer version is published. Never blocks, never nags.
@@ -9699,7 +9916,23 @@ async function boot() {
     const hsc = e.target.closest('[data-howclose]');
     if (hsc) { e.stopPropagation(); closeHowStart(); return; }
     const cgs = e.target.closest('[data-cgsave]');
-    if (cgs) { e.stopPropagation(); hideCloseGuardPane(); saveAllProjects(); return; }
+    if (cgs) {
+      e.stopPropagation();
+      // Guard save means "save, then leave": exit at once when the backup is
+      // clean, so a background job (OCR, citations, page-map) landing after
+      // the save cannot re-arm the guard before the user's closing X.
+      try { hideCloseGuardPane(); } catch {}
+      (async () => {
+        try { await saveAllProjects(); } catch {}
+        let clean = false;
+        try { clean = !needsBackupGuard(); } catch {}
+        if (clean) { try { exitCommitted = true; lastGuardNote = 'saved ok, exit requested'; } catch {} try { exitAfterGuardSave(); } catch {} return; }
+        try { if (!lastGuardNote || lastGuardNote === 'saved ok, exit requested') lastGuardNote = 'save did NOT complete clean'; } catch {}
+        try { toast(`Save did not finish (${lastGuardNote}) — fix it, or use “Close without saving” [${BUILD_TAG}]`, 9000); } catch {}
+        try { showCloseGuardPane(); } catch {}
+      })().catch(() => {});
+      return;
+    }
     const cge = e.target.closest('[data-cgexit]');
     if (cge) { e.stopPropagation(); exitAppNow(); return; }
     const cgt = e.target.closest('[data-cgstay]');
@@ -10599,20 +10832,24 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
           document.body.appendChild(a); a.click(); a.remove();
           setTimeout(() => URL.revokeObjectURL(a.href), 5000);
         };
-        if (d.origKey) {
-          try {
-            const rec = await origGet(d.origKey);
-            if (rec && rec.blob && rec.blob.size > 0) {
-              saveBlob(rec.blob, d.name);
-              toast(`Downloading original ${d.name}`);
-              return;
-            }
-          } catch (e) { console.warn('original download missed for ' + d.name, (e && e.message) || e); }
-        }
-        const nm = String(d.name || 'body');
-        const fname = /\.(txt|md|markdown|csv)$/i.test(nm) ? nm : ((nm.replace(/\.[^.]+$/, '').trim() || 'body') + '.txt');
-        saveBlob(new Blob([d.text], { type: 'text/plain;charset=utf-8' }), fname);
-        toast(d.origKey ? `Original not kept for “${nm}” (older import or restored backup) — downloading extracted text as ${fname}` : `Downloading extracted text as ${fname}`);
+      if (d.origKey) {
+        try {
+          const blob = await origBlob(d);
+          if (blob && blob.size > 0) {
+            saveBlob(blob, d.name);
+            toast(`Downloading original ${d.name}`);
+            return;
+          }
+        } catch (e) { console.warn('original download missed for ' + d.name, (e && e.message) || e); }
+      }
+      const nm = String(d.name || 'body');
+      const fname = /\.(txt|md|markdown|csv)$/i.test(nm) ? nm : ((nm.replace(/\.[^.]+$/, '').trim() || 'body') + '.txt');
+      saveBlob(new Blob([d.text], { type: 'text/plain;charset=utf-8' }), fname);
+      toast(!d.origKey && d.origSkipped === 'too-large-for-browser-store'
+        ? `Original over the 100MB browser-store limit was not kept — downloading extracted text as ${fname}`
+        : d.origKey
+          ? `Original bytes missing for “${nm}” (${d.origWhere === 'disk' ? 'not in the app vault on this machine' : 'kept on the original device — not in this backup'}) — downloading extracted text as ${fname}`
+          : `Downloading extracted text as ${fname}`);
       }));
 
       // transfer the local constellation to another canvas (copies, never moves).
@@ -12385,9 +12622,12 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }
-  // "save project" (top tab bar): download ALL projects to the user's
-  // computer as a dated backup file. The in-app copy keeps autosaving;
-  // the downloaded file is the outside-the-app backup.
+  // "save project" (top tab bar): back up ALL projects to a file on the
+  // user's computer. Desktop shell: a real "where to save" picker (native
+  // save dialog, starting in the last-used folder) + direct file write, so
+  // the user chooses the location every time. Browser/web preview: the
+  // classic download (the browser decides the folder). The in-app copy keeps
+  // autosaving either way; the file is the outside-the-app backup.
   async function saveAllProjects() {
     if (!vault.tabs.length) {
       toast('Nothing to save — the workspace is empty');
@@ -12399,11 +12639,40 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
       const n = countBackupDocs(obj);
       const d = new Date();
       const stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
-      downloadMasterFile(obj, `visidocsverse-projects-${stamp}.json`);
-      toast(`Saved ${n} document${n === 1 ? '' : 's'} to your computer — this file is your backup`);
+      const name = `visidocsverse-projects-${stamp}.json`;
+      let savedTo = '';
+      // Native picker path (installed desktop app only).
+      if (typeof Neutralino !== 'undefined' && Neutralino.os && Neutralino.filesystem) {
+        try {
+          let startDir = '';
+          try { startDir = localStorage.getItem('visidocsverse.saveDir') || ''; } catch {}
+          const picked = await Neutralino.os.showSaveDialog('Save projects backup — choose where to keep it', {
+            defaultPath: (startDir ? startDir.replace(/[\\/]+$/, '') + '/' : '') + name
+          });
+          const p = String(picked || '');
+          if (!p) {
+            toast('Save cancelled — no location picked, nothing was written', 5000);
+            try { lastGuardNote = 'save cancelled (no location picked)'; } catch {}
+            return;
+          }
+          await Neutralino.filesystem.writeFile(p, JSON.stringify(obj));
+          savedTo = p;
+          try {
+            const dir = p.replace(/[\\/][^\\/]*$/, '');
+            if (dir) localStorage.setItem('visidocsverse.saveDir', dir);
+          } catch {}
+        } catch (e) {
+          // native save unavailable/failed → fall through to the download
+          savedTo = '';
+          try { lastGuardNote = 'native save failed, trying download: ' + ((e && e.message) || e); } catch {}
+        }
+      }
+      if (!savedTo) downloadMasterFile(obj, name);
+      toast(`Saved ${n} document${n === 1 ? '' : 's'}${savedTo ? ' to ' + savedTo : ' to your computer'} — this file is your backup [${BUILD_TAG}]`);
       setLog(`Projects saved to computer — ${n} documents (backup copy; the in-app copy keeps autosaving)`);
       backupClean = true; // the file on the computer now matches the workspace
-    } catch (e) { toast(`Could not save projects (${(e && e.message) || e})`, 6000); }
+      try { lastGuardNote = `saved ok (${n} doc${n === 1 ? '' : 's'}${savedTo ? ' → ' + savedTo : ' to file'})`; } catch {}
+    } catch (e) { toast(`Could not save projects (${(e && e.message) || e}) [${BUILD_TAG}]`, 9000); try { lastGuardNote = 'save FAILED: ' + ((e && e.message) || e); } catch {} }
   }
   // "Open Project" dropdown: master-file rows (load / merge from a
   // computer file — desktop-safe, ships in installers). Closing a canvas
@@ -12873,15 +13142,18 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
     await absorbMasterIntoCanvas(f);
   };
           window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), lemonStartup: () => verifyLicenseOnStartup(), lemonActivate: (k, n) => activateLicenseKey(k, n) } };
-  try { Object.assign(window.__visidocsverse, { docApaInfo, docApaText, docApaHtml, copyApaCite, setNotes, closeNotesPane, renderNotesPane, openNotePop, closeNotePop, openNoteEditor, closeNoteEditor, resolveCiteMeta, origPut, origGet, get notesOpen() { return notesOpen; }, get notesDocId() { return notesDocId; }, get shownId() { return shownId; }, get paneId() { return paneId; } }); } catch {} // notes/APA handles for scripted checks
+    try { Object.assign(window.__visidocsverse, { docApaInfo, docApaText, docApaHtml, copyApaCite, setNotes, closeNotesPane, renderNotesPane, openNotePop, closeNotePop, openNoteEditor, closeNoteEditor, resolveCiteMeta, origPut, origGet, get notesOpen() { return notesOpen; }, get notesDocId() { return notesDocId; }, get shownId() { return shownId; }, get paneId() { return paneId; } }); } catch {} // notes/APA handles for scripted checks
+  try { Object.assign(window.__visidocsverse, { diskUsable, diskVaultDir, diskVaultLabel, diskPut, diskGetBlob, diskListKeys, migrateIdbOriginalsToDisk, origBlob, purgeImages }); } catch {} // disk-vault handles for scripted checks
   window.addEventListener('resize', () => ren.resize());
   bootStage('ready');
   try { document.title = __bootTitle0; } catch (e) {} // boot complete: restore the plain title (tracer stays silent on success)
   // Desktop-shell close-guard self-check: runs ONLY inside the installed app
-  // (Neutralino client and/or NL_* runtime globals never exist in the browser
+  // (Neutralino client/NL_* globals and Tauri IPC never exist in the browser
   // preview), and stays silent when everything is healthy.
   try {
-    const inShell = (window.NL_PORT != null || window.NL_TOKEN != null || window.NL_APPID != null || (typeof Neutralino !== 'undefined'));
+    let inTauriShell = false;
+    try { inTauriShell = !!(window.__TAURI_INTERNALS__); } catch {}
+    const inShell = (window.NL_PORT != null || window.NL_TOKEN != null || window.NL_APPID != null || (typeof Neutralino !== 'undefined') || inTauriShell);
     if (inShell) {
       let probe = null;
       try { probe = JSON.parse(localStorage.getItem('visidocsverse.closeprobe') || 'null'); } catch {}
@@ -12889,7 +13161,10 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
       if (probe && probe.at) {
         toast('Last time the app closed without going through its save check — your workspace was restored as-is. Use “Save project” for a file backup.', 9000);
       }
-      if (typeof Neutralino === 'undefined') {
+      if (inTauriShell) {
+        // Tauri shells need no bridge-file/runtime/native-API probes: the X
+        // is intercepted from the vendored bundle above, not the WS bridge.
+      } else if (typeof Neutralino === 'undefined') {
         toast('Desktop bridge file failed to load (close-warning off) — reinstall, or report this.', 9000);
       } else if (window.NL_PORT == null || window.NL_TOKEN == null) {
         toast('Desktop runtime data missing (close-warning off) — reinstall, or report this.', 9000);
@@ -12919,6 +13194,53 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
           } catch {}
         }, 12000);
       }
+    }
+  } catch {}
+  // Desktop-shell health probes (silent on success): one no-UI native call
+  // per namespace the close guard needs + a byte-range fetch of every
+  // lazily-imported vendor module. A failing shell reports WHICH piece broke
+  // (namespace + reason, file + HTTP status) instead of a generic banner, so
+  // a screenshot diagnoses a bad install instead of guessing. Results live on
+  // window.__visidocsverse.nativeProbe / .vendorProbe for scripted checks.
+  try {
+    let tauriIpc = false;
+    try { tauriIpc = !!(window.__TAURI_INTERNALS__); } catch {}
+    const neuShell = (typeof Neutralino !== 'undefined');
+    if (neuShell || tauriIpc) {
+      (async () => {
+        const bad = [];
+        if (neuShell && !tauriIpc) {
+          const call = async (ns, fn) => {
+            try { await fn(); return ns + ':ok'; }
+            catch (e) { return ns + ':FAIL ' + ((e && (e.message || e.code)) || e); }
+          };
+          const out = [
+            await call('app', () => Neutralino.app.getConfig()),
+            await call('os', () => Neutralino.os.getEnv('PATH')),
+            await call('window', () => Neutralino.window.getTitle()),
+          ];
+          try { window.__visidocsverse.nativeProbe = out; } catch {}
+          for (const r of out) if (!/:ok$/.test(r)) bad.push(r);
+        }
+        try {
+          const files = ['pdf.mjs', 'pdf.worker.js', 'tesseract.mjs', 'xlsx.mjs', 'mammoth.mjs', 'fflate.mjs'];
+          if (tauriIpc) files.push('tauri-api-window.bundle.mjs', 'tauri-plugin-fs.bundle.mjs', 'tauri-api-path.bundle.mjs');
+          const checks = await Promise.all(files.map(async (f) => {
+            const ctl = new AbortController();
+            const to = setTimeout(() => { try { ctl.abort(); } catch {} }, 8000);
+            try {
+              const r = await fetch(vendorBase() + f, { headers: { Range: 'bytes=0-0' }, signal: ctl.signal });
+              return f + ':' + (r.ok ? 'ok' : 'HTTP ' + r.status);
+            } catch (e) { return f + ':UNREACHABLE ' + ((e && e.name) || e); }
+            finally { clearTimeout(to); }
+          }));
+          try { window.__visidocsverse.vendorProbe = checks; } catch {}
+          for (const c of checks) if (!/:ok$/.test(c)) bad.push(c);
+        } catch (e) { bad.push('vendor-probe:' + ((e && e.message) || e)); }
+        if (bad.length) {
+          try { toast('Desktop files/native check failed — ' + bad.join('; ') + '. Reinstall from a fresh extract, or report this.', 15000); } catch {}
+        }
+      })();
     }
   } catch {}
   // Viewport settle: boot sizes against a window that may still be animating

@@ -240,7 +240,7 @@ function normalizeDoc(raw, fallbackName) {
   // never inline bytes here, localStorage quota would evict the workspace)
   if (Array.isArray(r.images)) {
     const imgs = [];
-    for (const im of r.images.slice(0, 200)) {
+    for (const im of r.images.slice(0, 500)) {
       if (!im || typeof im.key !== 'string' || !im.key.trim()) continue;
       imgs.push({
         key: im.key.trim().slice(0, 128),
@@ -255,6 +255,15 @@ function normalizeDoc(raw, fallbackName) {
   // survives restores so the pointer stays valid in this browser; a byte-miss
   // (restored backup, older import) downloads as extracted text instead.
   if (typeof r.origKey === 'string' && r.origKey.trim()) doc.origKey = r.origKey.trim().slice(0, 128);
+  // disk-vault placement (desktop installs keep full bytes on the hard drive):
+  // 'disk' = app vault folder, 'idb' = browser sidecar. Old rows carry neither
+  // and read IDB-first, disk-second, so every legacy library keeps working.
+  if (r.origWhere === 'disk' || r.origWhere === 'idb') doc.origWhere = r.origWhere;
+  if (typeof r.origFile === 'string' && /^[A-Za-z0-9_-]{1,128}\.[a-z0-9]{1,8}$/.test(r.origFile.trim())) doc.origFile = r.origFile.trim();
+  // why the original bytes were not kept (surfaces as the honest Download
+  // message instead of "older import"): 'too-large-for-browser-store' |
+  // 'keep-failed'. Absent = kept, or predates the flag.
+  if (r.origSkipped === 'too-large-for-browser-store' || r.origSkipped === 'keep-failed') doc.origSkipped = r.origSkipped;
   // picture-text backfill already ran for this doc (images OCR'd into the text)
   if (r.ocrDone === true) doc.ocrDone = true;
   // backfill attempt counter: a broken OCR engine must not nag every boot —
@@ -644,6 +653,8 @@ export const vault = {
       if (d.manualTags && Object.keys(d.manualTags).length) c.manualTags = { ...d.manualTags }; // spot anchors travel with the copy
       if (Array.isArray(d.noteLog) && d.noteLog.length) c.noteLog = d.noteLog.map(e => ({ ...e })); // copies open with the same notepad; later edits sync by lineage
       if (d.origKey) c.origKey = d.origKey; // copies share the original bytes, like shared picture keys
+      if (d.origWhere === 'disk' || d.origWhere === 'idb') c.origWhere = d.origWhere; // copies read from the same vault
+      if (typeof d.origFile === 'string' && d.origFile) c.origFile = d.origFile;
       this.applySuppress(c, t); // a copied body never resurrects a name this canvas deleted/merged away
       t.docs.push(c);
       names.add(c.name.toLowerCase());
@@ -670,6 +681,8 @@ export const vault = {
       if (d.manualTags && Object.keys(d.manualTags).length) c.manualTags = { ...d.manualTags }; // spot anchors travel with the copy
       if (Array.isArray(d.noteLog) && d.noteLog.length) c.noteLog = d.noteLog.map(e => ({ ...e })); // copies open with the same notepad
       if (d.origKey) c.origKey = d.origKey; // copies share the original bytes
+      if (d.origWhere === 'disk' || d.origWhere === 'idb') c.origWhere = d.origWhere; // copies read from the same vault
+      if (typeof d.origFile === 'string' && d.origFile) c.origFile = d.origFile;
       this.applySuppress(c, t); // a copied body never resurrects a name this canvas deleted/merged away
       t.docs.push(c);
       names.add(c.name.toLowerCase());
@@ -713,7 +726,7 @@ export const vault = {
   addFile(name, text, images) {    const clean = String(name || 'untitled').trim() || 'untitled';
     const p = parseDoc(text);
     const d = { id: uid(), name: clean, text: String(text), words: p.words, links: p.links, tags: withAutoTags(clean, String(text), p.tags) };
-    if (Array.isArray(images) && images.length) d.images = images.slice(0, 200);
+    if (Array.isArray(images) && images.length) d.images = images.slice(0, 500);
     // dedupe by name
     let n = clean, i = 1;
     const names = new Set(this.docs.map(x => x.name.toLowerCase()));
@@ -903,4 +916,3 @@ export const vault = {
       .filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 12);
   },
 };
-
