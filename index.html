@@ -182,6 +182,7 @@
     <div id="notePop" class="glass" hidden></div>
     </div>
   <div id="docResize" title="Drag to resize the reader pane — double-click to reset">‹</div>
+  <div id="docResizeH" title="Drag up to shrink the reader pane height — double-click to reset">═</div>
   <button id="origPaneBtn" title="Jump to original file view — the whole original document fullscreen, as if opened from the back of the carousel (no carousel needed; lands on your current page when it stands)"><svg viewBox="0 0 28 32" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3h8l5 5v21H8z"/><path d="M16 3v5h5"/><path d="M14.5 23v-9"/><path d="M11 17.5l3.5-3.5L18 17.5"/></g></svg></button>
   <button id="docTiltBtn" aria-pressed="false" title="Tilt the reader pane 30° clockwise (click again to straighten) — unavailable while the stretched pane covers the pills">↻</button>
   <button id="carPaneBtn" aria-pressed="false" title="Carousel: read the Active body as a curved left/right-scrollable glass-pane carousel on the canvas (pictures, video, audio and spreadsheets ride along)"><svg viewBox="0 0 28 32" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M14 1v30"/><path d="M14 6H8.5Q6.5 6 6.5 8v4.5"/><path d="M14 6h5.5q2 0 2 2v4.5"/><path d="M2.8 14.5v9.5h5.5"/><path d="M3.8 12.5h5.4l2 2v10H3.8z"/><path d="M9.2 12.5v2h2"/><path d="M5.6 17.5h3.8M5.6 20h3.8"/><path d="M25.2 14.5v9.5h-5.5"/><path d="M24.2 12.5h-5.4l-2 2v10h7.4z"/><path d="M18.8 12.5v2h-2"/><path d="M22.4 17.5h-3.8M22.4 20h-3.8"/></g></svg></button>
@@ -197,8 +198,7 @@
     <div id="notesList"></div>
     <div id="notesComposer">
       <textarea id="notesArea" maxlength="2000" placeholder="Write a note about this document… or drop a highlight here" aria-label="Compose a note"></textarea>
-      <div id="notesSaveWrap"><button class="btn" id="notesSave" title="Push the composed text into the notepad as a new entry">Save</button></div>
-      <div id="notesCount">0/2000</div>
+      <div id="notesSaveWrap"><button class="btn" id="notesSave" title="Push the composed text into the notepad as a new entry">Save</button><div id="notesCount" title="Characters used in the composer">0/2000</div></div>
       <div class="rowbtns">
         <button class="btn" id="notesSelBtn" title="Append the text currently highlighted in the body as a note entry (or drag the highlight straight into this pane)">＋ Add selection from document</button>
         <button class="btn danger" id="notesDelAll" title="Delete every note entry on this body">Delete all</button>
@@ -207,6 +207,7 @@
     </div>
   </aside>
   <button id="notesTopBtn" class="glass" hidden title="Back to the top of the notes">↑ Top</button>
+  <div id="notesResize" hidden title="Drag to stretch the notes pane — double-click to reset">‹</div>
   <button id="docTopBtn" class="glass" hidden title="Back to the top of this body">↑ Top</button>
   <div id="hintBar" class="glass"><div class="hb-return"><button id="returnBtn" title="Return to the previous view — the lens, sun, canvas and camera as they were before the last change">↩ Return</button></div><div class="hb-btns"><button id="tipsBtn" title="Hide the tips below the pill buttons (buttons stay)">▾ Tips</button><button id="hvBtn" title="Hover highlight on — hovering a body lights up its row (click to turn off)">Hover peek</button><span class="splitab" id="distSplit"><button id="autoBtn" class="split-l" title="Auto-distribute: pin bodies in a fit-to-canvas orb (orbital motion overridden while on)">Distribute</button><button id="fitBtn" class="split-r" title="Fit: recenter and frame every body on screen (zooms out or in as needed), enlarging any orb below readable size">Fit</button></span><span class="splitab" id="tetherSplit"><button id="isoBtn" class="split-l" title="Show/hide the tether lines between bodies (bodies always stay)">Tethers</button><button id="tetherDotsBtn" class="split-m" title="Dotted tethers: draw the tether lines as spaced dots instead of solid lines">2</button><button id="tetherSparseBtn" class="split-m" title="Sparse tethers: widely-spaced dots for crowded canvases, minimally obtrusive">3</button><button id="tetherDashedBtn" class="split-r" title="Dashed tethers: long dashes set far apart, barely-there links for crowded canvases">4</button></span><span class="splitab" id="plainSplit"><button id="simpleOrbBtn" class="split-l" title="Plain Body: flat white discs with a thin black outline (photo + glow overlays off)">Plain Body</button><button id="simpleOrb2Btn" class="split-r" title="Plain Body 2: original blue orbs with the photo overlays stripped">2</button></span><span class="splitab" id="shapeSplit"><button id="triOrbBtn" class="split-l" title="Triangles: upside-down triangles instead of orbs (same colors, same sizes)">Body to ▼</button><button id="docIconBtn" class="split-r" title="Turn bodies into document icons: plain white page icons instead of orbs (same sizes, labels, tethers and selection) — only available in MAIN and TAGS view modes (theme bodies always stay round)"><svg viewBox="0 0 12 14" aria-hidden="true" style="height:1.1em;width:auto;vertical-align:-0.2em;margin:0 4px 0 1px"><path d="M2 0h6l4 4v9a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V1a1 1 0 0 1 1-1z" fill="#ffffff" stroke="#000000" stroke-width="1"/><path d="M8 0l4 4H8z" fill="#c7d0dd"/><path d="M3 6.6h6M3 9h6M3 11.4h4" stroke="#7c8798" stroke-width="1" fill="none"/></svg></button></span><button class="glassDot" data-glaze="hintBar" aria-label="Toggle the frosted-glass background of this pill"><span class="glassTip">Polished-glass finish — click to switch this pill to a flat background, click again to bring the glass back. Text and controls always stay on top.</span></button></div><div class="hb-tips"><div class="hb-tiprow"><span class="help-text" data-help-text="tip1"><span class="tt-w">drag empty space to pan</span><span class="tt-sep">·</span><span class="tt-g">drag a body to rotate</span><span class="tt-sep">·</span><span class="tt-w">alt-drag a body to move it</span><span class="tt-sep">·</span><span class="tt-g">wheel to zoom</span><span class="tt-sep">·</span><span class="tt-w">alt+↑/↓ zooms</span></span><button class="help-edit-btn" data-help-edit="tip1" title="Edit this tips row (dev only — saved on this machine + in backups)">✎</button></div><div class="hb-tiprow"><span class="help-text" data-help-text="tip2"><span class="tt-g">click a body for sun</span><span class="tt-sep">·</span><span class="tt-w">click empty space to release</span><span class="tt-sep">·</span><span class="tt-g">double click empty space to (re)center</span><span class="tt-sep">·</span><span class="tt-w">shift-drag to box-select</span><span class="tt-sep">—</span><span class="tt-w">Del deletes selection</span><span class="tt-sep">·</span><span class="tt-g">right-click to delete</span></span><button class="help-edit-btn" data-help-edit="tip2" title="Edit this tips row (dev only — saved on this machine + in backups)">✎</button></div><div class="hb-tiprow"><span class="help-text" data-help-text="tip3"><span class="tt-g">main view : right-click -hold a body to preview its document</span><span class="tt-sep">·</span><span class="tt-w">quick right-click opens its menu</span><span class="tt-sep">·</span><span class="tt-w">release to close, or pin it with 👁 Preview source</span></span><button class="help-edit-btn" data-help-edit="tip3" title="Edit this tips row (dev only — saved on this machine + in backups)">✎</button></div></div></div>
   <!-- verse minimap: live top-down dot map, shown only in Distribute mode -->
@@ -282,6 +283,21 @@ Keep them broad yet specific: Use tags for cross-cutting attributes (e.g., #Stat
   <div id="pickSub"></div>
   <div id="pickList"></div>
   <div class="rowbtns"><button class="btn" id="pickOk">Copy</button><button class="btn" id="pickCancel">Cancel</button></div>
+</div>
+<div id="handoffModal" class="glass" hidden>
+  <h3>Export research handoff (.txt)</h3>
+  <div id="handoffSub">Every note you wrote, grouped per document — each followed by the workspace documents most similar to it, with the shared words shown so every link is auditable. Paste the file into any AI chat to draft from your research. Nothing is uploaded anywhere: the file is built and saved on this machine.</div>
+  <div class="ho-opts">
+    <label>Similar documents per noted document
+      <select id="hoNeighbors"><option value="3">3</option><option value="5" selected>5</option><option value="8">8</option></select>
+    </label>
+    <label class="ho-check"><input type="checkbox" id="hoExcerpts" checked> Include a short excerpt of each similar document</label>
+  </div>
+  <div id="hoEstimate" role="status"></div>
+  <div class="ho-prompthead"><span>Starter instruction for the AI</span><button class="btn" id="hoCopyPrompt" title="Copy the starter instruction">Copy prompt</button></div>
+  <textarea id="hoPrompt" readonly></textarea>
+  <div class="ho-privacy">Private by design: this .txt holds your research in plain text — pasting it into a third-party chatbot sends it to that provider.</div>
+  <div class="rowbtns"><button class="btn danger" id="hoExport">Export .txt</button><button class="btn" id="hoCopyFile" title="Copy the whole handoff text to the clipboard">Copy text</button><button class="btn" id="hoCancel">Cancel</button></div>
 </div>
 <div id="helpEditModal" class="glass" hidden>
   <h3 id="helpEditTitle">Edit explanation</h3>

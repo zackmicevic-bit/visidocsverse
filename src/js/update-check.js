@@ -15,16 +15,22 @@
 // Release checklist (every release):
 //   1. Bump APP_VERSION below.
 //   2. Bump "version" in src/tools/desktop/src-tauri/tauri.conf.json to match.
-//   3. Deploy the new version.json to the Vercel feed below
+//   3. Edit version.json in the SITE repo (src/site/version.json here — it
+//      deploys as https://visidocsverse-site.vercel.app/version.json)
 //      with schema: {"latestVersion":"1.0.1","releaseDate":"2026-10-25",
-//      "releaseNotes":["..."],"downloadUrl":"https://visidocs-updates-site.vercel.app/"}
+//      "releaseNotes":["..."],"downloadUrl":"https://app.lemonsqueezy.com/my-orders"}
 //      (downloadUrl optional — banner shows a Download button when present).
 
 // Current installed version. Keep in sync with tauri.conf.json on release.
 export const APP_VERSION = '1.0.21';
 
-// Static file on Vercel (the update feed).
-export const UPDATE_URL = 'https://visidocs-updates-site.vercel.app/version.json';
+// Static file on Vercel (the update feed — merged into the main site repo,
+// so one deployment serves both the website and the updater endpoint).
+// History: 1.0.21 builds briefly pointed at a separate
+// visidocs-updates-site project, but as of 2026-11-10 there is no installed
+// base (no subscribers yet), so that project is retired and this URL is the
+// single feed going forward.
+export const UPDATE_URL = 'https://visidocsverse-site.vercel.app/version.json';
 
 // What the "copy" button puts on the clipboard: paste it into the mail-app
 // search box to find the original Lemon Squeezy receipt email, which holds
@@ -259,7 +265,7 @@ export function initUpdateChecker(notify) {
     if (dlb && !dlb.dataset.wired) {
       dlb.dataset.wired = '1';
       dlb.onclick = async () => {
-        const url = dlb.dataset.url || 'https://visidocs-updates-site.vercel.app/';
+        const url = dlb.dataset.url || 'https://visidocsverse-site.vercel.app/';
         try {
           if (window.__TAURI__) {
             try {

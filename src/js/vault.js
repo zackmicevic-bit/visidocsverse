@@ -59,13 +59,14 @@ function termFreq(text) {
 // pulled onto a small canvas share so much vocabulary that raw idf collapses and
 // their sims sink below the gate, orphaning the very web that was copied over.
 // The floor keeps small canvases comparable to the main universe (84+ docs).
-function analyzeTopics(docs, idfFloor = 30) {
+function analyzeTopics(docs, idfFloor = 30, textOf = null) {
   const n = docs.length;
   const Neff = Math.max(n, idfFloor);
+  const tx = textOf || ((d) => d.text);
   const tf = new Map(); // id -> Map(term -> count)
   const df = new Map(); // term -> doc count
   for (const d of docs) {
-    const f = termFreq(stripRefs(d.text));
+    const f = termFreq(stripRefs(tx(d)));
     tf.set(d.id, f);
     for (const t of f.keys()) df.set(t, (df.get(t) || 0) + 1);
   }
@@ -133,7 +134,7 @@ const isManual = (t) => String(t || '').toLowerCase().startsWith('manual/');
 function titleTerms(name) {
   const seen = new Set();
   const out = [];
-  for (const w of String(name || '').toLowerCase().replace(/(\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?|mp4|mov|mp3|wav|jpe?g|png))+$/i, '').split(/[^a-z0-9]+/)) {
+  for (const w of String(name || '').toLowerCase().replace(/(\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?|mp4|mov|webm|m4v|ogv|mp3|wav|ogg|oga|m4a|aac|flac|opus|jpe?g|png|gif|webp))+$/i, '').split(/[^a-z0-9]+/)) {
     if (w.length < 3 || !/[a-z]/.test(w) || /^\d+$/.test(w) || STOP.has(w) || seen.has(w)) continue;
     seen.add(w);
     out.push(w);
@@ -153,12 +154,17 @@ function autoTagsFor(name, text, explicit) {
     picked.push('auto/' + w);
     if (picked.length >= AUTO_MAX) return picked;
   }
-  // a one-word title ("Report") says little: top up from body frequency
+  // a one-word title ("Report") says little: top up from body frequency.
+  // Media docs top up from wrapper-stripped text (fix 1) and skip manifest
+  // boilerplate (fix 2) — a thin-named video no longer mints
+  // auto/video, auto/file, ... and tethers to every other video.
   if (picked.length < 3) {
-    const freq = termFreq(String(name || '') + '\n' + String(text || ''));
+    const media = isMediaName(name);
+    const freq = termFreq(String(name || '') + '\n' + contentText(name, text));
     const ranked = [...freq.entries()].sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1));
     for (const [w] of ranked) {
       if (have.has(w)) continue;
+      if (media && MANIFEST_STOP.has(w)) continue;
       have.add(w);
       picked.push('auto/' + w);
       if (picked.length >= AUTO_MAX) break;
@@ -178,6 +184,36 @@ function withAutoTags(name, text, tags) {
 // writing #name in any body always brings a tag back.
 const TAG_RE = /^[a-z0-9_\-/]{2,}$/;
 function normTagDisp(s) { return String(s || '').trim().toLowerCase().replace(/^auto\//, ''); }
+// ---------- media-manifest stripping (loose-media fix 1+2) ----------
+// Video/audio/photo bodies carry a fixed manifest wrapper as d.text ("Video file
+// ... Footage itself is not transcribed — filename words, tags and notes still
+// tether ..."). That wrapper is UI chrome, not content: fed raw into TF-IDF +
+// tag top-up it wired every thin-named video to every other video (auto/video,
+// auto/file, ... + topic sims near 0.5 on pure boilerplate). contentText()
+// removes the wrapper sentences so analysis sees only real signal (filename
+// words via titleTerms, OCR tails, transcripts); display, search and word
+// counts keep using d.text untouched.
+const MEDIA_EXT_RE = /\.(mp4|mov|webm|m4v|ogv|mp3|wav|ogg|oga|m4a|aac|flac|opus|jpe?g|png|gif|webp)$/i;
+const isMediaName = (name) => MEDIA_EXT_RE.test(String(name || ''));
+// Top-up stoplist: manifest boilerplate must never become an auto tag.
+// Applied to MEDIA docs only — a prose essay about video files keeps its words.
+const MANIFEST_STOP = new Set(('video audio image footage recording picture file filename words tags notes tag note tether weigh search body reader watch listen play press menu downloads original shown below readable joins length unknown transcribed itself still here').split(' '));
+function stripManifest(text) {
+  let s = String(text || '');
+  // opener: Video/Audio/Image file "name" (meta · size · length · dims).
+  s = s.replace(/(?:Video|Audio|Image) file "[^"]*" \([^)]*\)\. ?/g, '');
+  // the shared tether sentence (both the — body. and ; body. variants).
+  s = s.replace(/[^.?!]*tether, weigh and search this body[^.?!]*[.?!]/g, '');
+  // image-only: the picture-shown sentence.
+  s = s.replace(/[^.?!]*The picture is shown below [^.?!]*[.?!]/g, '');
+  // video/audio-only: the press-play sentence (carries menu/downloads tail).
+  s = s.replace(/[^.?!]*Press play in the reader to (?:watch|listen) here[^.?!]*[.?!]/g, '');
+  return s;
+}
+function contentText(name, text) {
+  if (!isMediaName(name)) return String(text || '');
+  return stripManifest(text);
+}
 
 // Normalize one raw doc row from disk (backup file, localStorage, legacy
 // store): every downstream consumer assumes id/name/text/words/links/tags
@@ -715,11 +751,11 @@ export const vault = {
     return n;
   },
 
-  titleOf(d) { return (d.name || 'Untitled').replace(/\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?|mp4|mov|mp3|wav|jpe?g|png)$/i, ''); },
+  titleOf(d) { return (d.name || 'Untitled').replace(/\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?|mp4|mov|webm|m4v|ogv|mp3|wav|ogg|oga|m4a|aac|flac|opus|jpe?g|png|gif|webp)$/i, ''); },
   byId(id) { return this.docs.find(d => d.id === id) || null; },
   byIdAnywhere(id) { return this.byId(id) || this.tabs.flatMap(t => t.docs || []).find(d => d.id === id) || null; }, // whole-visidocsverse thematic: members may live on other canvases
   byTitle(t) {
-    const c = String(t || '').trim().toLowerCase().replace(/\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?|mp4|mov|mp3|wav|jpe?g|png)$/i, '');
+    const c = String(t || '').trim().toLowerCase().replace(/\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?|mp4|mov|webm|m4v|ogv|mp3|wav|ogg|oga|m4a|aac|flac|opus|jpe?g|png|gif|webp)$/i, '');
     return this.docs.find(d => this.titleOf(d).toLowerCase() === c) || null;
   },
 
@@ -827,10 +863,10 @@ export const vault = {
     docs = docs || this.docs;
     const self = this;
     const byTitle = (t) => {
-      const c = String(t || '').trim().toLowerCase().replace(/\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?|mp4|mov|mp3|wav|jpe?g|png)$/i, '');
+      const c = String(t || '').trim().toLowerCase().replace(/\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?|mp4|mov|webm|m4v|ogv|mp3|wav|ogg|oga|m4a|aac|flac|opus|jpe?g|png|gif|webp)$/i, '');
       return docs.find(d => self.titleOf(d).toLowerCase() === c) || null;
     };
-    const T = analyzeTopics(docs, this.topicIdfFloor ?? 30);
+    const T = analyzeTopics(docs, this.topicIdfFloor ?? 30, (d) => contentText(d.name, d.text));
     // topic adjacency first (masses need it)
     const topicDeg = new Map(docs.map(d => [d.id, 0]));
     const cand = []; // every above-bar pair, ranked — each doc keeps its TOP-K
@@ -893,6 +929,42 @@ export const vault = {
     }
     for (const [a, b, shared, sim] of topicPairs) push(a, b, 'topic', shared, sim);
     return { bodies, edges };
+  },
+
+  // research-handoff neighbor lists: every doc's top-K most similar workspace
+  // mates, same TF-IDF cosine + significance gates as universe() (score floor,
+  // shared-term count, df ceiling) but budgeted per document instead of
+  // globally — each noted document carries its own grounding web into the
+  // exported file. Returns Map<docId, [{id, sim, terms}]> (terms = the
+  // significant shared words, most telling first). Textless docs still get an
+  // (empty) entry so callers can look anything up unconditionally.
+  handoffLinks(docs, topK) {
+    docs = (docs || []).filter(d => d && d.id);
+    const withText = docs.filter(d => typeof d.text === 'string' && d.text.trim());
+    const T = analyzeTopics(withText, this.topicIdfFloor ?? 30, (d) => contentText(d.name, d.text));
+    const maxDf = Math.max(1, withText.length * (this.topicMaxDf ?? 1));
+    const minSim = this.topicSim ?? 0.10;
+    const minTerms = this.topicShared ?? 3;
+    const K = Math.max(1, Math.min(20, (topK | 0) || 5));
+    const out = new Map(docs.map(d => [d.id, []]));
+    for (let i = 0; i < withText.length; i++) {
+      for (let j = i + 1; j < withText.length; j++) {
+        const a = withText[i], b = withText[j];
+        let r = null;
+        try { r = cosineTopic(a, b, T); } catch { r = null; }
+        if (!r || !(r.sim >= minSim)) continue;
+        const sig = r.shared.filter(t => (T.df.get(t) || 0) <= maxDf);
+        if (sig.length < minTerms) continue;
+        const terms = sig.slice(0, 5);
+        out.get(a.id).push({ id: b.id, sim: r.sim, terms });
+        out.get(b.id).push({ id: a.id, sim: r.sim, terms });
+      }
+    }
+    for (const arr of out.values()) {
+      arr.sort((x, y) => y.sim - x.sim);
+      if (arr.length > K) arr.length = K;
+    }
+    return out;
   },
 
   search(q) {

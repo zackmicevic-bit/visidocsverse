@@ -11,7 +11,7 @@
 // Desktop-only: the web preview never gates (needsEulaGate mirrors the
 // shell detection in license.js). Acceptance is versioned localStorage
 // (`visidocsverse.eula.v1`); bumping EULA_VERSION re-prompts.
-export const EULA_VERSION = 1;
+export const EULA_VERSION = 2;
 export const EULA_TEXT = `END USER LICENSE AGREEMENT (EULA)
 
 PLEASE READ THIS END USER LICENSE AGREEMENT ("AGREEMENT") CAREFULLY BEFORE DOWNLOADING, INSTALLING, OR USING VISI|DOCSVERSE ("SOFTWARE").
@@ -37,6 +37,7 @@ You agree not to, and you will not permit others to:
 - Reverse engineer, decompile, disassemble, or attempt to derive the source code of the Software (except to the extent permitted by applicable law).
 - Rent, lease, sublicense, distribute, sell, or commercially exploit the Software or your license key to any third party.
 - Modify, bypass, or defeat any cryptographic license verification or local security mechanisms implemented in the Software.
+- Resell, sub-license, or redistribute any Institutional or Bulk License, master key, or volume license allocation to any third party without prior written authorization. Institutional and Bulk Licenses are non-transferable and explicitly prohibited from unauthorized resale, sub-licensing, or third-party distribution without prior written authorization.
 
 4. OWNERSHIP & INTELLECTUAL PROPERTY
 
@@ -58,7 +59,7 @@ TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE DEVELOP
 
 8. TERMINATION
 
-This Agreement is effective until terminated. Your rights under this Agreement will terminate automatically without notice if you fail to comply with any of its terms or if your license purchase is refunded or revoked. Upon termination, you must cease all use of the Software and uninstall all copies from your devices.
+This Agreement is effective until terminated. Your rights under this Agreement will terminate automatically without notice if you fail to comply with any of its terms or if your license purchase is refunded or revoked. Upon termination, you must cease all use of the Software and uninstall all copies from your devices. If the developer discovers that a license key or master key has been resold, marked up, or distributed by an unauthorized reseller, the developer reserves the right to void that master key immediately. Because Lemon Squeezy lets the developer invalidate keys from the dashboard, the developer retains complete technical control over unauthorized keys.
 
 9. GOVERNING LAW
 

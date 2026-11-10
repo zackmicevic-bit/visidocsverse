@@ -322,6 +322,8 @@ let viewNotesAll = true; // sticky-note squares on every body that HAS a note (s
 let viewNotesSun = true; // sticky-note square on the selected body (solid if noted, hollow frame if not)
 let notesOpen = false; // Notes book pane beside the reader (per-doc notepad)
 let notesAuto = true; // auto-save the composed note as you type (else Save pushes it)
+let notesW = 0; // user-stretched notes pane width in px (0 = auto: 30% narrower than glossary)
+let notesStickId = null, notesStickN = -1; // list-stick tracker: which doc + how many entries the list last showed
 let selSet = new Set(); // marquee box selection: body ids in the active tab (owned here, read by ren.selSet)
 function pruneSel() { for (const sid of [...selSet]) if (!vault.byId(sid)) selSet.delete(sid); }
 // view-source hold state: right-press candidate -> timer -> glass preview pane
@@ -840,6 +842,7 @@ function luxDotClick(e) {
 }
 let leftCollapsed = false, docCollapsed = false; // panel collapse state (collapse = shrink up to a top tab)
 let docWidth = 0; // reader pane width override in px (0 = default 380)
+let docHeight = 0; // reader pane height override in px (0 = auto: top-pinned, bottom parked above the bottom pill)
 let showAllBodies = false; // general-state reader: also list every body past the 6 largest (collapsed on canvas switch)
 let hideUngr = false; // thematic canvas: lift the palest ungrounded paper icons off the view (reader inventory keeps them)
 let lensThematic = false; // thematic lens: same docs + same physics, recomposed from theme/tag tethers
@@ -952,6 +955,8 @@ try {
   if (ui.tipsCollapsed === true) tipsCollapsed = true;
     if (typeof ui.docWidth === 'number' && ui.docWidth >= 260 && ui.docWidth <= 1200) docWidth = ui.docWidth;
     fitPaneWidthToScreen(ui.vw); // reader saved on another display: re-fit its width to this screen on open
+    if (typeof ui.docHeight === 'number' && ui.docHeight >= 220) docHeight = Math.round(ui.docHeight);
+    fitPaneHeightToScreen(ui.vh); // same for a shrunk height: proportional here, clamped to this screen at paint
     if (ui.lensThematic === true) lensThematic = true;
     if (ui.lensTags === true) lensTags = true;
     if (ui.skipTagConfirms === true) skipTagConfirms = true;
@@ -960,11 +965,12 @@ try {
     if (ui.viewNotes === false) { viewNotesAll = false; viewNotesSun = false; } // legacy single toggle
     if (typeof ui.carZoom === 'number' && ui.carZoom >= 100 && ui.carZoom <= 145) carZoom = Math.round(ui.carZoom);
   if (ui.notesAuto === false) notesAuto = false; else if (ui.notesAuto === true) notesAuto = true;
+  if (typeof ui.notesW === 'number' && ui.notesW >= 200 && ui.notesW <= 640) notesW = Math.round(ui.notesW);
     if (ui.notesOpen === true) notesOpen = true;
   if (stored >= 0 && stored <= SPEED_MAX) rotMul = stored;
 } catch { /* fresh prefs */ }
 function saveUi() {
-  try { localStorage.setItem('visidocsverse.ui', JSON.stringify({ rotOn, rotMul, speedMul: rotMul, autoDist, simpleOrb, simpleOrb2, triOrb, docIcon, vividUniverse, miniX, miniY, miniW, miniH, miniFolded, tvpX, tvpY, tvpW, tvpH, tabX, tabY, hintX, hintY, pillsCentered, vw: window.innerWidth, vh: window.innerHeight, pillMinW, clusterW, glossX, glossY, glossW, glossH, glossOpen, glossDockV1: true, ovAlpha, ovLast, lbScale, lbLast, sizeScale, sizeLast, spinOn, spinSpeed, compressScale, compressLast, bgShade, bgShadePreLux, glow: glowScale, glowLast, tether: tetherScale, tetherLast, tetherColor, tetherDotted, tetherSparse, tetherDashed, backdrop, backdropAlpha, backdropLast, paneAlpha, paneLast, glazeLeft, glazeDoc, glazeCloud, glazeMini, glazeGloss, glazeTabBar, glazeHintBar, luxLeft, luxDoc, luxTab, luxHint, luxMini, leftCollapsed, docCollapsed, docWidth, hoverPrev, hideUngr, snapCenter, statsCollapsed, pillCollapsed, tipsCollapsed, pinnedTerms, lensThematic, lensTags, skipTagConfirms, viewNotesAll, viewNotesSun, notesOpen, notesAuto, carZoom })); } catch { /* private mode */ }
+  try { localStorage.setItem('visidocsverse.ui', JSON.stringify({ rotOn, rotMul, speedMul: rotMul, autoDist, simpleOrb, simpleOrb2, triOrb, docIcon, vividUniverse, miniX, miniY, miniW, miniH, miniFolded, tvpX, tvpY, tvpW, tvpH, tabX, tabY, hintX, hintY, pillsCentered, vw: window.innerWidth, vh: window.innerHeight, pillMinW, clusterW, glossX, glossY, glossW, glossH, glossOpen, glossDockV1: true, ovAlpha, ovLast, lbScale, lbLast, sizeScale, sizeLast, spinOn, spinSpeed, compressScale, compressLast, bgShade, bgShadePreLux, glow: glowScale, glowLast, tether: tetherScale, tetherLast, tetherColor, tetherDotted, tetherSparse, tetherDashed, backdrop, backdropAlpha, backdropLast, paneAlpha, paneLast, glazeLeft, glazeDoc, glazeCloud, glazeMini, glazeGloss, glazeTabBar, glazeHintBar, luxLeft, luxDoc, luxTab, luxHint, luxMini, leftCollapsed, docCollapsed, docWidth, docHeight, hoverPrev, hideUngr, snapCenter, statsCollapsed, pillCollapsed, tipsCollapsed, pinnedTerms, lensThematic, lensTags, skipTagConfirms, viewNotesAll, viewNotesSun, notesOpen, notesAuto, notesW, carZoom })); } catch { /* private mode */ }
 }
 // bottom hint pill: flip to a light pill on a white canvas, dark pill on black
 function syncHintContrast() {
@@ -989,6 +995,15 @@ function fitPaneWidthToScreen(savedVw) {
     if (!(docWidth > 0) || !(savedVw > 0) || savedVw === window.innerWidth) return; // default width is CSS-responsive; same screen needs nothing
     const k = Math.min(2, Math.max(0.5, window.innerWidth / savedVw));
     docWidth = clampDocW(Math.round(docWidth * k));
+  } catch {}
+}
+// reader pane height: same cross-display proportional fit as the width (0 =
+// auto stays auto; the paint-time clamp caps whatever lands here).
+function fitPaneHeightToScreen(savedVh) {
+  try {
+    if (!(docHeight > 0) || !(savedVh > 0) || savedVh === window.innerHeight) return;
+    const k = Math.min(2, Math.max(0.5, window.innerHeight / savedVh));
+    docHeight = Math.round(docHeight * k);
   } catch {}
 }
 function syncInkContrast() {
@@ -1095,18 +1110,28 @@ function clampDocW(w) {
 }
 // fixed reader height: top edge pinned at 16px, bottom edge parked a breath
 // above the bottom pill — independent of how many inventory rows show, the
-// pane never grows or shrinks with content (overflow:auto scrolls inside)
-function sizeDocPanel() {
+// pane never grows or shrinks with content (overflow:auto scrolls inside).
+// A user shrink (docHeight, bottom-edge grip) only ever shortens it: the
+// clamp caps at the auto height so the pills always stay clear.
+function docAutoH() {
   try {
-    const p = document.getElementById('docPanel');
-    if (!p) return;
-    if (p.classList.contains('collapsed') || window.innerWidth <= 760 || !p.offsetParent) { p.style.height = ''; try { if (typeof autoDist !== 'undefined' && autoDist) applyMiniGeom(); } catch {} return; }
     const hb = document.getElementById('hintBar');
     let pillTop = window.innerHeight;
     if (hb && hb.offsetParent !== null && getComputedStyle(hb).display !== 'none') {
       try { pillTop = hb.getBoundingClientRect().top; } catch {}
     }
-    p.style.height = Math.max(220, Math.round(pillTop - 12 - 16)) + 'px';
+    return Math.max(220, Math.round(pillTop - 12 - 16));
+  } catch { return Math.max(220, (window.innerHeight || 800) - 28); }
+}
+function clampDocH(h) {
+  return Math.max(220, Math.min(docAutoH(), Math.round(h)));
+}
+function sizeDocPanel() {
+  try {
+    const p = document.getElementById('docPanel');
+    if (!p) return;
+    if (p.classList.contains('collapsed') || window.innerWidth <= 760 || !p.offsetParent) { p.style.height = ''; try { if (typeof autoDist !== 'undefined' && autoDist) applyMiniGeom(); } catch {} return; }
+    p.style.height = (docHeight > 0 ? clampDocH(docHeight) : docAutoH()) + 'px';
     // height moved the middle and the bottom — re-seat everything parked on them
     try { syncResizeHandle(); } catch {}
     try { placeNotesTab(); } catch {}
@@ -1183,7 +1208,8 @@ function syncResizeHandle() {
     // is no per-frame seating to chase and no glide lag); here only show/hide.
     const hide = p.classList.contains('collapsed') || window.innerWidth <= 760 || !p.offsetParent;
     const ob = document.getElementById('origPaneBtn');
-    for (const el of [h, tb, cb, ob]) if (el) el.style.display = hide ? 'none' : 'flex';
+    const hh = document.getElementById('docResizeH');
+    for (const el of [h, tb, cb, ob, hh]) if (el) el.style.display = hide ? 'none' : 'flex';
   } catch {}
 }
 // right-pane 3D tilt: 30° clockwise (seen from above) about the pane's own
@@ -2686,11 +2712,20 @@ function applyNotesGeom() {
   const bandH = band.bottom - band.top;
   const p = $('#docPanel');
   let w = Math.round((glossW > 0 ? glossW : 560) * 0.7); // 30% narrower than the glossary pane
-  w = Math.max(280, Math.min(520, w, window.innerWidth - 32));
+  if (notesW > 0) w = notesW; // a user stretch wins over the auto width
+  w = Math.max(280, Math.min(notesW > 0 ? 640 : 520, w, window.innerWidth - 32));
   let L = 8;
   try { if (p) { const r = p.getBoundingClientRect(); L = Math.max(8, Math.min(Math.round(r.left - w - 8), window.innerWidth - w - 8)); } } catch {}
   box.style.left = L + 'px'; box.style.top = band.top + 'px';
   box.style.width = w + 'px'; box.style.height = Math.max(200, bandH) + 'px';
+  try { // the stretch arrow rides the pane's left rim (sibling — the pane clips overflow, so it can't live inside)
+    const h = $('#notesResize');
+    if (h) {
+      h.hidden = false;
+      h.style.left = (L - 13) + 'px';
+      h.style.top = (band.top + Math.max(0, (Math.max(200, bandH) - 54) / 2)) + 'px';
+    }
+  } catch {}
   try { syncNotesTop(); } catch {} // the Top tab rides the pane's geometry
 }
 function setNotes(open, id) {
@@ -2714,6 +2749,7 @@ function setNotes(open, id) {
     const box = $('#notesPane');
     if (box) {
       notesCloseToken++;
+      notesStickId = null; notesStickN = -1; // a fresh open always sticks to the newest entry
       box.hidden = false;
       applyNotesGeom();
       renderNotesPane();
@@ -2741,6 +2777,7 @@ function closeNotesPane(silent) {
   const box = $('#notesPane');
   notesOpen = false;
   try { $('#notesTopBtn').hidden = true; } catch {} // the Top tab never outlives its pane
+  try { $('#notesResize').hidden = true; } catch {} // the stretch arrow never outlives its pane
   try { saveUi(); } catch {}
   try { syncNotesTab(); } catch {}
   try { paintGoldRows(); } catch {} // its row unlights now the pane is gone
@@ -2767,6 +2804,11 @@ function notesEntryDate(at) { try { return new Date(at).toLocaleString([], { mon
 // from the sidecar original bytes) first, mined rendered text second,
 // filename/(n.d.) last. Sparse documents yield an honest partial reference
 // (flagged "partial") instead of nothing.
+// publisher / journal imprints (books + journals): the venue vocabulary a
+// generic scan looks for, ordered longest-first so compounds win.
+const PUB_NAMES = ['Lawrence Erlbaum Associates', 'Taylor & Francis', 'SAGE Publications', 'Springer Nature', 'John Wiley & Sons', 'Wiley-Blackwell', 'Emerald Publishing', 'Palgrave Macmillan', 'Oxford University Press', 'Cambridge University Press', 'Harvard University Press', 'Yale University Press', 'Princeton University Press', 'University of Chicago Press', 'University of California Press', 'Columbia University Press', 'McGraw-Hill Education', 'The Guilford Press', 'Guilford Press', 'American Psychological Association', 'American Psychiatric Publishing', 'American Psychiatric Association', 'W. W. Norton & Company', 'W. W. Norton', 'Information Age Publishing', 'Channel View Publications', 'Edward Elgar Publishing', 'Rowman & Littlefield', 'Nova Science Publishers', 'Chapman & Hall', 'Cengage Learning', 'Houghton Mifflin', 'Allyn & Bacon', 'Transaction Publishers', 'CAB International', 'Kluwer Academic Publishers', 'Simon & Schuster', 'Equinox Publishing', 'Hackett Publishing', 'Routledge', 'Springer', 'Wiley', 'Elsevier', 'Emerald', 'Palgrave', 'Macmillan', 'MIT Press', 'Pearson', 'McGraw-Hill', 'De Gruyter', 'John Benjamins', 'Multilingual Matters', 'Edward Elgar', 'IGI Global', 'Brill', 'Peter Lang', 'CRC Press', "O'Reilly Media", 'Addison-Wesley', 'Prentice Hall', 'Longman', 'Jossey-Bass', 'Lexington Books', 'Greenwood Press', 'Praeger', 'Harper & Row', 'Ashgate', 'CABI', 'Bloomsbury', 'Penguin Books', 'Penguin', 'Random House', 'HarperCollins', 'Basic Books', 'Free Press', 'Hachette', 'Kluwer', 'Academic Press', 'Plenum Press', 'Open Court', 'Continuum', 'Wadsworth', 'Brooks/Cole', 'Scribner', 'Knopf', 'Vintage Books', 'Doubleday', 'SAGE'];
+const PUB_IMPRINTS = PUB_NAMES.slice().sort((a, b) => b.length - a.length)
+  .map(s => [new RegExp('\\b' + s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+') + '(?![\\w&])'), s]); // case-SENSITIVE: imprints are proper nouns; lowercase prose ("a free press") must never match
 function docApaInfo(d) {
   const out = { title: '', authors: [], year: 0, source: '', doi: '' };
   if (!d) return out;
@@ -2779,20 +2821,20 @@ function docApaInfo(d) {
   const raw = text.split('\n');
   if (raw.length && /^\s*#\s/.test(raw[0] || '')) raw.shift(); // intake-titled first line repeats the filename
   const lines = [];
-  for (const ln of raw.slice(0, 80)) {
+  for (const ln of raw.slice(0, 200)) {
     const t = String(ln || '').replace(/\s+/g, ' ').trim();
     if (t) lines.push(t);
-    if (lines.length >= 40) break;
+    if (lines.length >= 150) break; // title/authors read the head; venue mining (copyright pages, running heads) reads deeper
   }
   let title = '';
   const embTitle = emb && typeof emb.title === 'string' ? emb.title.trim().slice(0, 300) : '';
   if (embTitle.length >= 4) title = embTitle; // embedded Title beats any rendered-text guess
   else for (const ln of lines.slice(0, 4)) {
     const clean = ln.replace(/^#+\s*/, '').replace(/\s+page \d+(\s+of\s+\d+)?$/i, '').trim();
-    if (clean.length >= 12 && clean.length <= 300 && !/^(abstract|contents|table of contents|introduction|page \d+)/i.test(clean) && !/intentionally (left )?blank|^\s*blank(\s+page)?\s*$/i.test(clean)) { title = clean; break; } // never crown a placeholder page
+    if (clean.length >= 12 && clean.length <= 300 && !/^(abstract|contents|table of contents|introduction|page \d+)/i.test(clean) && !/©|copyright|^\s*doi:|\bhttps?:/i.test(clean) && !/intentionally (left )?blank|^\s*blank(\s+page)?\s*$/i.test(clean)) { title = clean; break; } // never crown a placeholder page — or a copyright/DOI line — as the title
   }
   if (!title) title = human || 'Untitled';
-  out.title = title.slice(0, 300);
+  out.title = String(title).replace(/\s*\[(?:kindle(?:\s+edition)?|pdf(?:\s+edition)?|epub|e-?book|nook|kobo)\]/gi, ' ').replace(/\s+/g, ' ').trim().slice(0, 300); // APA 7th: e-book format tags never appear in the reference
   const WD = CITE_WD;
   const flRe = new RegExp('\\b(' + WD + ')' + CITE_TAIL + '\\b', 'g');
   const lfRe = new RegExp('\\b(' + WD + '),\\s+(' + WD + '|[A-Z]\\.?)', 'g');
@@ -2818,7 +2860,7 @@ function docApaInfo(d) {
   };
   let authors = [];
   const embAuthors = emb && Array.isArray(emb.authors) ? cleanCiteNames(emb.authors) : [];
-  if (embAuthors.length) authors = embAuthors.slice(0, 6); // embedded Author beats any rendered-text guess
+  if (embAuthors.length) authors = embAuthors.slice(0, 21); // embedded Author beats any rendered-text guess (APA 7th: up to 20 named, 21st triggers ellipsis)
   if (!authors.length) for (const pat of [/^\s*by\s*[:\-]?\s+(.+)$/i, /^\s*authors?\s*[:\-]\s*(.+)$/i]) {
     for (const ln of lines.slice(0, 8)) {
       const m = String(ln).match(pat);
@@ -2837,7 +2879,7 @@ function docApaInfo(d) {
       if (okLine(ln, names)) { authors = names; break; }
     }
   }
-  out.authors = cleanCiteNames(authors).slice(0, 6); // stopwords kill placeholder "authors" ("This Page", "Left Blank")
+  out.authors = cleanCiteNames(authors).slice(0, 21); // stopwords kill placeholder "authors" ("This Page", "Left Blank")
   const head = text.slice(0, 8000);
   const nowY = new Date().getFullYear();
   const goodY = (y) => y >= 1500 && y <= nowY;
@@ -2856,30 +2898,166 @@ function docApaInfo(d) {
   out.year = year;
   const doiM = head.match(/\b10\.\d{4,}\/[^\s"'<>\]\)}]+/);
   if (doiM) out.doi = 'https://doi.org/' + doiM[0].replace(/[.,;:]+$/, '');
-  const srcSkip = /@|https?:|doi:|copyright|\u00A9/i;
-  for (const ln of lines.slice(0, 60)) {
-    if (ln.length > 200 || srcSkip.test(ln)) continue;
-    if (/(journal|proceedings|transactions|conference|symposium|review|quarterly|letters|press|books|publisher|university|institute|published\b)/i.test(ln)) { out.source = ln.slice(0, 160); break; }
-    if (/^\s*in\s+(?=[A-Z\u00C0-\u00DE])/i.test(ln) && ln.length >= 12) { out.source = ln.replace(/^\s*in\s+/i, '').slice(0, 160); break; } // "In Advances in ..." reference style
-    if (/\b(nips|neurips|icml|iclr|aaai|ijcai|cvpr|iccv|acl|emnlp|kdd|sigir|acm|ieee)\b/i.test(ln)) { out.source = ln.slice(0, 160); break; } // venue acronyms
+  // publisher / journal mining (books + journals): imprints live on the
+  // copyright page (past the title leaf) and journal names in running heads
+  // — both usually past the head a generic scan covers. Journal titles
+  // first: an article's venue is its journal, never its publisher. Then
+  // explicit "published by" statements, then the imprint gazetteer, then a
+  // generic University Press, and only then the legacy whole-line fallback.
+  const srcHead = String(text.slice(0, 16000)).replace(/[\u2018\u2019]/g, "'");
+  // imprint-anchored city strip: cut trailing ", City[, Country]" only after a
+  // real imprint word, so "Routledge, London" -> "Routledge" while the comma
+  // inside "Little, Brown" (or "... and Company") is never touched.
+  const PUB_TAIL_WORDS = 'Associates|Press|Books|Publishing|Publications|Publishers|Group|Media|House|Company|Incorporated|Inc|Ltd|LLC|GmbH|Verlag|Editore|Routledge|SAGE|Springer|Wiley|Elsevier|Emerald|Palgrave|Macmillan|Pearson|Praeger|Ashgate|Continuum|Brill|Norton|Scribner|Knopf|Penguin|Vintage|Basic|Erlbaum|Guilford|Longman|Cengage|Hachette|Bloomsbury|CABI|Simon & Schuster|Harper & Row|Little, Brown|Farrar, Straus|Harcourt Brace|St\\. Martin\'s';
+  const PUB_STRIP_WORDS = PUB_TAIL_WORDS + '|Taylor & Francis|Taylor|Francis|Rowman|Littlefield|Association|Society|Institute|International|De Gruyter|Gruyter|Addison|Wesley|Prentice|Hall|Jossey|Bass|IGI|Global|Peter Lang|Lang|Benjamins|Multilingual|Matters|Court|Doubleday|HarperCollins|Collins|McGraw|Hill|Houghton|Mifflin|Allyn|Bacon|Wadsworth|Brooks|Cole|Plenum|Equinox|Hackett'; // strip anchors only — bare "Taylor" must never validate a "published by Taylor" prose mimic, so pubBy validation keeps PUB_TAIL_WORDS
+  const CITY_TAIL = /^\s*,\s*(?:[A-Z][a-z]+|[A-Z]{2,})(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,})){0,2}(?:\s*,\s*(?:[A-Z][a-z]+|[A-Z]{2,})(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,})){0,2})?\s*$/;
+  const cleanPub = (s) => { // APA 7th: publisher name only — location is always dropped ("Mahwah, NJ: Erlbaum" -> "Erlbaum")
+    let t = String(s || '').replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim();
+    try { t = t.replace(/^(?:first\s+edition\s+)?(?:published|printed)\s+(?:in\s+.+?\s+)?(?:on\s+.+?\s+)?by\s+/i, ''); } catch {} // "Published/Printed (in X/on Y) by NAME ..." -> NAME (legacy whole-line sources)
+    try { // leading "Place: Publisher" (copyright-page order) collapses to the publisher alone
+      const lm = t.match(/^(.+?)\s*[:;\-]\s*(.+)$/);
+      if (lm && /,\s*(?:[A-Z][a-z]+|[A-Z]{2,})(?:\s+[A-Z][a-z]+)?\s*$/.test(lm[1]) && (PUB_NAMES.some(n => lm[2].toLowerCase().includes(n.toLowerCase())) || new RegExp('\\b(?:' + PUB_STRIP_WORDS + ')\\b', 'i').test(lm[2]))) t = lm[2].trim();
+    } catch {}
+    try {
+      const re = new RegExp('\\b(?:' + PUB_STRIP_WORDS + ')\\b', 'gi');
+      let m; const ends = [];
+      while ((m = re.exec(t))) { ends.push(m.index + m[0].length); if (ends.length > 24) break; }
+      for (let k = ends.length - 1; k >= 0; k--) {
+        const tl = t.slice(ends[k]);
+        if (/^\s*,/.test(tl) && CITY_TAIL.test(tl)) { t = t.slice(0, ends[k]).trim(); break; }
+      }
+    } catch {}
+    try { // cut trailing prose after the complete name ("Erlbaum Associates was printed on acid-free" -> "Erlbaum Associates")
+      const nm = t.match(new RegExp('^(.*\\b(?:' + PUB_STRIP_WORDS + ')\\b(?:\\s+(?:and|&)\\s+[A-Z][\\w&\'.-]*(?:\\s+[A-Z][\\w&\'.-]*){0,3})?)', 'i'));
+      if (nm && nm[1].length > 0 && nm[1].length < t.length) t = nm[1].trim();
+    } catch {}
+    try { t = t.replace(/,\s*(publishers?|books?|press|inc\.?|ltd\.?|llc\.?)\s*$/i, ''); } catch {} // trailing generic ", Publishers" is description, not name ("Harper & Row, Publishers" -> "Harper & Row")
+    return t.replace(/[,;:\s.]+$/, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  };
+  const VENUE_GLUE = new Set(['of', 'on', 'for', 'and', 'the', 'a', 'an', 'de', 'la', 'el', 'van', 'von', 'der', 'und', 'et', 'des', 'du', 'del', 'y', 'e']);
+  const venueWord = (w) => /^[A-Z\u00C0-\u00DE][\w'&.,:-]*$/.test(w) || w === '&' || VENUE_GLUE.has(String(w).toLowerCase());
+  const venueFromLine = (ln) => { // the title-case run around a venue keyword ("Journal of Applied Psychology 94(2)" -> "Journal of Applied Psychology")
+    const s0 = String(ln || '');
+    if (!/journal|quarterly|review|transactions|proceedings|annals|bulletin/i.test(s0) || /@|https?:|doi:/i.test(s0)) return null;
+    if (!/vol\.?|volume|issue|no\.?\s*\d|\(\s*\d{1,3}\s*\)|\bpp?\.?\s*\d|pages?\s+\d+/i.test(s0)) return null; // a bare "Review of ..." chapter/paper title must never become a venue — year or © alone never qualifies; volume/issue/pages required
+    const toks = s0.split(/\s+/).filter(Boolean);
+    const ki = toks.findIndex(t => /^(journal|quarterly|review|transactions|proceedings|annals|bulletin)$/i.test(t.replace(/[,;:]+$/, '')));
+    if (ki < 0) return null;
+    let a = ki, b = ki;
+    while (a - 1 >= 0 && venueWord(toks[a - 1].replace(/[,;:()]+$/, '')) && (ki - a) < 9 && (b - a) < 11) a--;
+    while (b + 1 < toks.length && venueWord(toks[b + 1].replace(/[,;:()]+$/, '')) && (b - ki) < 7 && (b - a) < 11) b++;
+    let name = toks.slice(a, b + 1).join(' ').replace(/^[(\s,;:—–-]+|[)\s,;:—–-]+$/g, '').replace(/\s+/g, ' ').trim();
+    name = name.replace(/^(?:of|on|for|and|the|a|an)\s+/i, '').replace(/\s+(?:of|on|for|and|the|a|an)$/i, '');
+    const caps = (name.match(/[A-Z\u00C0-\u00DE][\w'&.,:-]*/g) || []).length;
+    if (name.length < 6 || name.length > 120 || caps < 2) return null;
+    return name;
+  };
+  let isJournal = false; // article venue: title-cased + volume-appended; book publishers never take volumes
+  for (const ln of lines.slice(0, 150)) {
+    const v = venueFromLine(ln);
+    if (v) { try { out.source = apaTitleCaseJournal(v); } catch { out.source = v; } isJournal = true; break; }
+  }
+  if (!out.source) {
+    const pubBy = srcHead.match(/(?:first\s+)?published[^.\n]{0,60}?\bby\s+([A-Z][\w&'.,-]*(?:\s+(?:[A-Z][\w&'.,-]*|of|for|and|&|the|de|la)){0,6})/i);
+    if (pubBy) {
+      const c = cleanPub(pubBy[1]);
+      // the capture sits after "published ... by", which prose can mimic
+      // ("published by Smith") — only keep imprint-shaped captures: gazetteer
+      // hit, imprint/company word, bare imprint root, or 3+ capitalized words.
+      const caps = (c.match(/[A-ZÀ-Þ][\w'&.,:-]*/g) || []).length;
+      const low = c.toLowerCase();
+      const ok = c.length >= 3 && (caps >= 3 || PUB_NAMES.some(n => low.includes(n.toLowerCase()))
+        || new RegExp('\\b(?:' + PUB_TAIL_WORDS + ')\\b', 'i').test(c)
+        || /^(Routledge|SAGE|Springer|Wiley|Elsevier|Emerald|Palgrave|Macmillan|Pearson|Praeger|Ashgate|Continuum|Brill|Norton|Scribner|Knopf|Penguin|Vintage|Basic|Erlbaum|Guilford|Longman|Cengage|Hachette|Bloomsbury|CABI)$/i.test(c));
+      if (ok) {
+        // APA 7th: multiple publishers join with "; " — recover each gazetteer imprint in text order
+        const hits = [];
+        for (const n of PUB_NAMES) { const ix = c.toLowerCase().indexOf(n.toLowerCase()); if (ix >= 0) hits.push({ n, ix }); }
+        hits.sort((a, b) => a.ix - b.ix || b.n.length - a.n.length);
+        const uniq = [];
+        for (const h of hits) { if (!uniq.some(u => u.n.toLowerCase().includes(h.n.toLowerCase()) || h.n.toLowerCase().includes(u.n.toLowerCase()))) uniq.push(h); }
+        out.source = uniq.length >= 2 ? uniq.slice(0, 2).map(h => h.n).join('; ') : c;
+      }
+    }
+  }
+  if (!out.source) {
+    const foundPubs = []; // APA 7th: multiple publishers join with "; " — longest-first, substring dupes dropped
+    for (const [re, canon] of PUB_IMPRINTS) {
+      if (!re.test(srcHead)) continue;
+      const low = canon.toLowerCase();
+      if (foundPubs.some(f => { const fl = f.toLowerCase(); return fl.includes(low) || low.includes(fl); })) continue;
+      foundPubs.push(canon);
+      if (foundPubs.length >= 2) break;
+    }
+    if (foundPubs.length) out.source = foundPubs.join('; ');
+  }
+  if (!out.source) {
+    const up = srcHead.match(/\b([A-Z][\w'.-]*(?:\s+[A-Z][\w'.-]*){0,3}\s+University\s+Press)\b/);
+    if (up) out.source = cleanPub(up[1]);
+  }
+  if (!out.source) {
+    const srcSkip = /@|https?:|doi:|copyright|©/i;
+    const normTitle = String(out.title || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    for (const ln of lines.slice(0, 150)) {
+      if (ln.length > 200 || srcSkip.test(ln)) continue;
+      if (normTitle && ln.toLowerCase().replace(/\s+/g, ' ').trim() === normTitle) continue; // the title itself is not a venue
+      if (/\b(journal|proceedings|transactions|conference|symposium|review|quarterly|letters|press|books|publications|publisher|university|institute|published)\b/i.test(ln)) {
+        const reviewOnly = /review/i.test(ln) && !/journal|proceedings|transactions|conference|symposium|quarterly|letters|press|books|publications|publisher|university|institute|published/i.test(ln);
+        if (reviewOnly && !/vol\.?|volume|issue|\(\s*\d{1,3}\s*\)|\bpp?\.?\s*\d/i.test(ln)) { /* chapter title mentioning Review — not a venue; fall through to In/acronym checks */ }
+        else {
+          const pubby = /press|books|publications|publisher|university|published/i.test(ln) && !/journal|proceedings|transactions|conference|symposium|review|quarterly|letters/i.test(ln);
+          out.source = (pubby ? (cleanPub(ln) || ln.slice(0, 160)) : ln.slice(0, 160));
+          break;
+        }
+      }
+      if (/^\s*in\s+(?=[A-Z\u00C0-\u00DE])/i.test(ln) && ln.length >= 12) { out.source = ln.replace(/^\s*in\s+/i, '').slice(0, 160); break; } // "In Advances in ..." reference style
+      if (/\b(nips|neurips|icml|iclr|aaai|ijcai|cvpr|iccv|acl|emnlp|kdd|sigir|acm|ieee)\b/i.test(ln)) { out.source = ln.slice(0, 160); break; } // venue acronyms
+    }
   }
   const vol = head.match(/\b(\d{1,3})\s*\(\s*(\d{1,3})\s*\)\s*,\s*(\d+\s*[-\u2013\u2014]\s*\d+|\d+)\b/);
-  if (vol && out.source && !/\(\d+\)/.test(out.source)) out.source += ', ' + vol[1] + '(' + vol[2] + '), ' + vol[3].replace(/\s/g, '');
+  const srcIsJournal = isJournal || /\b(journal|quarterly|review|transactions|proceedings|annals|bulletin)\b/i.test(out.source || '');
+  if (vol && out.source && srcIsJournal && !/\(\d+\)/.test(out.source)) out.source += ', ' + vol[1] + '(' + vol[2] + '), ' + vol[3].replace(/\s/g, ''); // volumes belong to journals — never to book publishers
   return out;
 }
 function apaPerson(a) { // "Last, F. M." from a mined {first, last} pair
   const ini = String(a.first || '').trim().split(/[\s.]+/).filter(Boolean).map(w => w[0].toUpperCase() + '.').join(' ');
   return a.last + (ini ? ', ' + ini : '');
 }
+function apaSentenceCase(t) { // APA 7th book/article titles: sentence case (first word + first after colon/dash; acronyms kept)
+  let s = String(t || '').replace(/\s+/g, ' ').trim();
+  if (!s) return s;
+  const keep = new Set(((String(t).match(/\b[A-Z\u00C0-\u00DE]{2,}[A-Z0-9\u00C0-\u00DE.\-]*/g) || []).map(w => w.toLowerCase())));
+  s = s.toLowerCase();
+  s = s.replace(/(^|[.!?]\s+)([a-z\u00e0-\u00fe])/g, (m, p1, p2) => p1 + p2.toUpperCase());
+  s = s.replace(/(:\s+)([a-z\u00e0-\u00fe])/g, (m, p1, p2) => p1 + p2.toUpperCase());
+  s = s.replace(/(\s[-\u2013\u2014]\s+)([a-z\u00e0-\u00fe])/g, (m, p1, p2) => p1 + p2.toUpperCase());
+  for (const k of keep) { try { s = s.replace(new RegExp('\\b' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g'), k.toUpperCase()); } catch {} }
+  return s;
+}
+function apaTitleCaseJournal(s) { // APA 7th periodical names: Title Case on major words (minor words lowercased mid-title)
+  const minor = new Set(['of', 'on', 'for', 'and', 'the', 'a', 'an', 'in', 'to', 'vs', 'v', 'de', 'la', 'el', 'van', 'von', 'der', 'und', 'et', 'des', 'du', 'del', 'y', 'e']);
+  const toks = String(s || '').split(/\s+/).filter(Boolean);
+  return toks.map((w, i) => {
+    const m = w.match(/^([^A-Za-z\u00C0-\u00FF]*)([A-Za-z\u00C0-\u00FF][\w'&.\-]*)(.*)$/);
+    if (!m) return w;
+    const lo = m[2].toLowerCase();
+    if (i > 0 && i < toks.length - 1 && minor.has(lo)) return m[1] + lo + m[3];
+    return m[1] + m[2].charAt(0).toUpperCase() + m[2].slice(1) + m[3];
+  }).join(' ').replace(/\s+/g, ' ').trim();
+}
+function apaAuthorText(list) { // APA 7th: up to 20 authors all named; 21+ -> first 19, ellipsis, final author (no ampersand)
+  const names = (list || []).slice(0, 21);
+  if (!names.length) return '';
+  if (names.length >= 21) return names.slice(0, 19).map(apaPerson).join(', ') + ', ... ' + apaPerson(names[names.length - 1]);
+  if (names.length === 1) return apaPerson(names[0]);
+  if (names.length === 2) return apaPerson(names[0]) + ', & ' + apaPerson(names[1]);
+  return names.slice(0, -1).map(apaPerson).join(', ') + ', & ' + apaPerson(names[names.length - 1]);
+}
 function docApaText(d) { // plain-text citation (clipboard)
   const info = docApaInfo(d);
-  const names = info.authors.slice(0, 20);
-  let auth = '';
-  if (names.length === 1) auth = apaPerson(names[0]);
-  else if (names.length === 2) auth = apaPerson(names[0]) + ', & ' + apaPerson(names[1]);
-  else if (names.length > 2) auth = names.slice(0, -1).map(apaPerson).join(', ') + ', & ' + apaPerson(names[names.length - 1]);
+  const auth = apaAuthorText(info.authors);
   const yr = info.year ? '(' + info.year + ').' : '(n.d.).';
-  const ti = info.title.replace(/\s+/g, ' ').trim().replace(/\.+$/, '') + '.';
+  const ti = apaSentenceCase(info.title).replace(/\.+$/, '') + '.';
   const bits = auth ? [auth + ' ' + yr + ' ' + ti] : [ti + ' ' + yr];
   if (info.source) bits.push(info.source.replace(/\.+$/, '') + '.');
   if (info.doi) bits.push(info.doi);
@@ -2887,13 +3065,14 @@ function docApaText(d) { // plain-text citation (clipboard)
 }
 function docApaHtml(d) { // rendered citation (titles/sources italic, partial flagged)
   const info = docApaInfo(d);
-  const names = info.authors.slice(0, 20);
+  const list = info.authors.slice(0, 21);
   let auth = '';
-  if (names.length === 1) auth = esc(apaPerson(names[0]));
-  else if (names.length === 2) auth = esc(apaPerson(names[0])) + ', &amp; ' + esc(apaPerson(names[1]));
-  else if (names.length > 2) auth = names.slice(0, -1).map(a => esc(apaPerson(a))).join(', ') + ', &amp; ' + esc(apaPerson(names[names.length - 1]));
+  if (list.length >= 21) auth = list.slice(0, 19).map(a => esc(apaPerson(a))).join(', ') + ', ... ' + esc(apaPerson(list[list.length - 1]));
+  else if (list.length === 1) auth = esc(apaPerson(list[0]));
+  else if (list.length === 2) auth = esc(apaPerson(list[0])) + ', &amp; ' + esc(apaPerson(list[1]));
+  else if (list.length > 2) auth = list.slice(0, -1).map(a => esc(apaPerson(a))).join(', ') + ', &amp; ' + esc(apaPerson(list[list.length - 1]));
   const yr = info.year ? '(' + info.year + ').' : '(n.d.).';
-  const ti = '<i>' + esc(info.title.replace(/\s+/g, ' ').trim().replace(/\.+$/, '') + '.') + '</i>';
+  const ti = '<i>' + esc(apaSentenceCase(info.title).replace(/\.+$/, '') + '.') + '</i>';
   const bits = auth ? [auth + ' ' + esc(yr) + ' ' + ti] : [ti + ' ' + esc(yr)];
   if (info.source) bits.push('<i>' + esc(info.source.replace(/\.+$/, '') + '.') + '</i>');
   if (info.doi) bits.push(esc(info.doi));
@@ -2939,10 +3118,19 @@ function renderNotesPane() {
   if (hd) hd.textContent = d ? (log.length ? `${log.length} ${log.length === 1 ? 'entry' : 'entries'}` : 'empty') : '';
   const list = $('#notesList');
   if (list) {
+    const prevTop = list.scrollTop || 0;
     list.innerHTML = d ? (log.length ? log.map((e, i) =>
       `<div class="ne${e.spot ? ' pinned' : ''}"${e.spot ? ` data-nejump="${esc(e.id)}" title="Jump to its passage in the body"` : ''}><div class="ne-head"><span class="ne-num">#${i + 1} · ${esc(notesEntryDate(e.at))}${esc(notePageLabel(d, e))}</span><button class="ne-x" data-ndel="${esc(e.id)}" title="Delete this note entry">×</button></div><div class="ne-text">${esc(e.text)}</div></div>`
     ).join('') : '<div class="ne-empty">No notes on this document yet — write one below, highlight text in the body and send it here, drag the highlight straight into this pane, or use the sticky square.</div>')
     : '<div class="ne-empty">Open a document body to take notes.</div>';
+    // full-pane stick: a fresh open, a doc switch, or a new entry pulls the
+    // existing notes up so the newest entry + empty composer space show; any
+    // other re-render (auto-save text updates, deletes) keeps the scroll
+    // position instead of yanking it out from under the reader.
+    const grew = !d || notesStickId !== d.id || log.length > notesStickN;
+    try { list.scrollTop = grew ? list.scrollHeight : prevTop; } catch {}
+    notesStickId = d ? d.id : null;
+    notesStickN = log.length;
   }
   const area = $('#notesArea');
   if (area) {
@@ -3091,6 +3279,24 @@ function notesDropText(e) { // dragged text from a drop event (falls back to the
   try { t = String((e && e.dataTransfer && e.dataTransfer.getData('text/plain')) || ''); } catch {}
   if (!t.trim() && dragNotePayload && dragNotePayload.text) t = String(dragNotePayload.text);
   return t;
+}
+function notesImageDrop(e) { // an in-app picture dragged toward notes: its payload is only a blob:/data: URL — never file that as a note
+  let dt = null;
+  try { dt = e && e.dataTransfer; } catch {}
+  if (!dt) return false;
+  try { if (dt.files && dt.files.length) return false; } catch {} // real files: stand down, the window importer takes them as documents
+  let txt = '', html = '', uri = '';
+  try { txt = String(dt.getData('text/plain') || ''); } catch {}
+  if (txt.trim() && !/^\s*(blob:|data:)/i.test(txt)) return false; // genuine words — the handlers below file them
+  if (!txt.trim()) {
+    try { html = String(dt.getData('text/html') || ''); } catch {}
+    try { uri = String(dt.getData('text/uri-list') || ''); } catch {}
+    if (!/<img[\s>]|blob:|data:(image|video|audio)\//i.test(html + '\n' + uri)) return false; // a plain link or empty drop — existing paths handle (or ignore) it
+  }
+  try { e.preventDefault(); } catch {}
+  try { e.stopPropagation(); } catch {} // keep the window importer quiet too — there are no file bytes to take
+  toast('Images can’t drop into notes — notes keep text only (drag highlighted words instead)');
+  return true;
 }
 function fileDroppedHighlight(raw, targetId) { // drop a highlight onto the pane: file it as a pinned entry like the button
   const d = vault.byId(targetId);
@@ -4417,7 +4623,7 @@ function renderTabs() {
     const tabHtml = (t) => {
       const iso = vault.isIso(t);
       const tinted = iso && typeof t.color === 'string' && /^#[0-9a-f]{6}$/i.test(t.color);
-      return `<button class="tab${t.id === vault.activeTabId ? ' active' : ''}${iso ? ' iso' : ''}${tinted ? ' tinted' : ''}" data-tab="${t.id}"${tinted ? ` style="--tabc:${t.color}"` : ''} title="${esc(t.name)}${t.main ? ' — main verse' : ''}${iso ? ' — isolated verse: uploads, searches and deletes stay in this tab' : ''} — double-click to rename, right-click for associations">${t.main ? '★ ' : ''}${iso ? '◌ ' : ''}${esc(t.name)} <span class="tabcount">(${t.docs.length})</span>${t.id === repOf.get(t.id) ? `<span class="tabsave" data-savetab="${t.id}" title="Save ALL projects to your computer as a backup file">save project</span>` : ''}<span class="tabx" data-closetab="${t.id}" title="Close canvas">×</span></button>` + (plusAfter.has(t.id) ? `<button class="tab tabadd" data-addto="${plusAfter.get(t.id).id}" title="${esc(plusCaption('addToTab', plusAfter.get(t.id).name))}">+</button>` : '');
+      return `<button class="tab${t.id === vault.activeTabId ? ' active' : ''}${iso ? ' iso' : ''}${tinted ? ' tinted' : ''}" data-tab="${t.id}"${tinted ? ` style="--tabc:${t.color}"` : ''} title="${esc(t.name)}${t.main ? ' — main verse' : ''}${iso ? ' — isolated verse: uploads, searches and deletes stay in this tab' : ''} — double-click to rename, right-click for associations">${t.main ? '★ ' : ''}${iso ? '◌ ' : ''}${esc(t.name)} <span class="tabcount">(${t.docs.length})</span>${t.id === repOf.get(t.id) ? `<span class="tabsave" data-savetab="${t.id}" title="Save ALL projects to your computer as a backup file">save project</span><span class="tabsave" data-handoff="${t.id}" title="Export every note you wrote, grouped per document, each followed by its most similar workspace documents — one .txt to paste into any AI chat">export handoff</span>` : ''}<span class="tabx" data-closetab="${t.id}" title="Close canvas">×</span></button>` + (plusAfter.has(t.id) ? `<button class="tab tabadd" data-addto="${plusAfter.get(t.id).id}" title="${esc(plusCaption('addToTab', plusAfter.get(t.id).name))}">+</button>` : '');
     };
     // thin wireframe boxes: one frame per maximal contiguous run of a
     // universe (a universe split by manual moves shows a frame per run;
@@ -5198,7 +5404,7 @@ function splitCiteAuthors(s) { // embedded Author string -> [{first,last}]: "A. 
   const out = [];
   if (typeof s !== 'string' || !s.trim()) return out;
   const chunks = s.split(/\s*;\s*/).map(t => t.trim()).filter(Boolean);
-  const parts = (chunks.length > 1 ? chunks : s.split(/\s+(?:and|&)\s+/i).map(t => t.trim()).filter(Boolean)).slice(0, 8);
+  const parts = (chunks.length > 1 ? chunks : s.split(/\s+(?:and|&)\s+/i).map(t => t.trim()).filter(Boolean)).slice(0, 25); // APA 7th needs 21 authors to trigger the ellipsis rule
   const WD = CITE_WD;
   for (const p of parts) {
     if (CITE_SOFT_JUNK.test(p.replace(/[0-9.]+/g, '').trim())) continue; // software names, not people
@@ -5214,7 +5420,7 @@ function cleanCiteMeta(m) { // validate shape (persisted rows, sidecar parses)
   const out = {};
   if (typeof m.title === 'string' && m.title.trim().length >= 4) out.title = m.title.trim().slice(0, 300);
   const au = cleanCiteNames(m.authors);
-  if (au.length) out.authors = au.slice(0, 8);
+  if (au.length) out.authors = au.slice(0, 21); // APA 7th: keep 21 so the ellipsis rule can trigger
   if (Number.isInteger(m.year) && m.year >= 1500 && m.year <= new Date().getFullYear()) out.year = m.year;
   return out;
 }
@@ -5832,7 +6038,7 @@ function openSrcPop(id, x, y, sticky) {
   const imgs = (d.images || []).filter(im => im && im.key);
   const body = $('#svpBody'), cap = $('#svpCap'), foot = $('#svpFoot');
   cap.hidden = true; cap.textContent = '';
-  const mkind0 = mediaKind(d.name, '');
+  const mkind0 = mediaKind(d.name, d.origType || '');
   if (mkind0 === 'image' && d.origKey) {
     // standalone photo body: thumbnail from the kept original bytes
     $('#svpSec').textContent = 'Image';
@@ -5882,7 +6088,7 @@ function openSrcPop(id, x, y, sticky) {
     foot.textContent = 'thumbnail preview · release to close';
   } else {
     const sec = srcSection(d.text);
-    const mk = mediaKind(d.name, '');
+    const mk = mediaKind(d.name, d.origType || '');
     $('#svpSec').textContent = mk ? (mk === 'video' ? 'Video' : mk === 'audio' ? 'Audio' : 'Image') : sec.label;
     body.textContent = (sec.text || '(no readable text)') + (sec.more && sec.text ? '…' : '');
     foot.textContent = `${Math.min(sec.words, SRC_WORDS)} of ${d.words} words · release to close`;
@@ -5976,7 +6182,7 @@ function openCarousel() {
   const seg = pageSegments(d.text, d.pageMap); // real folio pages when the import mapped them
   const pages = seg ? seg.segs : carouselPages(d.text);
   carPagesArr = pages;
-  const hasMedia = !!mediaKind(d.name, '');
+  const hasMedia = !!mediaKind(d.name, d.origType || '');
   carMediaFirst = hasMedia;
   carReal = seg ? { count: seg.count, off: hasMedia ? 1 : 0, segs: seg.segs } : null; // center-pane readout + pane anchors map back to folio pages
   const hasText = !!String(d.text || '').trim();
@@ -7932,7 +8138,7 @@ async function hydrateImages(rootEl, images) {
   }
   for (const [k, u] of imgUrlCache) if (!live.has(k)) { try { URL.revokeObjectURL(u); } catch { /* already gone */ } imgUrlCache.delete(k); }
 }
-// media bodies (.mp4/.mov/.mp3/.wav/.jpg/.png): a native player (or the
+// media bodies (video/audio/photo): a native player (or the
 // picture itself) rides below the prose, fed by the original bytes in the
 // originals sidecar (shared across copies by origKey, like shared picture
 // keys). Backup-restored docs without bytes get the same honest placeholder
@@ -7959,8 +8165,8 @@ async function origBlob(d) {
   return null;
 }
 async function hydrateMedia(rootEl, d) {
-  if (!rootEl || !d || !mediaKind(d.name, '')) return;
-  const kind = mediaKind(d.name, '');
+  if (!rootEl || !d || !mediaKind(d.name, d.origType || '')) return;
+  const kind = mediaKind(d.name, d.origType || '');
   const box = document.createElement('div');
   box.className = 'mediagal';
   const cap = document.createElement('div');
@@ -8106,7 +8312,7 @@ async function migrateIdbOriginalsToDisk() {
         const blob = rec && rec.blob;
         if (!blob || !(blob.size > 0)) { skipped++; continue; }
         d.origFile = await diskPut(k, blob, (rec && rec.name) || d.name);
-        d.origKey = k; d.origWhere = 'disk'; delete d.origSkipped;
+        d.origKey = k; d.origWhere = 'disk'; if (!d.origType) d.origType = (rec && rec.type) || ''; delete d.origSkipped;
         await origDelete(k);
         moved++;
       } catch (e) { failed++; console.warn('disk vault adoption missed ' + k, (e && e.message) || e); }
@@ -8119,8 +8325,8 @@ async function migrateIdbOriginalsToDisk() {
 
 // ---------- intake: real folder select + files + drop ----------
 const OFFICE_MSG = 'Office libraries failed to load from the app bundle (reinstall may be needed).';
-const INTAKE_RE = /\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?|mp4|mov|mp3|wav|jpe?g|png)$/i;
-const INTAKE_LABEL = '.md / .txt / .csv / .pdf / .docx / .xlsx / .pptx / .mp4 / .mov / .mp3 / .wav / .jpg / .png';
+const INTAKE_RE = /\.(md|markdown|txt|csv|pdf|docx?|xlsx?|pptx?|mp4|mov|webm|m4v|ogv|mp3|wav|ogg|oga|m4a|aac|flac|opus|jpe?g|png|gif|webp)$/i;
+const INTAKE_LABEL = '.md / .txt / .csv / .pdf / .docx / .xlsx / .pptx / .mp4 / .mov / .webm / .mp3 / .wav / .m4a / .ogg / .jpg / .png / .gif / .webp';
 function cleanName(f) {
   let n = (f && f.name) || '';
   if (!n && f && f.webkitRelativePath) n = String(f.webkitRelativePath).split('/').pop() || '';
@@ -8143,9 +8349,9 @@ function fileTypeKey(name) {
   if (e === 'txt' || e === 'md' || e === 'markdown' || e === 'csv') return 'txt';
   if (e === 'ppt' || e === 'pptx') return 'ppt';
   if (e === 'xls' || e === 'xlsx') return 'xls';
-  if (e === 'mp4' || e === 'mov') return 'vid';
-  if (e === 'mp3' || e === 'wav') return 'aud';
-  if (e === 'jpg' || e === 'jpeg' || e === 'png') return 'img';
+  if (e === 'mp4' || e === 'mov' || e === 'webm' || e === 'm4v' || e === 'ogv') return 'vid';
+  if (e === 'mp3' || e === 'wav' || e === 'ogg' || e === 'oga' || e === 'm4a' || e === 'aac' || e === 'flac' || e === 'opus') return 'aud';
+  if (e === 'jpg' || e === 'jpeg' || e === 'png' || e === 'gif' || e === 'webp') return 'img';
   return '';
 }
 const FILE_TYPE_LABEL = { pdf: 'PDF', word: 'WORD', txt: 'TXT', ppt: 'PPT', xls: 'XLS', vid: 'VID', aud: 'AUD', img: 'IMG' };
@@ -8161,7 +8367,7 @@ function intakeAllowed(f) {
   if (ty.indexOf('text/') === 0) return true;
   if (ty.indexOf('video/') === 0) return true;
   if (ty.indexOf('audio/') === 0) return true;
-  if (ty === 'image/jpeg' || ty === 'image/png') return true;
+  if (ty === 'image/jpeg' || ty === 'image/png' || ty === 'image/gif' || ty === 'image/webp') return true;
   return false;
 }
 async function readFileAsText(f, onStep) {
@@ -8345,18 +8551,18 @@ async function readFileAsText(f, onStep) {
   return await f.text();
 }
 
-// ---------- video + audio bodies (.mp4/.mov/.mp3/.wav) ----------
+// ---------- video + audio + photo bodies (mediaKind extensions) ----------
 // Extension (or MIME fallback) decides the player; anything else is not media.
 function mediaKind(name, mime) {
   const m = String(name || '').toLowerCase().match(/\.([a-z0-9]+)$/);
   const e = m ? m[1] : '';
-  if (e === 'mp4' || e === 'mov') return 'video';
-  if (e === 'mp3' || e === 'wav') return 'audio';
-  if (e === 'jpg' || e === 'jpeg' || e === 'png') return 'image';
+  if (e === 'mp4' || e === 'mov' || e === 'webm' || e === 'm4v' || e === 'ogv') return 'video';
+  if (e === 'mp3' || e === 'wav' || e === 'ogg' || e === 'oga' || e === 'm4a' || e === 'aac' || e === 'flac' || e === 'opus') return 'audio';
+  if (e === 'jpg' || e === 'jpeg' || e === 'png' || e === 'gif' || e === 'webp') return 'image';
   const t = String(mime || '').toLowerCase().split(';')[0].trim();
   if (t.indexOf('video/') === 0) return 'video';
   if (t.indexOf('audio/') === 0) return 'audio';
-  if (t === 'image/jpeg' || t === 'image/png') return 'image';
+  if (t === 'image/jpeg' || t === 'image/png' || t === 'image/gif' || t === 'image/webp') return 'image';
   return '';
 }
 function fmtMediaSize(n) {
@@ -8397,7 +8603,7 @@ async function mediaDocText(f, nm, kind) {
   if (kind === 'image') {
     // standalone photo body: the picture shows below; its readable text
     // joins through the same OCR pipeline embedded pictures use.
-    const fmt = /png$/i.test(ext) ? 'PNG' : 'JPEG';
+    const fmt = /png$/i.test(ext) ? 'PNG' : /gif$/i.test(ext) ? 'GIF' : /webp$/i.test(ext) ? 'WebP' : 'JPEG';
     let dims = '';
     try {
       const bmp = await createImageBitmap(f);
@@ -9006,7 +9212,7 @@ async function ingestFiles(files, ctx) {
       if (imgFails) toast(imgFails + ' picture' + (imgFails === 1 ? '' : 's') + ' could not be stored — text and the rest still imported', 5000);
       // standalone photo bodies (.jpg/.png): the file itself is the picture —
       // run it through the same OCR pipeline so photographed text counts.
-      if (!ocrPics.length && /\.(jpe?g|png)$/i.test(cleanName(f))) {
+      if (!ocrPics.length && /\.(jpe?g|png|gif|webp)$/i.test(cleanName(f))) {
         try {
           const fit = await downscaleImage(f);
           if (fit.blob && fit.blob.size > 0) ocrPics.push({ blob: fit.blob, cap: cleanName(f) });
@@ -9073,17 +9279,17 @@ async function ingestFiles(files, ctx) {
         if (f && typeof f.size === 'number' && f.size > 0 && await diskUsable()) {
           try {
             d.origFile = await diskPut(okey, f, d.name);
-            d.origKey = okey; d.origWhere = 'disk'; delete d.origSkipped; kept = 'disk';
+            d.origKey = okey; d.origWhere = 'disk'; d.origType = (f && f.type) || ''; delete d.origSkipped; kept = 'disk';
           } catch (e) { console.warn('disk vault keep failed for ' + d.name + ' — trying the browser store', (e && e.message) || e); }
         }
         if (!kept && f && typeof f.size === 'number' && f.size > 0 && f.size <= ORIG_IDB_MAX) {
           try {
             await origPut({ key: okey, blob: f, name: d.name, type: (f && f.type) || '', at: Date.now() });
-            d.origKey = okey; d.origWhere = 'idb'; delete d.origFile; delete d.origSkipped; kept = 'idb';
+            d.origKey = okey; d.origWhere = 'idb'; d.origType = (f && f.type) || ''; delete d.origFile; delete d.origSkipped; kept = 'idb';
           } catch (e) { console.warn('keeping original failed for ' + d.name + ' — text still imports', (e && e.message) || e); }
         }
         if (!kept) {
-          delete d.origKey; delete d.origWhere; delete d.origFile;
+          delete d.origKey; delete d.origWhere; delete d.origFile; delete d.origType;
           d.origSkipped = (f && f.size > ORIG_IDB_MAX) ? 'too-large-for-browser-store' : 'keep-failed';
           try { vault.persist(); } catch {}
           toast(d.origSkipped === 'too-large-for-browser-store'
@@ -9822,6 +10028,8 @@ async function boot() {
     if (tb) {
       const sv = e.target.closest('[data-savetab]');
       if (sv) { e.stopPropagation(); saveAllProjects(); return; }
+      const hoT = e.target.closest('[data-handoff]');
+      if (hoT) { e.stopPropagation(); hideOpenProjMenu(); openHandoffModal(); return; }
       switchCanvas(tb.dataset.tab); return;
     }
     const op = e.target.closest('[data-openproj]');
@@ -9868,6 +10076,8 @@ async function boot() {
       if (!vault.tab()) { toast('No open canvas — click + to start one before merging a master file.'); return; }
       const p = $('#absorbPick'); if (p) p.click(); return;
     }
+    const hoM = e.target.closest('#openProjMenu [data-handoff]');
+    if (hoM) { e.stopPropagation(); hideOpenProjMenu(); openHandoffModal(); return; }
     const va = e.target.closest('[data-viewall]');
     if (va) {
       e.stopPropagation();
@@ -11699,9 +11909,60 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
     el.addEventListener('pointercancel', endDrag);
     el.addEventListener('dblclick', () => { docWidth = 0; applyDocWidth(); try { placeFindSide(); } catch {} try { placeTopBtn(); } catch {} try { syncNotesTab(); } catch {} try { if (notesOpen) applyNotesGeom(); } catch {} saveUi(); toast('Reader width reset'); });
   };
+  // reader pane height grip: ═ bar on the pane's bottom edge, drag up to
+  // shrink (top stays pinned — the pane only ever shortens). Same physics
+  // as the width arrow (pointer capture, persisted on release,
+  // double-click resets to full height), clamped 220px..auto so the pills
+  // always stay clear.
+  const wireDocHeight = (el) => {
+    if (!el || el.dataset.wired) return;
+    el.dataset.wired = '1';
+    let dragY = 0, dragH = 0, dragging = false;
+    el.addEventListener('pointerdown', (e) => {
+      dragging = true; dragY = e.clientY;
+      dragH = document.getElementById('docPanel')?.getBoundingClientRect().height || 400;
+      try { el.setPointerCapture(e.pointerId); } catch {}
+      e.preventDefault(); e.stopPropagation();
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      docHeight = clampDocH(dragH + (e.clientY - dragY)); // bottom edge: drag up (clientY falls) = shrink, drag down = grow back toward auto
+      try { sizeDocPanel(); } catch {}
+    });
+    const endDrag = () => { if (!dragging) return; dragging = false; try { saveUi(); } catch {} };
+    el.addEventListener('pointerup', endDrag);
+    el.addEventListener('pointercancel', endDrag);
+    el.addEventListener('dblclick', (e) => { try { e.stopPropagation(); } catch {} docHeight = 0; try { sizeDocPanel(); } catch {} try { saveUi(); } catch {} toast('Reader height reset'); });
+  };
+  // notes pane stretch: ‹ arrow on the pane's left rim, drag to stretch.
+  // Same physics as the reader's handle (pointer capture, persisted on
+  // release, double-click resets) but pane-local: left edge, drag left =
+  // widen, 200–640px. applyNotesGeom re-seats the arrow on every move.
+  const wireNotesResize = (el) => {
+    if (!el || el.dataset.wired) return;
+    el.dataset.wired = '1';
+    let dragX = 0, dragW = 0, dragging = false;
+    el.addEventListener('pointerdown', (e) => {
+      dragging = true; dragX = e.clientX;
+      dragW = document.getElementById('notesPane')?.getBoundingClientRect().width || 320;
+      try { el.setPointerCapture(e.pointerId); } catch {}
+      e.preventDefault(); e.stopPropagation();
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      notesW = Math.max(200, Math.min(640, Math.round(dragW - (e.clientX - dragX))));
+      try { applyNotesGeom(); } catch {}
+    });
+    const endDrag = () => { if (!dragging) return; dragging = false; try { saveUi(); } catch {} };
+    el.addEventListener('pointerup', endDrag);
+    el.addEventListener('pointercancel', endDrag);
+    el.addEventListener('dblclick', (e) => { try { e.stopPropagation(); } catch {} notesW = 0; try { applyNotesGeom(); } catch {} try { saveUi(); } catch {} toast('Notes width reset'); });
+  };
   try {
     applyDocWidth();
     wireResize(document.getElementById('docResize'), -1); // left edge: drag left = widen
+    wireDocHeight(document.getElementById('docResizeH')); // bottom edge: drag up = shrink
+    wireNotesResize(document.getElementById('notesResize')); // notes left rim: drag left = widen
     { const dtb = document.getElementById('docTiltBtn'); if (dtb && !dtb.dataset.wired) { dtb.dataset.wired = '1'; dtb.onclick = () => { const p = document.getElementById('docPanel'); if (p) setDocTilt(!p.classList.contains('tiltedR')); }; } }
     window.addEventListener('resize', () => fitViewport('resize'));
     // late layout settlers (webfonts swap row metrics after first paint) —
@@ -11986,6 +12247,8 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
               const ty = (e.dataTransfer && e.dataTransfer.types) || [];
               const hasText = [...ty].some(t => String(t).toLowerCase().includes('text/plain') || String(t).toLowerCase().includes('text/html'));
               if (!hasText && ty.length) return; // files etc: leave to their own targets
+              const noPlain = ![...ty].some(t => String(t).toLowerCase() === 'text/plain');
+              if (noPlain && [...ty].some(t => String(t).toLowerCase().includes('text/uri-list'))) return; // image/URL-object drag — the drop side refuses it, so don't promise a landing
             } catch {}
             try { e.preventDefault(); } catch {}
             try { if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; } catch {}
@@ -11998,6 +12261,7 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
           np.addEventListener('drop', (e) => {
             try { np.classList.remove('drop-hi'); } catch {}
             if (dragFromNotes) return; // let the native reorder land
+            if (notesImageDrop(e)) return; // a dragged picture is only a blob: URL — refused inside (window kept quiet too)
             const inArea = !!(e.target && e.target.closest && e.target.closest('#notesArea'));
             const txt = notesDropText(e);
             if (!txt.trim()) return;
@@ -12048,6 +12312,8 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
               const ty = (e.dataTransfer && e.dataTransfer.types) || [];
               const hasText = [...ty].some(t => String(t).toLowerCase().includes('text/plain') || String(t).toLowerCase().includes('text/html'));
               if (!hasText && ty.length) return;
+              const noPlain = ![...ty].some(t => String(t).toLowerCase() === 'text/plain');
+              if (noPlain && [...ty].some(t => String(t).toLowerCase().includes('text/uri-list'))) return; // image/URL-object drag — the drop side refuses it, so don't promise a landing
             } catch {}
             try { e.preventDefault(); } catch {}
             try { if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; } catch {}
@@ -12057,6 +12323,7 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
           nt.addEventListener('drop', (e) => {
             try { nt.classList.remove('drop-hi'); } catch {}
             if (dragFromNotes) return;
+            if (notesImageDrop(e)) return; // a dragged picture is only a blob: URL — refused inside (window kept quiet too)
             const txt = notesDropText(e);
             if (!txt.trim()) return;
             try { e.preventDefault(); } catch {}
@@ -12602,7 +12869,8 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
         ovAlpha, ovLast, lbScale, lbLast, sizeScale, sizeLast, spinOn, spinSpeed, compressScale, compressLast, bgShade, bgShadePreLux,
         backdrop, backdropAlpha, backdropLast, paneAlpha, paneLast,
         glazeLeft, glazeDoc, glazeCloud, glazeMini, glazeGloss, glazeTabBar, glazeHintBar, luxLeft, luxDoc, luxTab, luxHint, luxMini,
-        leftCollapsed, docCollapsed, docWidth, hoverPrev, hideUngr, snapCenter, statsCollapsed, pillCollapsed, tipsCollapsed, pinnedTerms: [...pinnedTerms], lensThematic, lensTags,
+        leftCollapsed, docCollapsed, docWidth, docHeight, hoverPrev, hideUngr, snapCenter, statsCollapsed, pillCollapsed, tipsCollapsed, pinnedTerms: [...pinnedTerms], lensThematic, lensTags,
+        notesW,
         viewNotesAll, viewNotesSun, notesOpen, notesAuto, carZoom,
         topicSim: vault.topicSim, topicShared: vault.topicShared,
         topicMaxDf: vault.topicMaxDf, topicTopK: vault.topicTopK,
@@ -12621,6 +12889,210 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
     a.download = name || 'visidocsverse-master-settings.json';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+  // ---------- Research handoff export (.txt) ----------
+  // One plain-text file a researcher can paste into any AI chat: every note
+  // they wrote, grouped per document, each followed by the workspace
+  // documents most similar to it (same TF-IDF grounding as the universe web,
+  // with the shared terms shown so every link is auditable). Local-first like
+  // everything else: the file is built and saved on this machine, nothing is
+  // uploaded anywhere by the export itself. Copies of a document share one
+  // notepad (syncNoteKin), so lineages collapse to a single section — the
+  // same notes never appear twice pretending to be independent agreement.
+  const HANDOFF_NEIGHBOR_DEFAULT = 5;
+  const HANDOFF_EXCERPT_CHARS = 300;
+  const HANDOFF_WARN_CHARS = 200000; // estimate line warns past this size
+  const HANDOFF_PROMPT = 'Using ONLY the research notes below, draft [DESCRIBE WHAT YOU WANT, e.g. the next section of my thesis]. Cite [Document N] for every factual claim. If the draft needs something the notes do not support, mark it [NEEDS SOURCE] instead of inventing it. Do not use outside knowledge.';
+  function handoffTagDisp(t) {
+    const s = String(t || '').trim();
+    if (!s) return '';
+    const m = s.match(/^(auto|manual)\//);
+    const base = (m ? s.slice(m[0].length) : s).trim();
+    if (!base) return '';
+    return (m && m[1] === 'auto') ? base : '#' + base;
+  }
+  function collectHandoffData() {
+    const seen = new Set(); // lineage roots already taken (copies share one notepad)
+    const corpus = []; // every lineage representative: the similarity ground
+    const byId = new Map();
+    const items = []; // representatives that carry notes
+    let totalDocs = 0;
+    for (const t of (vault.tabs || [])) {
+      for (const d of (t.docs || [])) {
+        if (!d || !d.id) continue;
+        totalDocs++;
+        const root = d.origin || d.id;
+        if (seen.has(root)) continue;
+        seen.add(root);
+        const rep = { doc: d, tabName: (t && t.name) || 'Untitled canvas' };
+        corpus.push(rep.doc);
+        byId.set(rep.doc.id, rep);
+        let log = [];
+        try { log = noteLogOf(d).filter(e => e && String(e.text || '').trim()); } catch { log = []; }
+        if (!log.length) continue;
+        items.push({
+          doc: d, tabName: rep.tabName,
+          notes: log.map(e => ({
+            date: (e.at && isFinite(e.at)) ? new Date(e.at).toISOString().slice(0, 10) : 'undated',
+            page: (() => { try { return notePageLabel(d, e) || ''; } catch { return ''; } })(),
+            text: String(e.text || '').trim(),
+          })),
+        });
+      }
+    }
+    return { items, corpus, byId, totalDocs, totalTabs: (vault.tabs || []).length, totalNotes: items.reduce((n, it) => n + it.notes.length, 0) };
+  }
+  function renderHandoffText(data, links, opts) {
+    const excerpts = !!(opts && opts.excerpts);
+    const L = [];
+    const today = new Date().toISOString().slice(0, 10);
+    const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+    L.push('VISIDOCSVERSE RESEARCH HANDOFF');
+    L.push(`Exported ${today} · ${plural(data.totalDocs, 'document')} across ${plural(data.totalTabs, 'canvas')}, ${plural(data.items.length, 'document')} with notes, ${plural(data.totalNotes, 'note')} total.`);
+    L.push('');
+    L.push('HOW TO USE: paste this whole file into an AI chat, then ask it to');
+    L.push('draft from your notes. Ask for a [Document N] citation with every');
+    L.push('claim, so each sentence traces back to a section below.');
+    data.items.forEach((it, i) => {
+      const d = it.doc;
+      let title = '';
+      try { title = vault.titleOf(d) || d.name || 'Untitled'; } catch { title = d.name || 'Untitled'; }
+      L.push('');
+      L.push(`========== [Document ${i + 1}] "${title}" ==========`);
+      L.push(`File: ${d.name || title}`);
+      try {
+        const apa = String(docApaText(d) || '').replace(/\s+/g, ' ').trim();
+        if (apa) L.push(`APA: ${apa}`);
+      } catch {}
+      L.push(`Canvas: ${it.tabName}`);
+      const tags = (d.tags || []).map(handoffTagDisp).filter(Boolean);
+      if (tags.length) L.push(`Tags: ${tags.join(', ')}`);
+      for (const n of it.notes) {
+        L.push(`Note (${n.date}${n.page || ''}):`);
+        L.push(n.text);
+      }
+      const nb = (links && typeof links.get === 'function' && links.get(d.id)) || [];
+      if (!nb.length) {
+        L.push('Most similar in your workspace: (none above the similarity bar)');
+      } else {
+        L.push('Most similar in your workspace:');
+        for (const r of nb) {
+          let ot = 'Untitled';
+          try { const rep = data.byId.get(r.id); if (rep) ot = vault.titleOf(rep.doc) || rep.doc.name || ot; } catch {}
+          L.push(`  - "${ot}" (similarity ${(+r.sim).toFixed(2)}; shared: ${(r.terms || []).join(', ')})`);
+          if (excerpts) {
+            try {
+              const rep = data.byId.get(r.id);
+              const raw = rep ? String(rep.doc.text || '').replace(/\s+/g, ' ').trim() : '';
+              if (raw) L.push(`    > ${raw.slice(0, HANDOFF_EXCERPT_CHARS)}${raw.length > HANDOFF_EXCERPT_CHARS ? '…' : ''}`);
+            } catch {}
+          }
+        }
+      }
+    });
+    L.push('');
+    return L.join('\n');
+  }
+  async function copyHandoffText(text, okMsg) {
+    try { await navigator.clipboard.writeText(text); }
+    catch {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch {}
+      ta.remove();
+    }
+    toast(okMsg);
+  }
+  // "save project" pattern, text edition: native "where to save" picker on the
+  // installed desktop shell, classic download everywhere else.
+  async function exportHandoffFile(text) {
+    const d = new Date();
+    const stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+    const name = `visidocsverse-handoff-${stamp}.txt`;
+    let savedTo = '';
+    if (typeof Neutralino !== 'undefined' && Neutralino.os && Neutralino.filesystem) {
+      try {
+        let startDir = '';
+        try { startDir = localStorage.getItem('visidocsverse.saveDir') || ''; } catch {}
+        const picked = await Neutralino.os.showSaveDialog('Save research handoff — choose where to keep it', {
+          defaultPath: (startDir ? startDir.replace(/[\\/]+$/, '') + '/' : '') + name
+        });
+        const p = String(picked || '');
+        if (!p) { toast('Export cancelled — no location picked, nothing was written', 5000); return; }
+        await Neutralino.filesystem.writeFile(p, text);
+        savedTo = p;
+        try {
+          const dir = p.replace(/[\\/][^\\/]*$/, '');
+          if (dir) localStorage.setItem('visidocsverse.saveDir', dir);
+        } catch {}
+      } catch { savedTo = ''; }
+    }
+    if (!savedTo) {
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    }
+    toast(`Research handoff exported${savedTo ? ' to ' + savedTo : ' to your computer'} — paste it into any AI chat`);
+    try { setLog(`Research handoff exported — ${text.length} characters ready to paste`); } catch {}
+  }
+  function openHandoffModal() {
+    const data = collectHandoffData();
+    if (!data.items.length) {
+      infoDlg('No notes to export', 'None of your documents have notes yet — jot notes on a body (Notes pane, sticky square or the reader note button) and this export will gather them into one handoff file.');
+      return;
+    }
+    const m = $('#handoffModal');
+    if (!m) { toast('Handoff dialog unavailable in this view'); return; }
+    if (!m.hidden) return; // already open (double-click) — never stack two
+    const nbSel = $('#hoNeighbors'), exCk = $('#hoExcerpts'), est = $('#hoEstimate');
+    const promptBox = $('#hoPrompt'), ok = $('#hoExport'), copyBtn = $('#hoCopyFile'), copyPromptBtn = $('#hoCopyPrompt'), cancel = $('#hoCancel');
+    nbSel.value = String(HANDOFF_NEIGHBOR_DEFAULT);
+    exCk.checked = true;
+    promptBox.value = HANDOFF_PROMPT;
+    let armed = false, armT = 0;
+    const refresh = () => {
+      const topK = Math.max(1, Math.min(8, parseInt(nbSel.value, 10) || HANDOFF_NEIGHBOR_DEFAULT));
+      let links = null;
+      try { links = vault.handoffLinks(data.corpus, topK); } catch { links = new Map(); }
+      let text = '';
+      try { text = renderHandoffText(data, links, { excerpts: exCk.checked }); } catch (e) { text = ''; }
+      m._handoffText = text;
+      const tokens = Math.round(text.length / 4);
+      est.textContent = text
+        ? `≈ ${text.length.toLocaleString()} characters (~${tokens.toLocaleString()} tokens) across ${data.items.length} noted document${data.items.length === 1 ? '' : 's'}${text.length > HANDOFF_WARN_CHARS ? ' — large for some chats: try fewer similar documents or switch excerpts off' : ' — fits any AI chat'}`
+        : 'Could not build the handoff text.';
+      est.classList.toggle('warn', text.length > HANDOFF_WARN_CHARS);
+      ok.disabled = !text || !armed;
+    };
+    nbSel.onchange = refresh;
+    exCk.onchange = refresh;
+    ok.onclick = async () => {
+      if (ok.disabled) return;
+      const text = m._handoffText || '';
+      if (!text) return;
+      done();
+      await exportHandoffFile(text);
+    };
+    copyBtn.onclick = () => { const t = m._handoffText || ''; if (t) copyHandoffText(t, 'Handoff text copied — paste it into any AI chat'); };
+    copyPromptBtn.onclick = () => copyHandoffText(promptBox.value, 'Starter instruction copied');
+    const done = () => {
+      if (armT) clearTimeout(armT);
+      m.hidden = true;
+      ok.onclick = copyBtn.onclick = copyPromptBtn.onclick = cancel.onclick = null;
+      nbSel.onchange = exCk.onchange = null;
+      document.removeEventListener('keydown', onKey, true);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); done(); }
+    };
+    cancel.onclick = done;
+    document.addEventListener('keydown', onKey, true);
+    m.hidden = false;
+    armT = setTimeout(() => { armed = true; refresh(); }, 300); // anti-mash: the file leaves the app, so no instant clicks
+    refresh();
   }
   // "save project" (top tab bar): back up ALL projects to a file on the
   // user's computer. Desktop shell: a real "where to save" picker (native
@@ -12682,7 +13154,9 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
     if (!list) return;
     list.innerHTML = `<div class="opm-sub">From a computer file</div>`
       + `<button class="opm-item" data-restorepick="1" title="Load a Visi|Docsverse master file from your computer (replaces every open project)"><b>⤒ Load master file…</b><span>replaces every open project</span></button>`
-      + `<button class="opm-item" data-absorbpick="1" title="Merge a Visi|Docsverse master file's documents into the current canvas (keeps what is open)"><b>＋ Merge master file…</b><span>adds documents into the current canvas</span></button>`;
+      + `<button class="opm-item" data-absorbpick="1" title="Merge a Visi|Docsverse master file's documents into the current canvas (keeps what is open)"><b>＋ Merge master file…</b><span>adds documents into the current canvas</span></button>`
+      + `<div class="opm-sub">To a computer file</div>`
+      + `<button class="opm-item" data-handoff="1" title="Export every note you wrote, grouped per document, each followed by its most similar workspace documents — one .txt to paste into any AI chat"><b>⤓ Export research handoff (.txt)…</b><span>notes + grounded similar documents</span></button>`;
   }
   function hideOpenProjMenu() { const m = $('#openProjMenu'); if (m) m.hidden = true; }
   function toggleOpenProjMenu(force) {
@@ -12808,7 +13282,12 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
       if (glossOpen) { glossX = null; glossY = null; } // restored-open panes restart at the dock
       if (typeof s.docWidth === 'number' && s.docWidth >= 260 && s.docWidth <= 1200) docWidth = s.docWidth;
       else if (s.docWidth === 0) docWidth = 0;
+      if (typeof s.docHeight === 'number' && s.docHeight >= 220) docHeight = Math.round(s.docHeight);
+      else if (s.docHeight === 0) docHeight = 0;
+      if (typeof s.notesW === 'number' && s.notesW >= 200 && s.notesW <= 640) notesW = Math.round(s.notesW);
+      else if (s.notesW === 0) notesW = 0;
       fitPaneWidthToScreen(s.vw); // backup from another display: re-fit the reader width here
+      fitPaneHeightToScreen(s.vh); // same for a shrunk height
       if (s.leftCollapsed === true) leftCollapsed = true; else if (s.leftCollapsed === false) leftCollapsed = false;
       if (s.docCollapsed === true) docCollapsed = true; else if (s.docCollapsed === false) docCollapsed = false;
       if (s.hoverPrev === true) hoverPrev = true; else if (s.hoverPrev === false) hoverPrev = false;
@@ -13141,8 +13620,8 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
     if (!f) return;
     await absorbMasterIntoCanvas(f);
   };
-          window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), lemonStartup: () => verifyLicenseOnStartup(), lemonActivate: (k, n) => activateLicenseKey(k, n) } };
-    try { Object.assign(window.__visidocsverse, { docApaInfo, docApaText, docApaHtml, copyApaCite, setNotes, closeNotesPane, renderNotesPane, openNotePop, closeNotePop, openNoteEditor, closeNoteEditor, resolveCiteMeta, origPut, origGet, get notesOpen() { return notesOpen; }, get notesDocId() { return notesDocId; }, get shownId() { return shownId; }, get paneId() { return paneId; } }); } catch {} // notes/APA handles for scripted checks
+          window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, collectHandoffData, renderHandoffText, openHandoffModal, setNotes, renderNotesPane, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), lemonStartup: () => verifyLicenseOnStartup(), lemonActivate: (k, n) => activateLicenseKey(k, n) } };
+    try { Object.assign(window.__visidocsverse, { docApaInfo, docApaText, docApaHtml, copyApaCite, apaSentenceCase, apaTitleCaseJournal, apaAuthorText, mediaKind, hydrateMedia, fileTypeKey, notesImageDrop, deleteNoteEntry, setNotes, closeNotesPane, renderNotesPane, openNotePop, closeNotePop, openNoteEditor, closeNoteEditor, resolveCiteMeta, origPut, origGet, get notesOpen() { return notesOpen; }, get notesDocId() { return notesDocId; }, get shownId() { return shownId; }, get paneId() { return paneId; } }); } catch {} // notes/APA handles for scripted checks
   try { Object.assign(window.__visidocsverse, { diskUsable, diskVaultDir, diskVaultLabel, diskPut, diskGetBlob, diskListKeys, migrateIdbOriginalsToDisk, origBlob, purgeImages }); } catch {} // disk-vault handles for scripted checks
   window.addEventListener('resize', () => ren.resize());
   bootStage('ready');

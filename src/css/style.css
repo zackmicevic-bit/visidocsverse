@@ -73,7 +73,23 @@
   body.light-canvas #docResize { background:rgba(255,255,255,.93); color:#5a6b8c; border-color:rgba(30,45,75,.28); }
   /* fatter invisible hit zone around the arrow (clicks still land on #docResize) */
   #docResize::after { content:''; position:absolute; top:-8px; bottom:-8px; left:-20px; right:-6px; cursor:ew-resize; }
-  /* reader-pane 3D tilt: 30° clockwise (seen from above) about the pane's own
+  /* reader pane height grip — slim ═ bar on the pane's bottom edge, same
+     discrete language as the width arrow (drag up = shrink, double-click
+     resets to full height) */
+  #docResizeH { position:absolute; z-index:22; width:54px; height:20px; display:flex; align-items:center; justify-content:center; font-size:12px; line-height:1; color:var(--mut); background:rgba(16,22,32,.96); border:1px solid var(--line); border-radius:10px; cursor:ns-resize; user-select:none; -webkit-user-select:none; touch-action:none; opacity:.55; overflow:visible; }
+  #docResizeH:hover { opacity:1; color:#9cc2ff; border-color:#9cc2ff; }
+  body.light-canvas #docResizeH { background:rgba(255,255,255,.93); color:#5a6b8c; border-color:rgba(30,45,75,.28); }
+  /* fatter invisible hit zone around the grip (clicks still land on #docResizeH) */
+  #docResizeH::after { content:''; position:absolute; left:-8px; right:-8px; top:-20px; bottom:-6px; cursor:ns-resize; }
+  /* notes pane stretch arrow: same discrete ‹ language as the reader's, parked
+     on the pane's left rim (seated by applyNotesGeom — the pane clips
+     overflow, so this rides as a sibling, not a child) */
+  #notesResize { position:absolute; z-index:24; width:20px; height:54px; display:flex; align-items:center; justify-content:center; font-size:14px; color:var(--mut); background:rgba(16,22,32,.96); border:1px solid var(--line); border-radius:10px; cursor:ew-resize; user-select:none; -webkit-user-select:none; touch-action:none; opacity:.55; }
+  #notesResize:hover { opacity:1; color:#9cc2ff; border-color:#9cc2ff; }
+  #notesResize[hidden] { display:none; }
+  /* fatter invisible hit zone around the arrow (clicks still land on #notesResize) */
+  #notesResize::after { content:''; position:absolute; top:-8px; bottom:-8px; left:-20px; right:-6px; cursor:ew-resize; }
+  body.light-canvas #notesResize { background:rgba(255,255,255,.93); color:#5a6b8c; border-color:rgba(30,45,75,.28); }  /* reader-pane 3D tilt: 30° clockwise (seen from above) about the pane's own
      vertical middle; rides above the stretch arrow with a clear gap.
      --tiltShift (set by syncTiltShift) pulls a wide tilted pane left by
      exactly its perspective overshoot, so the docked right edge — and the
@@ -87,6 +103,7 @@
      Seats are pure CSS (pane middle, like the flat display); JS only
      shows/hides them. */
   #docPanel > #docResize { left:-13px; top:calc(50% - 27px); transition:none; }
+  #docPanel > #docResizeH { left:calc(50% - 27px); bottom:-13px; }
   #docPanel > #docTiltBtn { left:-14px; top:calc(50% - 79px); transition:none; }
   #docPanel > #origPaneBtn { left:-16px; top:calc(50% + 41px); transition:none; }
   #docPanel > #carPaneBtn { left:-16px; top:calc(50% + 89px); transition:none; }
@@ -505,6 +522,10 @@
   #notesCiteCopy { flex:0 0 auto; background:none; border:1px solid var(--line); color:var(--mut); border-radius:6px; font-size:10px; padding:1px 8px; cursor:pointer; }
   #notesCiteCopy:hover { color:#9cc2ff; border-color:#9cc2ff; }
   #notesList { flex:1 1 auto; min-height:60px; overflow:auto; padding:2px 12px 8px; display:flex; flex-direction:column; gap:8px; scrollbar-width:thin; }
+  /* runway: scrollable empty space under the last note, so a full pane still
+     signals room for the next one (the stick-to-bottom lands here, not on a
+     hard stop against the composer) */
+  #notesList::after { content:''; flex:0 0 auto; height:64px; }
   .ne { background:rgba(233,195,60,.07); border:1px solid rgba(233,195,60,.3); border-radius:8px; padding:7px 9px; }
   .ne-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px; }
   .ne-num { font-size:10px; letter-spacing:.08em; color:var(--mut); }
@@ -517,10 +538,11 @@
   .note-mark { background:rgba(233,195,60,.38); border-radius:3px; }
   .note-flash { background:rgba(255,210,75,.65); border-radius:3px; box-shadow:0 0 0 2px rgba(255,210,75,.5); }
   .ne-empty { font-size:12px; color:var(--mut); line-height:1.6; }
-  #notesComposer { flex:0 0 auto; padding:8px 12px 12px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:6px; }
+  #notesComposer { flex:0 0 auto; padding:8px 12px 10px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:3px; }
+  #notesComposer .rowbtns { margin-top:2px; }
   #notesArea { width:100%; box-sizing:border-box; min-height:70px; font:inherit; font-size:12.5px; resize:vertical; color:#000; background:#fff; border-radius:8px; border:1px solid var(--line); padding:8px; }
-  #notesCount { font-size:10.5px; color:var(--mut); text-align:right; }
-  #notesSaveWrap { display:flex; justify-content:center; margin-top:-2px; }
+  #notesCount { position:absolute; right:0; top:50%; transform:translateY(-50%); font-size:10.5px; color:var(--mut); white-space:nowrap; }
+  #notesSaveWrap { display:flex; justify-content:center; align-items:center; position:relative; margin-top:-2px; }
   .bl-head { font-size:10px; letter-spacing:.12em; color:var(--mut); margin:14px 0 6px; }
   .bl-head .viewall { background:none; border:none; padding:0 0 0 8px; margin:0; cursor:pointer; font:inherit; font-size:10px; letter-spacing:.12em; color:#ffc357; }
   .bl-head .viewall:hover { text-decoration:underline; }
@@ -2044,6 +2066,20 @@
   #pickList input { margin-top:2px; accent-color:var(--acc); flex-shrink:0; }
   #pickList .pk-t { display:block; font-size:11px; color:#8fd0a8; margin-top:2px; }
   #pickList .pk-sun { color:var(--sun); }
+  #handoffModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:95; width:min(480px,94vw); max-height:88vh; display:flex; flex-direction:column; padding:18px 20px; overflow:auto; }
+  #handoffModal[hidden] { display:none; }
+  #handoffModal h3 { margin:0 0 4px; font-size:16px; overflow-wrap:anywhere; }
+  #handoffSub { font-size:12px; color:var(--mut); margin-bottom:10px; line-height:1.5; }
+  .ho-opts { display:flex; flex-direction:column; gap:8px; margin-bottom:8px; font-size:13px; }
+  .ho-opts select { margin-left:8px; padding:4px 8px; border-radius:8px; border:1px solid var(--line); background:rgba(95,157,255,.07); color:inherit; font-size:13px; }
+  .ho-check { display:flex; gap:8px; align-items:center; cursor:pointer; }
+  .ho-check input { accent-color:var(--acc); }
+  #hoEstimate { font-size:12px; color:var(--mut); margin-bottom:8px; line-height:1.5; }
+  #hoEstimate.warn { color:#ffb224; }
+  .ho-prompthead { font-size:12px; color:var(--mut); display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+  .ho-prompthead .btn { font-size:11px; padding:3px 10px; }
+  #hoPrompt { width:100%; min-height:86px; resize:vertical; font-size:12px; line-height:1.5; border-radius:8px; border:1px solid var(--line); background:rgba(95,157,255,.06); color:inherit; padding:8px 10px; margin-bottom:8px; box-sizing:border-box; font-family:inherit; }
+  .ho-privacy { font-size:11.5px; color:var(--mut); line-height:1.5; margin-bottom:4px; }
   .btn.danger { background:rgba(255,120,120,.14); border-color:rgba(255,120,120,.45); }
   .btn.danger:hover { background:rgba(255,120,120,.3); }
   .btn:disabled { opacity:.45; cursor:default; }
@@ -2063,4 +2099,4 @@
   #devBox .rowbtns { margin-top:8px; }
   #devBox a.btn { text-decoration:none; display:inline-block; }
   #devBox a.btn.off { opacity:.45; }
- @media (max-width:760px) { #hintBar { display:none; } #docResize { display:none; } #devBox { left:8px; right:8px; bottom:8px; top:auto; width:auto; } #docPanel { display:none; } #docPanel.open { display:block; } #findSide { display:none; } #notesTab, #notesPane { display:none; } #leftPanel { width:210px; } #miniMap { display:none; } }
+ @media (max-width:760px) { #hintBar { display:none; } #docResize { display:none; } #docResizeH { display:none; } #notesResize { display:none; } #devBox { left:8px; right:8px; bottom:8px; top:auto; width:auto; } #docPanel { display:none; } #docPanel.open { display:block; } #findSide { display:none; } #notesTab, #notesPane { display:none; } #leftPanel { width:210px; } #miniMap { display:none; } }
