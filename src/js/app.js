@@ -9390,9 +9390,23 @@ async function getDropFiles(dt) {
       } else resolve();
     } catch { resolve(); }
   });
+  // Desktop shell prefers the legacy entry APIs: resolving a dropped DIRECTORY
+  // through a File System Access handle pops the browser's Allow/Don't Allow
+  // grant popup, and the desktop origin port is random every launch so the
+  // grant never sticks. Entries ride the drop grant silently; single files
+  // via getAsFile never prompt anywhere.
+  let desktopFirst = false;
+  try { desktopFirst = isDesktopShell(); } catch {}
   for (const it of items) {
     if (out.length >= 60) break;
     try {
+      if (desktopFirst) {
+        const fnD = it.webkitGetAsEntry || it.getAsEntry;
+        const entryD = fnD ? fnD.call(it) : null;
+        if (entryD) { await walkEntry(entryD); continue; }
+        try { const f = it.getAsFile && it.getAsFile(); if (f) out.push(f); } catch {}
+        continue;
+      }
       if (it.getAsFileSystemHandle) {
         const h = await it.getAsFileSystemHandle().catch(() => null);
         if (h && h.kind === 'file') {
@@ -9417,6 +9431,78 @@ async function getDropFiles(dt) {
   return dt && dt.files ? [...dt.files] : [];
 }
 
+// Native folder import (installed Neutralino desktop only): an OS folder dialog
+// + filesystem reads. This never touches any browser file picker or folder
+// drop API, so Chromium's own confirmations (the Allow/Don't Allow grant for
+// showDirectoryPicker AND the "Upload N files to this site?" confirmation for
+// <input webkitdirectory>) can never appear. Returns true when the native
+// path handled the request (import done or clean cancel), false when native
+// dialogs are unavailable so the caller falls back to the browser pickers.
+const NATIVE_MIME_BY_EXT = { md: 'text/markdown', markdown: 'text/markdown', txt: 'text/plain', csv: 'text/csv', pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', m4v: 'video/x-m4v', ogv: 'video/ogg', mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', oga: 'audio/ogg', m4a: 'audio/mp4', aac: 'audio/aac', flac: 'audio/flac', opus: 'audio/opus', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
+function nativeMimeFor(name) {
+  const m = String(name || '').toLowerCase().match(/\.([a-z0-9]+)$/);
+  return (m && NATIVE_MIME_BY_EXT[m[1]]) || '';
+}
+async function nativeFolderImport() {
+  try {
+    if (typeof Neutralino === 'undefined' || !Neutralino.os || !Neutralino.os.showFolderDialog || !Neutralino.filesystem) return false;
+  } catch { return false; }
+  let startDir = '';
+  try { startDir = localStorage.getItem('visidocsverse.saveDir') || ''; } catch {}
+  let picked = '';
+  try {
+    picked = await Neutralino.os.showFolderDialog('Choose a folder to import — all documents inside come in at once', startDir ? { defaultPath: startDir } : undefined);
+  } catch { return false; }
+  const folder = String(picked || '');
+  if (!folder) { setLog('Folder selection cancelled — no files chosen'); return true; }
+  try { const d = folder.replace(/[\\/]+$/, ''); if (d) localStorage.setItem('visidocsverse.saveDir', d); } catch {}
+  const gTok = showUploadProg(0, 'Gathering files from the folder…');
+  try {
+    const joinP = (base, leaf) => String(base).replace(/[\\/]+$/, '') + '/' + String(leaf);
+    const found = [];
+    const walk = async (dir, depth) => {
+      if (depth > 4 || found.length >= 60) return;
+      let entries = null;
+      try { entries = await Neutralino.filesystem.readDirectory(dir); } catch { return; }
+      for (const e of (entries || [])) {
+        if (found.length >= 60) break;
+        const nm = e && e.entry != null ? String(e.entry) : '';
+        if (!nm) continue;
+        const kind = String((e && e.type) || '').toUpperCase();
+        const full = joinP(dir, nm);
+        if (kind === 'DIRECTORY') await walk(full, depth + 1);
+        else if (kind === 'FILE') found.push({ full, name: nm });
+      }
+    };
+    await walk(folder, 0);
+    if (!found.length) { hideUploadProg(gTok); toast('No documents in that folder (subfolders included) — looking for ' + INTAKE_LABEL, 5000); return true; }
+    const files = [], skipped = [];
+    for (let i = 0; i < found.length && files.length < 60; i++) {
+      const p = found[i];
+      updateUploadProg(gTok, i + 1, found.length, p.name);
+      let buf = null;
+      try { buf = await Neutralino.filesystem.readBinaryFile(p.full); } catch { skipped.push(p.name); continue; }
+      if (!buf || !buf.byteLength) { skipped.push(p.name); continue; }
+      let f = null;
+      try { f = new File([buf], p.name, { type: nativeMimeFor(p.name) }); } catch { skipped.push(p.name); continue; }
+      if (intakeAllowed(f)) files.push(f);
+      else skipped.push(p.name);
+    }
+    hideUploadProg(gTok); // gathering done — ingestFiles raises its own tracker next
+    if (!files.length) {
+      const shown = skipped.slice(0, 3).map(s => '"' + s + '" ' + extOf(s)).join(' · ');
+      toast('No documents in that folder — ' + skipped.length + ' file' + (skipped.length === 1 ? '' : 's') + ' skipped (' + shown + '). Looking for ' + INTAKE_LABEL, 7000);
+      return true;
+    }
+    await ingestFiles(files, { where: 'folder-picker' });
+    return true;
+  } catch (e) {
+    try { hideUploadProg(gTok); } catch {}
+    toast('Could not scan that folder — ' + ((e && e.message) || e), 7000);
+    return true;
+  }
+}
+
 async function legacyFolderPick() {
   const ok = await confirmDlg('The next step is your browser’s own security check — it asks you to confirm the folder upload and names this site. That warning comes from the browser, not Visi|Docsverse. (Tip: dragging the folder onto the canvas skips it entirely.)', 'Continue', { title: 'Upload a whole folder?' });
   if (!ok) { setLog('Folder upload cancelled'); return; }
@@ -9428,8 +9514,18 @@ async function legacyFolderPick() {
 async function pickFolder() {
   setLog('Waiting for folder selection…');
   try {
-    // No File System Access API (Firefox/Safari/iOS) -> hidden webkitdirectory
-    // picker, which still recurses into subfolders natively.
+    // Desktop shell: Neutralino installs use the native OS folder dialog +
+    // native filesystem reads (no browser picker of any kind, so neither of
+    // Chromium's confirmations — the Allow grant, the "Upload N files?"
+    // bubble — can appear). Other shells without native dialogs (Tauri) fall
+    // back to the legacy input below. No File System Access API
+    // (Firefox/Safari/iOS) -> same legacy path.
+    let desktop = false;
+    try { desktop = isDesktopShell(); } catch {}
+    if (desktop) {
+      try { if (await nativeFolderImport()) return; } catch {}
+      await legacyFolderPick(); return;
+    }
     if (!window.showDirectoryPicker) { await legacyFolderPick(); return; }
     const dir = await window.showDirectoryPicker();
     const files = [], skipped = [];
@@ -13620,7 +13716,7 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
     if (!f) return;
     await absorbMasterIntoCanvas(f);
   };
-          window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, collectHandoffData, renderHandoffText, openHandoffModal, setNotes, renderNotesPane, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), lemonStartup: () => verifyLicenseOnStartup(), lemonActivate: (k, n) => activateLicenseKey(k, n) } };
+          window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, collectHandoffData, renderHandoffText, openHandoffModal, setNotes, renderNotesPane, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, nativeFolderImport, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), lemonStartup: () => verifyLicenseOnStartup(), lemonActivate: (k, n) => activateLicenseKey(k, n) } };
     try { Object.assign(window.__visidocsverse, { docApaInfo, docApaText, docApaHtml, copyApaCite, apaSentenceCase, apaTitleCaseJournal, apaAuthorText, mediaKind, hydrateMedia, fileTypeKey, notesImageDrop, deleteNoteEntry, setNotes, closeNotesPane, renderNotesPane, openNotePop, closeNotePop, openNoteEditor, closeNoteEditor, resolveCiteMeta, origPut, origGet, get notesOpen() { return notesOpen; }, get notesDocId() { return notesDocId; }, get shownId() { return shownId; }, get paneId() { return paneId; } }); } catch {} // notes/APA handles for scripted checks
   try { Object.assign(window.__visidocsverse, { diskUsable, diskVaultDir, diskVaultLabel, diskPut, diskGetBlob, diskListKeys, migrateIdbOriginalsToDisk, origBlob, purgeImages }); } catch {} // disk-vault handles for scripted checks
   window.addEventListener('resize', () => ren.resize());
