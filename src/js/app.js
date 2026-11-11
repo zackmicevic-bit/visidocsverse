@@ -5701,8 +5701,141 @@ function openHowStart() {
   }
   renderHowStart();
   box.hidden = false;
+  try { prefetchManualPdf().catch(() => {}); } catch {}
 }
 function closeHowStart() { const box = $('#howStartPane'); if (box) box.hidden = true; }
+// ---------- user manual download: the shipped User Manual PDF, saved wherever the
+// user picks — same "where to save" pattern as Save project. Installed
+// Neutralino shell: native save dialog + direct binary write. Everywhere
+// else: the File System Access save picker when the browser has it (a real
+// choose-the-location box), otherwise a SYNCHRONOUS blob-URL download of a
+// pre-built .zip (PDF inside) — Save-project-style. The .zip matters: a bare
+// .pdf is routed by the browser's silent per-type PDF rule, while a .zip
+// follows the normal global "ask where to save" rule, exactly like Save
+// project's file.
+// The two sync properties matter: (a) no fetch-then-click gap, so the click
+// keeps its gesture and the browser's own "ask where to save" picker appears
+// (fetching first loses the gesture → silent "automatic" save); (b) no
+// server round-trip at click time — a direct file link 404s ("Cannot GET")
+// on preview servers, while fetch resolves live workspace files. The PDF lives in src/manual/ (copied
+// whole into desktop dist/), and this code sits outside every dev-only range
+// so stripped installers keep it.
+const MANUAL_PDF_PATH = 'src/manual/visidocsverse-user-manual.pdf';
+const MANUAL_PDF_NAME = 'VisiDocsverse-User-Manual.pdf';
+// Prefetched bytes: fetched once per pane-open via fetch (the channel that
+// resolves live workspace files), zipped with the vendored fflate, so the
+// click-time download below needs no server round-trip and can stay inside
+// the click gesture. It ships as a .zip (PDF inside): Firefox routes bare
+// .pdf downloads by its own per-type PDF rule (silent "Save File" even when
+// the global ask-where-to-save is on), while a .zip follows the global rule
+// and pops the picker — identical treatment to Save project's file.
+const MANUAL_PDF_ZIP = 'VisiDocsverse-User-Manual.zip';
+let manualPdfZip = null, manualPdfZipReady = null;
+function prefetchManualPdf() {
+  if (manualPdfZip && manualPdfZip.byteLength) return Promise.resolve(manualPdfZip);
+  if (!manualPdfZipReady) {
+    manualPdfZipReady = (async () => {
+      let r = null;
+      try { r = await fetch(MANUAL_PDF_PATH + '?dev=' + Date.now(), { cache: 'no-store' }); } catch {}
+      if (!r || !r.ok) r = await fetch(MANUAL_PDF_PATH);
+      if (!r || !r.ok) throw new Error('HTTP ' + (r && r.status));
+      const b = await r.arrayBuffer();
+      if (!b || !b.byteLength) throw new Error('empty file');
+      const fflate = await import('./vendor/fflate.mjs');
+      const zipSync = fflate.zipSync || (fflate.default || {}).zipSync;
+      if (typeof zipSync !== 'function') throw new Error('no zipper available');
+      const z = zipSync({ [MANUAL_PDF_NAME]: new Uint8Array(b) }, { level: 6 });
+      manualPdfZip = z;
+      return z;
+    })().catch((e) => { manualPdfZipReady = null; throw e; });
+  }
+  return manualPdfZipReady;
+}
+async function downloadUserManual() {
+  // 1) Neutralino desktop shell: native save dialog + direct binary write.
+  if (typeof Neutralino !== 'undefined' && Neutralino.os && Neutralino.filesystem) {
+    let buf = null;
+    try {
+      let r = null;
+      try { r = await fetch(MANUAL_PDF_PATH + '?dev=' + Date.now(), { cache: 'no-store' }); } catch {}
+      if (!r || !r.ok) r = await fetch(MANUAL_PDF_PATH);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      buf = await r.arrayBuffer();
+    } catch (e) { toast('Could not load the manual (' + ((e && e.message) || e) + ')', 6000); return; }
+    if (!buf || !buf.byteLength) { toast('The manual file came back empty — try again', 6000); return; }
+    try {
+      let startDir = '';
+      try { startDir = localStorage.getItem('visidocsverse.saveDir') || ''; } catch {}
+      const picked = await Neutralino.os.showSaveDialog('Save user manual — choose where to keep it', {
+        defaultPath: (startDir ? startDir.replace(/[\\/]+$/, '') + '/' : '') + MANUAL_PDF_NAME
+      });
+      const p = String(picked || '');
+      if (!p) { toast('Download cancelled — no location picked, nothing was written', 5000); return; }
+      if (typeof Neutralino.filesystem.writeBinaryFile === 'function') {
+        await Neutralino.filesystem.writeBinaryFile(p, buf);
+        try {
+          const dir = p.replace(/[\\/][^\\/]*$/, '');
+          if (dir) localStorage.setItem('visidocsverse.saveDir', dir);
+        } catch {}
+        toast('User manual saved to ' + p);
+        return;
+      }
+      // no binary-write API in this Neutralino build: fall through to the
+      // browser-grade paths below (the shell window is still a browser).
+      try { toast('This app build cannot write the picked file itself — trying a plain download instead', 6000); } catch {}
+    } catch (e) {
+      toast('Manual save failed (' + ((e && e.message) || e) + ') — trying download instead', 6000);
+    }
+  }
+  // 2) File System Access save picker: a real choose-the-location box. The
+  // picker call itself runs inside the click gesture; the fetch happens only
+  // after a location is picked, so its latency cannot lose the gesture.
+  try {
+    if (window.showSaveFilePicker) {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: MANUAL_PDF_NAME,
+        types: [{ description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } }]
+      });
+      toast('Fetching user manual…');
+      const buf = await (await fetch(MANUAL_PDF_PATH, { cache: 'no-store' })).arrayBuffer();
+      const w = await handle.createWritable();
+      await w.write(new Blob([buf], { type: 'application/pdf' }));
+      await w.close();
+      toast('User manual saved — ' + MANUAL_PDF_NAME);
+      return;
+    }
+  } catch (e) {
+    // picker dismissed or blocked: do NOT fall through to an unasked-for
+    // download on an explicit cancel (AbortError); other failures do.
+    try {
+      if (e && (e.name === 'AbortError' || /abort|cancel/i.test(e.message || ''))) {
+        toast('Download cancelled — nothing was written', 5000);
+        return;
+      }
+    } catch {}
+  }
+  // 3) Save-project-style synchronous download: the zipped bytes were built
+  // when this pane opened, so the blob + click below happen with no fetch gap
+  // (gesture kept, so the browser's "where to save" box appears) and need no
+  // server round-trip (a direct file link 404s on preview servers). Blob:
+  // URLs download exactly like Save project's in-memory file — and as a .zip
+  // the browser applies its normal global rule instead of a silent per-type
+  // PDF rule.
+  try {
+    if (manualPdfZip && manualPdfZip.byteLength) {
+      const url = URL.createObjectURL(new Blob([manualPdfZip], { type: 'application/zip' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = MANUAL_PDF_ZIP;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      toast('User manual downloading — unzip the file to read the PDF');
+      return;
+    }
+    toast('User manual is still loading — try again in a moment', 4000);
+    try { prefetchManualPdf().catch(() => {}); } catch {}
+  } catch (e) { toast('Could not download the manual (' + ((e && e.message) || e) + ')', 6000); }
+}
 let howEditing = false;
 function openHowEditor() {
   if (!helpEditAllowed()) return;
@@ -8373,6 +8506,7 @@ function intakeAllowed(f) {
 async function readFileAsText(f, onStep) {
   const nm = cleanName(f);
   lastPageStarts = null; lastPageKind = null; // reset: each branch below records its own pagination (or none)
+  lastPdfPageTextLens = null; // reset: the PDF branch records per-page text lengths for the image pass below
   // video + audio bodies: no transcript is extracted — the reader plays the
   // file itself (bytes live in the originals sidecar). The text below is a
   // plain-language manifest so filename words, tags and notes still tether,
@@ -8412,6 +8546,10 @@ async function readFileAsText(f, onStep) {
       }
       try { await pdf.destroy(); } catch { /* done anyway */ }
       const rawJoined = out.join('\n\n');
+      // per-page text lengths for the image pass: pages whose text layer came
+      // back empty (scanned middles, unmapped-font pages) get a printed render
+      // so OCR can still read them instead of silently dropping those pages.
+      lastPdfPageTextLens = out.map(s => s.length);
       const text = rawJoined.trim();
       // real pagination for the reader's folio markers: each page's start in
       // the returned text (rebased past the trimmed leading whitespace).
@@ -8635,9 +8773,13 @@ async function mediaDocText(f, nm, kind) {
 // extractFileImages re-opens the file and pulls the pictures out:
 //   .docx — word/media/* in document order via drawing blip embeds + _rels
 //   .pptx — ppt/media/* per slide in slide order via each slide's _rels
-//   .pdf  — pages containing image XObjects, rendered as printed page images
-// (pdf.js exposes no stable image-byte API across versions; a page render is the
-// version-robust way to show the pictures)
+//   .pdf  — EVERY page is rendered as a printed page image, so the gallery
+// holds the whole document (pdf.js exposes no stable image-byte API across
+// versions; a page render is the version-robust way to show the pages).
+// Figure pages keep their "carries its images" caption; pages whose text
+// layer came back empty are captioned "no text layer" and go through OCR so
+// words the text pass missed are still read instead of silently dropped.
+// Pure-text pages skip OCR — their words are already imported.
 //   .xlsx — xl/media/* via each sheet's drawing rels (screenshots pasted into
 // sheets import like slide pictures). Plain text/CSV carries no pictures here.
 // Returns [{blob, cap}] — full-size blobs; the caller downscales + stores.
@@ -8658,6 +8800,8 @@ const IMG_MAX_DIM = 1200; // stored pictures shrink to fit inside this (px)
 // ingestFiles consumes + clears both right after the call and rebases them
 // onto the final stored text (title prefix + OCR tail included).
 let lastPageStarts = null, lastPageKind = null;
+let lastPdfPageTextLens = null; // per-page text lengths from the latest PDF text
+// pass (ingest consumes); lets the image pass render text-empty pages for OCR
 function pageStartsFromLengths(lens, sepLen) {
   const starts = [];
   let at = 0;
@@ -8825,6 +8969,15 @@ async function extractPdfImages(buf, onStep) {
   if (!IMG_OPS.size) return []; // engine too old to name image ops — text still imports
   const pdf = await lib.getDocument({ data: new Uint8Array(buf) }).promise;
   const out = [];
+  // text lengths from the text pass (ingest runs it first): a page with an
+  // effectively empty layer (<60 chars) is a scanned or unmapped-font page and
+  // gets a printed render for OCR recovery. Lengths must cover every page or
+  // the fallback is image-XObjects only (pathological capped files keep the
+  // old behavior rather than guessing).
+  let textLens = null;
+  try {
+    if (Array.isArray(lastPdfPageTextLens) && lastPdfPageTextLens.length === pdf.numPages) textLens = lastPdfPageTextLens;
+  } catch { textLens = null; }
   try {
     const total = Math.min(pdf.numPages, IMG_MAX_PDF_PAGES);
     for (let p = 1; p <= total && out.length < IMG_MAX_PDF_PAGES; p++) {
@@ -8835,7 +8988,15 @@ async function extractPdfImages(buf, onStep) {
         const ops = await page.getOperatorList();
         for (const fn of (ops.fnArray || [])) if (IMG_OPS.has(fn)) { hasImg = true; break; }
       } catch { /* this page unscannable — no picture for it */ }
-      if (!hasImg) continue;
+      const tlen = textLens ? textLens[p - 1] : null;
+      // No coverage info (not via ingest) — legacy figures-only path.
+      if (!hasImg && tlen == null) continue;
+      // Otherwise every page is rendered: figure pages and text-empty pages
+      // for OCR recovery, plus pure-text pages so the gallery holds the whole
+      // document. Pure-text pages skip OCR (their words are already imported —
+      // re-reading them would duplicate the body); pass that through.
+      const textCovered = tlen != null && tlen >= 60;
+      const skipOcr = !hasImg && textCovered;
       const vp1 = page.getViewport({ scale: 1 });
       const vp = page.getViewport({ scale: Math.min(1.5, 900 / Math.max(1, vp1.width)) });
       const cv = document.createElement('canvas');
@@ -8844,7 +9005,8 @@ async function extractPdfImages(buf, onStep) {
       cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height);
       await page.render({ canvasContext: cx, viewport: vp }).promise;
       const blob = await new Promise(r => { try { cv.toBlob(b => r(b), 'image/jpeg', 0.72); } catch { r(null); } });
-      if (blob) out.push({ blob, w: cv.width, h: cv.height, cap: 'Page ' + p + ' (as printed — carries its images)' });
+      if (blob) out.push({ blob, w: cv.width, h: cv.height, skipOcr,
+        cap: hasImg ? 'Page ' + p + ' (as printed — carries its images)' : (textCovered ? 'Page ' + p + ' (as printed)' : 'Page ' + p + ' (as printed — no text layer)') });
       try { page.cleanup(); } catch { /* free page resources */ }
     }
   } finally { try { await pdf.destroy(); } catch { /* done anyway */ } }
@@ -8993,6 +9155,20 @@ async function backfillOcr() {
     const docs = vault.tabs.flatMap(t => t.docs || []);
     let sealed = false;
     const due = [];
+    // repair: intakes before the queue fix sealed docs done while pictures
+    // remained unread (ocrFrom < images.length, no engine-death tries). Unseal
+    // them so the background pump finishes their pages; engine-dead seals
+    // (tries >= 3) stay sealed. Legitimately done docs always have
+    // ocrFrom >= images.length, so they can never match.
+    for (const d of docs) {
+      try {
+        if (d && d.ocrDone === true && Number.isInteger(d.ocrFrom) && Array.isArray(d.images) &&
+            d.ocrFrom < d.images.length && !(Number.isInteger(d.ocrTries) && d.ocrTries >= 3)) {
+          d.ocrDone = false; sealed = true;
+          console.warn('backfill: unsealed ' + (d.name || d.id) + ' at picture ' + d.ocrFrom + '/' + d.images.length + ' — background OCR will finish it');
+        }
+      } catch { /* keep scanning */ }
+    }
     for (const d of docs) {
       if (d.ocrDone === true) {
         // resume pre-queue builds (sealed after the first pictures were read)
@@ -9205,7 +9381,7 @@ async function ingestFiles(files, ctx) {
             const k = 'img_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
             await imgPut({ key: k, blob: fit.blob, cap: pic.cap || 'image', w: fit.w, h: fit.h, at: Date.now() });
             imgMeta.push({ key: k, cap: pic.cap || 'image', w: fit.w, h: fit.h });
-            if (!(fit.w > 0 && fit.h > 0 && fit.w * fit.h < OCR_MIN_AREA)) ocrPics.push({ blob: fit.blob, cap: pic.cap || 'image', at: imgMeta.length - 1 });
+            if (!pic.skipOcr && !(fit.w > 0 && fit.h > 0 && fit.w * fit.h < OCR_MIN_AREA)) ocrPics.push({ blob: fit.blob, cap: pic.cap || 'image', at: imgMeta.length - 1 });
           } catch (pe) { imgFails++; console.warn('storing a picture failed for ' + cleanName(f) + ' — keeping the rest', (pe && pe.message) || pe); }
         }
       } catch (e) { console.warn('storing images failed for ' + cleanName(f) + ' — text still imports', (e && e.message) || e); }
@@ -9299,7 +9475,12 @@ async function ingestFiles(files, ctx) {
       } catch (e) { console.warn('keeping original failed for ' + d.name + ' — text still imports', (e && e.message) || e); }
 
       d.ocrFrom = ocrFrom;
-      if (ocrRan || ocrFrom >= imgMeta.length) d.ocrDone = true; // picture words already in the text — nothing to backfill
+      // done only when every picture's words are actually in the text: the
+      // foreground reads the first pictures fast, the background queue owns
+      // the rest (and seals engine-dead docs itself after retries). Marking a
+      // doc done while pictures remain unread strands them forever — the pump
+      // and the backfill both skip done docs.
+      if (ocrRan && ocrFrom >= imgMeta.length) d.ocrDone = true; // picture words already in the text — nothing to backfill
       else d.ocrDone = false; // rest queues for background reading
       newIds.push(d.id);
       n++;
@@ -10221,6 +10402,8 @@ async function boot() {
     if (hso) { e.stopPropagation(); openHowStart(); return; }
     const hsc = e.target.closest('[data-howclose]');
     if (hsc) { e.stopPropagation(); closeHowStart(); return; }
+    const hsm = e.target.closest('[data-howmanual]');
+    if (hsm) { e.stopPropagation(); downloadUserManual().catch(() => {}); return; }
     const cgs = e.target.closest('[data-cgsave]');
     if (cgs) {
       e.stopPropagation();
@@ -13716,7 +13899,7 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
     if (!f) return;
     await absorbMasterIntoCanvas(f);
   };
-          window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, collectHandoffData, renderHandoffText, openHandoffModal, setNotes, renderNotesPane, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, nativeFolderImport, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), lemonStartup: () => verifyLicenseOnStartup(), lemonActivate: (k, n) => activateLicenseKey(k, n) } };
+          window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, collectHandoffData, renderHandoffText, openHandoffModal, setNotes, renderNotesPane, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, nativeFolderImport, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, downloadUserManual, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), lemonStartup: () => verifyLicenseOnStartup(), lemonActivate: (k, n) => activateLicenseKey(k, n) } };
     try { Object.assign(window.__visidocsverse, { docApaInfo, docApaText, docApaHtml, copyApaCite, apaSentenceCase, apaTitleCaseJournal, apaAuthorText, mediaKind, hydrateMedia, fileTypeKey, notesImageDrop, deleteNoteEntry, setNotes, closeNotesPane, renderNotesPane, openNotePop, closeNotePop, openNoteEditor, closeNoteEditor, resolveCiteMeta, origPut, origGet, get notesOpen() { return notesOpen; }, get notesDocId() { return notesDocId; }, get shownId() { return shownId; }, get paneId() { return paneId; } }); } catch {} // notes/APA handles for scripted checks
   try { Object.assign(window.__visidocsverse, { diskUsable, diskVaultDir, diskVaultLabel, diskPut, diskGetBlob, diskListKeys, migrateIdbOriginalsToDisk, origBlob, purgeImages }); } catch {} // disk-vault handles for scripted checks
   window.addEventListener('resize', () => ren.resize());

@@ -388,6 +388,9 @@
   .tgp-title { font-size:14px; font-weight:800; letter-spacing:.06em; color:inherit; }
   .tgp-x { margin-left:auto; background:none; border:none; cursor:pointer; font-size:15px; line-height:1; color:inherit; opacity:.6; padding:6px; flex:0 0 auto; }
   .tgp-x:hover { opacity:1; }
+  #howStartPane .tgp-manual { margin-left:auto; flex:0 0 auto; background:rgba(95,157,255,.12); color:var(--txt); border:1px solid var(--line); border-radius:7px; padding:2px 10px; font-size:12px; line-height:1.5; cursor:pointer; white-space:nowrap; }
+  #howStartPane .tgp-manual:hover { border-color:var(--sun); color:var(--sun); }
+  #howStartPane .tgp-x { margin-left:0; }
   .tgp-body { overflow:auto; min-height:0; font-size:12.5px; line-height:1.65; }
   .tgp-body p { margin:0 0 10px; }
   .tgp-body p:last-child { margin-bottom:0; }
@@ -426,9 +429,12 @@
   /* pinned glossary terms: one slim book tab per pin, stacked under the
      glossary tab on the left panel's right border; each opens the same
      pinned-term pane parked beside the panel */
-  .g-pin { float:right; margin:0 0 4px 8px; background:rgba(95,157,255,.10); color:var(--mut); border:1px solid var(--line); border-radius:7px; padding:1px 8px; font-size:10px; letter-spacing:.04em; cursor:pointer; white-space:nowrap; }
-  .g-pin:hover { color:#9cc2ff; border-color:#9cc2ff; }
-  .g-pin.on { color:#ffd24b; border-color:rgba(255,210,75,.6); }
+  /* glossary term controls as inline clickable text — pills are too tall for
+     the row; same line when it fits, wraps whole to the next line when not */
+  #glossBody .g-pin { display:inline; margin:0 0 0 8px; padding:0; background:none; border:none; border-radius:0; color:var(--sun); font:inherit; font-size:11px; letter-spacing:.04em; cursor:pointer; white-space:nowrap; }
+  #glossBody .g-pin:hover { color:#9cc2ff; text-decoration:underline; }
+  #glossBody .g-pin.on { color:#ffd24b; border:none; }
+  body.help-can-edit #glossBody .gloss-edit-btn { display:inline; margin:0 0 0 6px; padding:0; background:none; border:none; border-radius:0; font-size:11px; line-height:inherit; }
   .pinTab { position:absolute; width:25px; display:flex; align-items:center; justify-content:center; padding:6px 0; background:rgba(20,26,32,.88); border:1px solid rgba(140,170,220,.35); border-radius:0 9px 9px 0; color:var(--acc); cursor:pointer; z-index:26; box-shadow:3px 3px 12px rgba(0,0,0,.45); } /* NO transform transition: the preview/compositor can freeze CSS transitions, stranding tabs mid-swing — they snap instantly to the panel's plane instead. app-level (not a panel child): the panel's backdrop-filter stacking context would trap them under the docked glossary pane */
   .pinTab span { display:block; writing-mode:vertical-rl; transform:rotate(180deg); font-size:9px; letter-spacing:.12em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-height:100%; }
   .pinTab:hover { color:#9cc2ff; border-color:#9cc2ff; }
