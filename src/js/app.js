@@ -5717,11 +5717,21 @@ function closeHowStart() { const box = $('#howStartPane'); if (box) box.hidden =
 // keeps its gesture and the browser's own "ask where to save" picker appears
 // (fetching first loses the gesture → silent "automatic" save); (b) no
 // server round-trip at click time — a direct file link 404s ("Cannot GET")
-// on preview servers, while fetch resolves live workspace files. The PDF lives in src/manual/ (copied
-// whole into desktop dist/), and this code sits outside every dev-only range
+// on preview servers, while fetch resolves live workspace files. The PDF
+// lives in src/manual/ in the workspace and is packed into the shipped app
+// resources by pack-repo-zip (src/assets/manual/, path rewritten at pack
+// time), and this code sits outside every dev-only range
 // so stripped installers keep it.
-const MANUAL_PDF_PATH = 'src/manual/visidocsverse-user-manual.pdf';
+const MANUAL_PDF_PATH = 'src/assets/manual/visidocsverse-user-manual.pdf';
 const MANUAL_PDF_NAME = 'VisiDocsverse-User-Manual.pdf';
+// Exact byte size of the shipped PDF. Injected by pack-repo-zip at pack time
+// (stays 0 in the workspace, so a stale constant can never false-alarm here);
+// the installed app refuses to save a short/truncated fetch as a "damaged" PDF.
+const MANUAL_PDF_BYTES = 6367472;
+// Packer-injected SHA-256 (hex) of the shipped PDF; empty in the workspace, so
+// the content check only runs in packed builds. Lets the installed app prove
+// the written bytes are identical, not just the same length.
+const MANUAL_PDF_SHA256 = '97fbe8852e4f404fb832674fad4c5c969f49b25b8ae4f689e24c3597b43ee4a9';
 // Prefetched bytes: fetched once per pane-open via fetch (the channel that
 // resolves live workspace files), zipped with the vendored fflate, so the
 // click-time download below needs no server round-trip and can stay inside
@@ -5754,15 +5764,35 @@ function prefetchManualPdf() {
 async function downloadUserManual() {
   // 1) Neutralino desktop shell: native save dialog + direct binary write.
   if (typeof Neutralino !== 'undefined' && Neutralino.os && Neutralino.filesystem) {
-    let buf = null;
+    let bytes = null;
     try {
-      let r = null;
-      try { r = await fetch(MANUAL_PDF_PATH + '?dev=' + Date.now(), { cache: 'no-store' }); } catch {}
-      if (!r || !r.ok) r = await fetch(MANUAL_PDF_PATH);
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      buf = await r.arrayBuffer();
-    } catch (e) { toast('Could not load the manual (' + ((e && e.message) || e) + ')', 6000); return; }
-    if (!buf || !buf.byteLength) { toast('The manual file came back empty — try again', 6000); return; }
+      // Prefer the bundled-resource API: the exact shipped bytes with no HTTP
+      // layer (MIME, query-string, range handling) in the middle.
+      if (Neutralino.resources && typeof Neutralino.resources.readBinaryFile === 'function') {
+        const cands = ['/' + MANUAL_PDF_PATH, MANUAL_PDF_PATH];
+        for (const c of cands) {
+          try {
+            const ab = await Neutralino.resources.readBinaryFile(c);
+            if (ab && ab.byteLength) { bytes = new Uint8Array(ab); break; }
+          } catch {}
+        }
+      }
+      if (!bytes) {
+        let r = null;
+        try { r = await fetch(MANUAL_PDF_PATH + '?dev=' + Date.now(), { cache: 'no-store' }); } catch {}
+        if (!r || !r.ok) r = await fetch(MANUAL_PDF_PATH);
+        if (!r || !r.ok) throw new Error('HTTP ' + (r && r.status));
+        const buf = await r.arrayBuffer();
+        if (buf && buf.byteLength) bytes = new Uint8Array(buf);
+      }
+    } catch (e) { try { await infoDlg('Manual download failed', 'Could not load the manual (' + ((e && e.message) || e) + '). Nothing was written.'); } catch {} return; }
+    if (!bytes || !bytes.length) { try { await infoDlg('Manual download failed', 'The manual file came back empty. Nothing was written — try again.'); } catch {} return; }
+    // Never save a wrong response as a "damaged" PDF: a real PDF starts with
+    // %PDF- and matches the packed byte size exactly. These results stay on
+    // screen (not a fleeting toast) so a screenshot captures the diagnosis.
+    const magic = String.fromCharCode(bytes[0] || 0, bytes[1] || 0, bytes[2] || 0, bytes[3] || 0, bytes[4] || 0);
+    if (magic !== '%PDF-') { try { await infoDlg('Manual source is not a PDF', 'First bytes: ' + JSON.stringify(magic) + ' — ' + bytes.length + ' bytes total. Nothing was written. Please re-install from a fresh installer build.'); } catch {} return; }
+    if (MANUAL_PDF_BYTES && bytes.length !== MANUAL_PDF_BYTES) { try { await infoDlg('Manual source is incomplete', 'Got ' + bytes.length + ' of ' + MANUAL_PDF_BYTES + ' expected bytes. Nothing was written. Please re-install from a fresh installer build.'); } catch {} return; }
     try {
       let startDir = '';
       try { startDir = localStorage.getItem('visidocsverse.saveDir') || ''; } catch {}
@@ -5772,12 +5802,45 @@ async function downloadUserManual() {
       const p = String(picked || '');
       if (!p) { toast('Download cancelled — no location picked, nothing was written', 5000); return; }
       if (typeof Neutralino.filesystem.writeBinaryFile === 'function') {
-        await Neutralino.filesystem.writeBinaryFile(p, buf);
+        // Chunked write: one giant binary IPC message can land truncated in
+        // some shells (the saved file then opens as "damaged"), so the first
+        // slice goes through writeBinaryFile (creates/truncates) and the rest
+        // through appendBinaryFile.
+        const CH = 256 * 1024;
+        await Neutralino.filesystem.writeBinaryFile(p, bytes.slice(0, Math.min(CH, bytes.length)));
+        if (bytes.length > CH) {
+          if (typeof Neutralino.filesystem.appendBinaryFile !== 'function') {
+            await Neutralino.filesystem.writeBinaryFile(p, bytes);
+          } else {
+            for (let off = CH; off < bytes.length; off += CH) {
+              await Neutralino.filesystem.appendBinaryFile(p, bytes.slice(off, off + CH));
+            }
+          }
+        }
+        // Read back and verify before claiming success: length, header, and
+        // (in packed builds) full SHA-256 content hash.
+        let backOk = false, backLen = -1, backHash = '';
+        try {
+          const back = await Neutralino.filesystem.readBinaryFile(p);
+          backLen = back ? back.byteLength : -1;
+          const bb = back ? new Uint8Array(back) : null;
+          const magicOk = !!bb && bb.length === bytes.length &&
+            String.fromCharCode(bb[0], bb[1], bb[2], bb[3], bb[4]) === '%PDF-';
+          backOk = magicOk;
+          if (magicOk && MANUAL_PDF_SHA256) {
+            try {
+              const dg = await crypto.subtle.digest('SHA-256', bb);
+              backHash = [...new Uint8Array(dg)].map((x) => x.toString(16).padStart(2, '0')).join('');
+              backOk = (backHash === MANUAL_PDF_SHA256);
+            } catch { backHash = 'unavailable'; }
+          }
+        } catch {}
         try {
           const dir = p.replace(/[\\/][^\\/]*$/, '');
           if (dir) localStorage.setItem('visidocsverse.saveDir', dir);
         } catch {}
-        toast('User manual saved to ' + p);
+        if (backOk) { try { toast('User manual saved — ' + MANUAL_PDF_NAME); } catch {} return; }
+        try { await infoDlg('Manual write failed verification', 'Disk has ' + backLen + ' of ' + bytes.length + ' bytes' + (MANUAL_PDF_SHA256 ? ', hash ' + (backHash || 'n/a') + ' vs expected ' + MANUAL_PDF_SHA256.slice(0, 16) + '…' : '') + ' at:\n' + p + '\n\nThe saved file is not an exact copy. Nothing valid was claimed — try another location (disk may be full).'); } catch {}
         return;
       }
       // no binary-write API in this Neutralino build: fall through to the
