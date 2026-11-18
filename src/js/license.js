@@ -9,7 +9,7 @@
 //
 // license.js re-exports the Lemon Squeezy online path (see
 // licensing-manager.js); either system passing unlocks the app.
-import { verifyLicenseOnStartup, activateLicenseKey, lemonCacheStatus, clearLemonCache } from './licensing-manager.js';
+import { verifyLicenseOnStartup, activateLicenseKey, deactivateLicenseKey, lemonCacheStatus, clearLemonCache } from './licensing-manager.js';
 
 // Key file shape (JSON):
 //   {"product":"visidocsverse","email":"buyer@example.com","issued":"2026-10-25","sig":"<base64url>"}
@@ -90,11 +90,27 @@ export function clearLicenseCache() {
 }
 
 // Fully remove this machine's activation (both paths) — the next
-// ensureLicensed() re-shows the blocking Activate modal on desktop shells.
+// ensureLicensed() re-shows the Activate modal on desktop shells.
 export function deactivateLicense() {
   clearLemonCache();
   clearLicenseCache();
 }
+
+// Server-side seat release: frees this machine's Lemon instance (it stops
+// counting against the key's activation limit) and clears both local caches.
+// Fail-closed: when Lemon can't be reached the local activation is KEPT, so a
+// null/false return means "still licensed here". Re-exported for status UIs.
+export async function deactivateLicenseRemote() {
+  let r = null;
+  try { r = await deactivateLicenseKey(); } catch { r = null; }
+  if (r && r.success) {
+    try { clearLicenseCache(); } catch {}
+    return r;
+  }
+  return r || { success: false, offline: true, message: 'Could not reach Lemon Squeezy — still activated on this machine.' };
+}
+
+export { deactivateLicenseKey };
 
 // Read-only license snapshot for status surfaces (offline only, never
 // throws): {kind:'lemon'|'keyfile'|'none', email}. Once a Lemon subscription
@@ -144,9 +160,12 @@ export function needsLicenseGate() {
 // tried ONLY when no Lemon subscription cache has ever existed on this
 // machine. Once a subscription cache exists, Lemon is authoritative — an
 // expired/cancelled/overdue subscription cannot be bypassed with an old key
-// file. Shows the Activate modal (blocking, no dismiss) when gating and
-// neither verifies. A non-routine startup verdict (tamper, expired, overdue)
-// is passed through so the modal can say WHY it is locked, not just that it is.
+// file. Shows the Activate modal (dismissable via "Not now" for deferred
+// activation) when gating and neither verifies. Resolves false when the user
+// defers — the caller exits cleanly (no save guard pre-boot) and the modal
+// reappears on next launch. A non-routine startup verdict (tamper, expired,
+// overdue) is passed through so the modal can say WHY it is locked, not just
+// that it is.
 export async function ensureLicensed() {
   if (!needsLicenseGate()) return true;
   let note = '';
@@ -185,13 +204,26 @@ function licenseEls() {
     file: document.getElementById('licenseFile'),
     keyInput: document.getElementById('licenseKeyInput'),
     onlineBtn: document.getElementById('licenseOnlineBtn'),
+    later: document.getElementById('licenseLater'),
   };
 }
 
 export function showLicenseModal(note) {
   return new Promise((resolve) => {
-    const { m, input, err, ok, fileBtn, file, keyInput, onlineBtn } = licenseEls();
+    const { m, input, err, ok, fileBtn, file, keyInput, onlineBtn, later } = licenseEls();
     if (!m) { resolve(false); return; }
+    let settled = false;
+    const onEsc = (e) => {
+      if (e && e.key === 'Escape' && !m.hidden && later && !later.disabled) { e.preventDefault(); later.click(); }
+    };
+    const done = (val) => {
+      if (settled) return;
+      settled = true;
+      try { document.removeEventListener('keydown', onEsc, true); } catch {}
+      try { m.hidden = true; } catch {}
+      try { say(null); } catch {}
+      resolve(val);
+    };
     const say = (msg, color) => {
       if (!err) return;
       if (!msg) { err.hidden = true; err.textContent = ''; err.style.color = ''; }
@@ -220,11 +252,14 @@ export function showLicenseModal(note) {
         // into the unlocked app, which is this app's "enableProUI").
         say(r.message, '#8fd0a8');
         await new Promise(res => setTimeout(res, 1400));
-        m.hidden = true;
-        say(null);
-        resolve(true);
+        done(true);
       } finally { onlineBtn.disabled = false; }
     };
+    // "Not now" = deferred activation: hide the modal and resolve false so
+    // the caller can exit cleanly (the save guard never fires pre-boot — see
+    // gatesOk in app.js). Next launch re-shows this modal automatically.
+    if (later) later.onclick = () => done(false);
+    try { document.addEventListener('keydown', onEsc, true); } catch {}
     // Enter in the single-line key field submits like the button.
     if (keyInput && !keyInput.dataset.bound) {
       keyInput.dataset.bound = '1';
@@ -238,8 +273,7 @@ export function showLicenseModal(note) {
         const r = await verifyLicenseKey(input.value);
         if (!r.ok) { say(r.error); return; }
         cacheLicenseText(JSON.stringify(JSON.parse(input.value)));
-        m.hidden = true;
-        resolve(true);
+        done(true);
       } finally { ok.disabled = false; }
     };
   });

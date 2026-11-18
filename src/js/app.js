@@ -3,7 +3,7 @@ import { vault } from './vault.js';
 import { Universe } from './physics.js';
 import { Renderer } from './render.js';
 import { imgPut, imgGet, imgKeys, imgDelete, migrateImageDB } from './imgstore.js';
-import { ensureLicensed, verifyLicenseKey, needsLicenseGate, showLicenseModal, verifyLicenseOnStartup, activateLicenseKey, licenseStatus, deactivateLicense, isDesktopShell } from './license.js';
+import { ensureLicensed, verifyLicenseKey, needsLicenseGate, showLicenseModal, verifyLicenseOnStartup, activateLicenseKey, licenseStatus, deactivateLicenseRemote, isDesktopShell } from './license.js';
 import { ensureEulaAccepted, eulaAccepted, showEulaModal } from './eula.js';
 import { clearDevLicenseCaches } from './licensing-manager.js';
 
@@ -192,17 +192,23 @@ let exitCommitted = false; // a guard save finished clean and exit was requested
 // background job (OCR, citations, page-map) landing between that save and the
 // actual exit must NOT re-arm the guard. Any real content edit below clears
 // the latch via markBackupDirty, so the guard stays exact.
-const BUILD_TAG = 'g9'; // one-build diagnostic stamp: guard pane + save/exit
+let gatesOk = false; // boot gates (EULA + license) passed: the guard never fires
+// before this, so X during first-run activation exits cleanly with no popup.
+const BUILD_TAG = 'g10'; // one-build diagnostic stamp: guard pane + save/exit
 // toasts carry it, so a screenshot proves which build is actually installed.
 let lastGuardNote = ''; // breadcrumb of the last guard step (saved ok / save
 // failed + reason / exit requested) — surfaced in the pane message so a
 // failure is persistent, not a missed 7-second toast.
 function markBackupDirty() { backupClean = false; exitCommitted = false; }
 function workspaceDocCount() { try { return vault.tabs.reduce((n, t) => n + (((t && t.docs) || []).length), 0); } catch { return 0; } }
-function needsBackupGuard() { return workspaceDocCount() > 0 && !backupClean && !exitCommitted; }
+function needsBackupGuard() { return gatesOk && workspaceDocCount() > 0 && !backupClean && !exitCommitted; }
 function showCloseGuardPane() {
   const box = $('#closeGuardPane');
   if (!box) return false;
+  // Never popup with nothing to save (0 docs, clean backup, or pre-gate
+  // first-run activation): callers rely on this no-op so a failed exit with
+  // an empty workspace stays a quiet toast, not a "save your work" panel.
+  try { if (!needsBackupGuard()) return false; } catch { return false; }
   try {
     const n = workspaceDocCount();
     const tabs = vault.tabs.filter(t => t && t.docs && t.docs.length).length;
@@ -254,9 +260,18 @@ function neutralinoExitLadder() {
     setTimeout(() => {
       try { Promise.resolve(Neutralino.app.killProcess()).catch(() => {}); } catch {}
       setTimeout(() => {
-        try { toast(`Close requested but the window stayed [${BUILD_TAG}] — click “Close without saving” again, or close it yourself`, 9000); } catch {}
-        try { lastGuardNote = 'exit requested but window stayed'; } catch {}
-        try { showCloseGuardPane(); } catch {}
+        // The pane is the guard's control surface: only show it when there is
+        // still unsaved work to guard. A failed exit with nothing to save
+        // (e.g. X during first-run activation) stays a quiet toast instead.
+        let guarded = false;
+        try { guarded = needsBackupGuard(); } catch { guarded = false; }
+        if (guarded) {
+          try { toast(`Close requested but the window stayed [${BUILD_TAG}] — click “Close without saving” again, or close it yourself`, 9000); } catch {}
+          try { lastGuardNote = 'exit requested but window stayed'; } catch {}
+          try { showCloseGuardPane(); } catch {}
+        } else {
+          try { toast('Close requested but the window stayed — close it yourself when ready', 5000); } catch {}
+        }
       }, 1500);
     }, 1500);
   }, 1500);
@@ -9907,11 +9922,17 @@ async function boot() {
   // Boot guard order: (1) purge any dev/legacy license artifacts so they
   // can never satisfy the check; (2) EULA; (3) license — a missing/invalid
   // license_key + instance_id (checked against Lemon Squeezy's validate
-  // endpoint when the cache is stale) shows the blocking Activate modal
-  // before any of the main interface is built.
+  // endpoint when the cache is stale) shows the Activate modal (with a
+  // "Not now" deferred option) before any of the main interface is built.
   try { clearDevLicenseCaches(); } catch {}
   try { if (!(await ensureEulaAccepted())) return; } catch { return; }
-  try { if (!(await ensureLicensed())) return; } catch { return; }
+  let licensed = false;
+  try { licensed = await ensureLicensed(); } catch { return; }
+  // Deferred activation ("Not now"): exit at once with no save guard — there
+  // is nothing to save pre-boot, and the Activate modal reappears on next
+  // launch so the key can be entered then.
+  if (!licensed) { try { exitAppNow(); } catch {} return; }
+  try { gatesOk = true; } catch {}
   bootStage('gates-ok');
   ren = new Renderer($('#uniCv'));
   bootStage('renderer');
@@ -9943,7 +9964,7 @@ async function boot() {
   // license status + deactivate (left panel): shows which credential holds
   // this machine (Lemon email / key-file email / none) and offers a clean
   // seat move — clearing both caches then re-running the gate, which
-  // re-shows the blocking Activate modal on desktop shells.
+  // re-shows the Activate modal (dismissable via "Not now") on desktop shells.
   try {
     const syncLic = async () => {
       const el = $('#licStatus'); if (!el) return;
@@ -9956,10 +9977,24 @@ async function boot() {
     };
     const ld = $('#licDeactivateBtn');
     if (ld) ld.onclick = async () => {
-      if (!await confirmDlg('Remove the license from this machine? The Activate window appears next so a key can be entered again.', 'Deactivate')) return;
-      try { deactivateLicense(); } catch {}
+      if (!await confirmDlg('Remove the license from this machine and free up its seat, so the key can be used on another computer? The Activate window appears next so a key can be entered again.', 'Deactivate')) return;
+      // Server-side seat release first: a freed instance stops counting
+      // against the key's activation limit. Fail-closed (offline/refused)
+      // keeps the local activation — the status line then still shows it.
+      let r = null;
+      try { toast('Contacting Lemon Squeezy…'); } catch {}
+      try { r = await deactivateLicenseRemote(); } catch { r = null; }
       try { await syncLic(); } catch {}
-      try { if (await ensureLicensed()) await syncLic(); } catch {}
+      try { toast((r && r.message) || 'Deactivation finished.', (r && r.success) ? 4000 : 7000); } catch {}
+      // Mid-session re-gate only when nothing is licensed anymore: a "Not
+      // now" defer just refreshes the status — no exit here (unlike the boot
+      // gate, the user may have work open).
+      try {
+        let s = null;
+        try { s = await licenseStatus(); } catch {}
+        if (s && s.kind === 'none') { try { await ensureLicensed(); } catch {} }
+        await syncLic();
+      } catch {}
     };
     syncLic();
   } catch {}
@@ -13962,7 +13997,7 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
     if (!f) return;
     await absorbMasterIntoCanvas(f);
   };
-          window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, collectHandoffData, renderHandoffText, openHandoffModal, setNotes, renderNotesPane, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, nativeFolderImport, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, downloadUserManual, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), lemonStartup: () => verifyLicenseOnStartup(), lemonActivate: (k, n) => activateLicenseKey(k, n) } };
+          window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, collectHandoffData, renderHandoffText, openHandoffModal, setNotes, renderNotesPane, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, nativeFolderImport, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, downloadUserManual, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), lemonStartup: () => verifyLicenseOnStartup(), lemonActivate: (k, n) => activateLicenseKey(k, n), lemonDeactivate: () => deactivateLicenseRemote() } };
     try { Object.assign(window.__visidocsverse, { docApaInfo, docApaText, docApaHtml, copyApaCite, apaSentenceCase, apaTitleCaseJournal, apaAuthorText, mediaKind, hydrateMedia, fileTypeKey, notesImageDrop, deleteNoteEntry, setNotes, closeNotesPane, renderNotesPane, openNotePop, closeNotePop, openNoteEditor, closeNoteEditor, resolveCiteMeta, origPut, origGet, get notesOpen() { return notesOpen; }, get notesDocId() { return notesDocId; }, get shownId() { return shownId; }, get paneId() { return paneId; } }); } catch {} // notes/APA handles for scripted checks
   try { Object.assign(window.__visidocsverse, { diskUsable, diskVaultDir, diskVaultLabel, diskPut, diskGetBlob, diskListKeys, migrateIdbOriginalsToDisk, origBlob, purgeImages }); } catch {} // disk-vault handles for scripted checks
   window.addEventListener('resize', () => ren.resize());

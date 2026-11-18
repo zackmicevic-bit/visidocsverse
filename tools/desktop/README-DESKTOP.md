@@ -171,6 +171,12 @@ Artifacts land in `src-tauri/target/<triple>/release/bundle/{dmg,nsis,msi}/`.
   [issued]`. To rotate: generate a new pair, swap the public block,
   re-issue files. Lemon Squeezy products/keys are managed in the Lemon
   dashboard (no tooling needed here); instance counts are tracked there.
+- Seat release: "Deactivate this machine" calls Lemon `POST
+  /v1/licenses/deactivate` (`license_key` + cached `instance_id`) and clears
+  local caches, so the freed machine stops counting against the key's
+  activation limit. Offline/refused deactivations fail closed (local
+  activation kept). Re-activating the same machine later consumes a new
+  instance, as Lemon intended — dashboard instance lists stay meaningful.
 - Seat limit for key files is honor-system: a key file says who it belongs
   to, but nothing phones home, so one file *can* be shared —
   price/support accordingly.

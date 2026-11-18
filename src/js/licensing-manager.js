@@ -47,6 +47,7 @@ export const LEMON = {
   appName: 'VisiDocsverse',
   activateUrl: 'https://api.lemonsqueezy.com/v1/licenses/activate',
   validateUrl: 'https://api.lemonsqueezy.com/v1/licenses/validate',
+  deactivateUrl: 'https://api.lemonsqueezy.com/v1/licenses/deactivate',
   cacheKey: 'visidocsverse.lemon.v1',
   // Subscription policy (weekly online check):
   // - checkIntervalDays: a successful Lemon validate is good for 7 days.
@@ -351,6 +352,59 @@ async function backgroundRevalidate(licenseKey, instanceId) {
   } catch {
     return { outcome: 'offline', message: 'Network unavailable.' };
   }
+}
+
+// STEP 5: server-side seat release. Frees this machine's Lemon instance so
+// it stops counting against the key's activation limit, then clears the local
+// cache. Returns {success, message, released, offline?} and never throws.
+// - No Lemon cache (or a key without a server instance): nothing to release
+//   server-side — clear local, report success.
+// - Lemon confirms (or the instance is already gone server-side): clear
+//   local, report success — the slot is free either way.
+// - Network unreachable: FAIL CLOSED — keep the local activation and say so.
+//   Clearing locally while the slot stays consumed would strand the user with
+//   one fewer seat and no license on this machine.
+// - Any other Lemon rejection: keep local (fail closed) and surface the
+//   message; the weekly validate remains the authority on validity.
+export async function deactivateLicenseKey() {
+  let raw = null;
+  try { raw = readLemonCacheRaw(); } catch { raw = null; }
+  if (!raw) return { success: true, message: 'No Lemon activation on this machine — nothing to release.', released: false };
+  let obj = null;
+  try { obj = JSON.parse(raw); } catch { obj = null; }
+  const key = obj && typeof obj.license_key === 'string' ? obj.license_key : '';
+  const inst = obj && typeof obj.instance_id === 'string' ? obj.instance_id : '';
+  if (!key || !inst) {
+    try { clearLemonCache(); } catch {}
+    return { success: true, message: 'No server seat held here — local license cleared.', released: false };
+  }
+  let data = null;
+  try {
+    const params = new URLSearchParams();
+    params.append('license_key', key);
+    params.append('instance_id', inst);
+    const response = await lemonFetch(LEMON.deactivateUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+      body: params.toString(),
+    });
+    try { data = await response.json(); }
+    catch { return { success: false, offline: true, message: 'Lemon Squeezy answered oddly — still activated on this machine. Check your connection and retry to free the seat.' }; }
+  } catch {
+    return { success: false, offline: true, message: 'Could not reach Lemon Squeezy — still activated on this machine. Connect to the internet and retry to free the seat.' };
+  }
+  if (data && data.deactivated === true) {
+    try { clearLemonCache(); } catch {}
+    return { success: true, message: 'Seat freed on Lemon Squeezy — this machine is deactivated.', released: true };
+  }
+  const errText = String((data && data.error) || '');
+  if (/no .*instance|instance.*not found|not found|already.*deactivat|invalid.*instance/i.test(errText)) {
+    // Slot already free server-side (manual dashboard removal, double
+    // deactivate): the local cache is the only remainder — clear it.
+    try { clearLemonCache(); } catch {}
+    return { success: true, message: 'That seat was already free on Lemon Squeezy — local license cleared.', released: false };
+  }
+  return { success: false, message: errText || 'Lemon Squeezy refused the deactivation — still activated on this machine.' };
 }
 
 // Plain fetch first (works wherever CORS allows, e.g. the desktop shell with

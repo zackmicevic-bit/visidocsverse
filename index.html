@@ -155,7 +155,7 @@
     <div class="sec-sep"></div>
     <div class="sec-label"><span>License</span></div>
     <div id="licStatus" style="font-size:11px;color:var(--mut);line-height:1.5;overflow-wrap:anywhere;">checking…</div>
-    <div class="rowbtns"><button class="btn" id="licDeactivateBtn" title="Remove the license from this machine — the Activate window appears so a key can be entered again">Deactivate this machine</button></div>
+    <div class="rowbtns"><button class="btn" id="licDeactivateBtn" title="Remove the license from this machine and free its seat on Lemon Squeezy — the Activate window appears so a key can be entered again">Deactivate this machine</button></div>
   </div>
   <div id="docPanel" class="glass">
     <div id="docScroll">
@@ -262,7 +262,8 @@ Keep them broad yet specific: Use tags for cross-cutting attributes (e.g., #Stat
   <div class="rowbtns"><button class="btn danger" id="licenseOnlineBtn">Activate online</button></div>
   <div class="lic-sep">or with a key file (fully offline)</div>
   <textarea id="licenseInput" placeholder="Paste the whole key file contents here"></textarea>
-  <div class="rowbtns"><button class="btn" id="licenseFileBtn">Load key file…</button><button class="btn danger" id="licenseOk">Activate</button></div>
+  <div class="rowbtns"><button class="btn" id="licenseFileBtn">Load key file…</button><button class="btn danger" id="licenseOk">Activate</button><button class="btn" id="licenseLater" title="Close this window without activating — enter your key next time you open the app">Not now</button></div>
+  <div class="lic-note">No key handy? Click “Not now” — the app closes with nothing to save, and you activate next time you open it.</div>
   <div id="licenseErr" hidden></div>
   <input type="file" id="licenseFile" accept=".json,application/json" hidden>
 </div>
