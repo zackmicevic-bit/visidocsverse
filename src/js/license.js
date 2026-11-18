@@ -29,8 +29,8 @@ export const LICENSE = {
 // this block, and re-issue key files (old files stop verifying).
 export const LICENSE_PUBLIC_JWK = {
   kty: 'EC', crv: 'P-256',
-  x: 'yXli-EBskR8KkQQdRUZPHC78848h_xddZQZrXfVj-jQ',
-  y: 'FvfSoWugPDhhcCsFQORszaHLib7kP0u-sumQeSKapys',
+  x: '_frf9uuI3nOCOQPzyIbNkYQRxqI7j0edc1FHqnj9rbo',
+  y: 'x9MnK8kjs19DwHuzcJmbSUvlP5ne7r5uLaUxpuEpC0c',
 };
 
 const te = new TextEncoder();

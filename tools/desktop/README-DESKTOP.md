@@ -320,3 +320,22 @@ Artifacts land in `src-tauri/target/<triple>/release/bundle/{dmg,nsis,msi}/`.
      `/version.json` URL and confirm the new number parses as JSON.
   8. Installed apps older than the new version show the banner on next
      launch (Download → checkout page, copy-receipt, Later/✕).
+
+## 13. Website zip for the Vercel site repo (generated — do not hand-assemble)
+
+  The site repo is a SEPARATE repo from the app repo: its root holds the
+  website flat (`index.html`, 8 `moment-*.html`, `privacy.html`, `terms.html`,
+  `version.json`, `vercel.json`). The deliverable is the flat
+  `visidocsverse-website-<VER>.zip` — every file at zip root, NO wrapper
+  folder, NO `site/` subfolder. `vercel.json` must stay at the root (Vercel
+  ignores it in subfolders); its `/version.json` header source + CORS/Cache
+  rules are what the installed app's update checker relies on. Regenerate
+  after ANY `src/site` change and never edit the zip by hand:
+
+    const packSite = eval(await fs.readTextFile('src/tools/pack-website-zip.mjs') + '\npackWebsiteZip;');
+    await packSite(fs, tools);   // runs inside execute_js; stamps APP_VERSION/tauri.conf lock
+
+  The builder FAILS LOUD unless: flat layout, all 5 roots + 8 moment pages
+  present, `version.json` parses with `latestVersion`/`downloadUrl`, and the
+  live Dodo checkout link / no `PASTE-YOUR-*` placeholders / terms price
+  clause verify. Deliver: extract over the site repo, push to `main`.
