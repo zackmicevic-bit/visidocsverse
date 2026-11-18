@@ -8,7 +8,7 @@ BY DOWNLOADING, INSTALLING, ACTIVATING, OR USING THE SOFTWARE, YOU AGREE TO BE B
 
 1. GRANT OF PERPETUAL LICENSE
 
-Subject to the terms of this Agreement and your purchase of a valid license key through an authorized distributor (e.g., Lemon Squeezy), the developer grants you a non-exclusive, non-transferable, limited, perpetual license to install and use the current version of Visi|Docsverse on up to the maximum number of devices permitted by your license tier for personal or professional purposes. "Perpetual" means your right to use the acquired version of the Software does not expire.
+Subject to the terms of this Agreement and your purchase of a valid license key through an authorized distributor (e.g., Dodo Payments), the developer grants you a non-exclusive, non-transferable, limited, perpetual license to install and use the current version of Visi|Docsverse on up to the maximum number of devices permitted by your license tier for personal or professional purposes. "Perpetual" means your right to use the acquired version of the Software does not expire.
 
 2. LOCAL-FIRST DATA & PRIVACY
 
@@ -46,7 +46,7 @@ TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE DEVELOP
 
 8. TERMINATION
 
-This Agreement is effective until terminated. Your rights under this Agreement will terminate automatically without notice if you fail to comply with any of its terms or if your license purchase is refunded or revoked. Upon termination, you must cease all use of the Software and uninstall all copies from your devices. If the developer discovers that a license key or master key has been resold, marked up, or distributed by an unauthorized reseller, the developer reserves the right to void that master key immediately. Because Lemon Squeezy lets the developer invalidate keys from the dashboard, the developer retains complete technical control over unauthorized keys.
+This Agreement is effective until terminated. Your rights under this Agreement will terminate automatically without notice if you fail to comply with any of its terms or if your license purchase is refunded or revoked. Upon termination, you must cease all use of the Software and uninstall all copies from your devices. If the developer discovers that a license key or master key has been resold, marked up, or distributed by an unauthorized reseller, the developer reserves the right to void that master key immediately. Because Dodo Payments lets the developer invalidate keys from the dashboard, the developer retains complete technical control over unauthorized keys.
 
 9. GOVERNING LAW
 

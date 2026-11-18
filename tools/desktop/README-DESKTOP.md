@@ -151,32 +151,35 @@ Artifacts land in `src-tauri/target/<triple>/release/bundle/{dmg,nsis,msi}/`.
 ## 7. Licensing notes (`src/license.js` + `src/licensing-manager.js`)
 
 - Subscription build (weekly check). First launch in a desktop shell shows
-  the Activate modal (Lemon Squeezy path). ONLINE: the buyer pastes their
-  Lemon Squeezy license key and activates (one internet check against
-  `api.lemonsqueezy.com/v1/licenses/activate`). The activation caches
-  locally in `localStorage` (`visidocsverse.lemon.v1`) with an HMAC-SHA256
+  the Activate modal (Dodo Payments path). ONLINE: the buyer pastes their
+  Dodo Payments license key and activates (one internet check against
+  `https://live.dodopayments.com/licenses/activate`). The activation caches
+  locally in `localStorage` (`visidocsverse.dodo.v1`) with an HMAC-SHA256
   tamper seal: caches younger than 7 days unlock offline with zero network;
-  older ones MUST ping `/v1/licenses/validate`. Valid -> reseal + unlock.
+  older ones MUST ping `/licenses/validate`. Valid -> reseal + unlock.
   Invalid (expired/cancelled) -> lock. Unreachable -> temporary access until
   7+7 days with no successful check, then lock until online. Hand-edited
   caches fail closed without deleting. Needs internet for activation + the
   weekly ping (plain `fetch`; inside Tauri it falls back to the http
   plugin's fetch, which is not bound by WebView CORS). OFFLINE key FILE
-  (ECDSA P-256, local-only, no network) is LEGACY: tried only when no Lemon
+  (ECDSA P-256, local-only, no network) is LEGACY: tried only when no Dodo
   subscription cache has ever existed on the machine, so it cannot bypass
   an expired/cancelled subscription. Stop issuing key files for subscribers.
 - Mint offline key files with `node src/tools/desktop/make-key.mjs gen`
   (once — keep the private half OFF the repo, encrypted drive / password
   manager) and `node make-key.mjs sign <private.json> <buyer@email>
   [issued]`. To rotate: generate a new pair, swap the public block,
-  re-issue files. Lemon Squeezy products/keys are managed in the Lemon
-  dashboard (no tooling needed here); instance counts are tracked there.
-- Seat release: "Deactivate this machine" calls Lemon `POST
-  /v1/licenses/deactivate` (`license_key` + cached `instance_id`) and clears
+  re-issue files. Dodo Payments products/keys are managed in the Dodo
+  dashboard (no tooling needed here); activation counts are tracked there
+  (License Key entitlement: Automatic fulfillment, activations limit 1,
+  license length "No expiration" for subscription products, attached to the
+  product — keys then follow the subscription status automatically).
+- Seat release: "Deactivate this machine" calls Dodo `POST
+  /licenses/deactivate` (`license_key` + cached instance id) and clears
   local caches, so the freed machine stops counting against the key's
   activation limit. Offline/refused deactivations fail closed (local
   activation kept). Re-activating the same machine later consumes a new
-  instance, as Lemon intended — dashboard instance lists stay meaningful.
+  instance, as Dodo intended — dashboard instance lists stay meaningful.
 - Seat limit for key files is honor-system: a key file says who it belongs
   to, but nothing phones home, so one file *can* be shared —
   price/support accordingly.
@@ -213,16 +216,16 @@ Artifacts land in `src-tauri/target/<triple>/release/bundle/{dmg,nsis,msi}/`.
 
  - A few seconds after startup, desktop shells (Tauri/file/tauri.localhost —
   never the web preview) make ONE anonymous GET of
-  `https://visidocs-updates-site.vercel.app/version.json` (plain
+  `https://visidocsverse-site.vercel.app/version.json` (plain
   no-preflight GET, no cookies, no headers, no identifiers; 5s timeout;
-  Tauri http-plugin fallback like the Lemon path). Offline/DNS/non-200/
+  Tauri http-plugin fallback like the Dodo path). Offline/DNS/non-200/
   bad-JSON/timeout all fail silently — no toast, no banner, no console error.
 - If `latestVersion` is strictly newer than `APP_VERSION`, a slim glass
   banner parks under the top pill (top edge follows the pill's live bottom)
   with the version, release date, and up to 6 release notes, plus Download
   (opens `downloadUrl` from version.json in the system browser), "Copy
-  receipt search" (copies `VisiDocsverse Lemon Squeezy receipt` — paste into
-  the mail-app search to find the Lemon Squeezy receipt email for the free
+  receipt search" (copies `VisiDocsverse Dodo Payments receipt` — paste into
+  the mail-app search to find the Dodo Payments receipt email for the free
   patch re-download) and Later/✕ dismiss. Dismissal is stored per machine
   (`visidocsverse.update.v1`) for that version only — the next newer version
   nags again.
@@ -232,7 +235,7 @@ Artifacts land in `src-tauri/target/<triple>/release/bundle/{dmg,nsis,msi}/`.
   `src/update-check.js`, bump `"version"` in
   `src-tauri/tauri.conf.json` to match, and deploy the new `version.json`
   to the Vercel feed with schema
-  `{"latestVersion":"1.0.1","releaseDate":"2026-10-25","releaseNotes":["..."],"downloadUrl":"https://visidocs-updates-site.vercel.app/"}`.
+  `{"latestVersion":"1.0.1","releaseDate":"2026-10-25","releaseNotes":["..."],"downloadUrl":"https://github.com/zackmicevic-bit/visidocsverse/releases/latest"}`.
 - Smoke test on the built installer: with no network (or with
   `version.json` unreachable), launch is clean and silent; with a stubbed
   newer version the banner shows notes + copy works (in dev, drive it via
@@ -300,16 +303,19 @@ Artifacts land in `src-tauri/target/<triple>/release/bundle/{dmg,nsis,msi}/`.
      `build-inno.bat`, install the produced `VisiDocsVerse-Setup.exe`
      and smoke-test it (launch, license gate, one document).
 
-  Phase B — deliver it on Lemon Squeezy:
-  5. Lemon dashboard → product variant → Files → upload the new
-     `VisiDocsVerse-Setup.exe`. Buyers (new and re-downloading) now get
-     this build. No URL changes needed anywhere: the feed points at the
-     stable checkout page, not at a file link.
+  Phase B — publish the installer download (GitHub release):
+  5. GitHub app repo → release → upload the new
+     `VisiDocsVerse-Setup.exe`. The update feed's `downloadUrl` points at
+     the stable latest-release page, so no URL changes are needed anywhere.
+     (Dodo Payments can also host the file as a Digital Files entitlement,
+     but GitHub is the single download source — keep it that way.)
 
   Phase C — announce it on the Vercel feed:
-  6. In the `visidocs-updates-site` repo, edit `version.json`: set
-     `latestVersion` (same number as step 2), `releaseDate`, and
-     `releaseNotes` (one string per bullet). Leave `downloadUrl` alone.
+  6. In the SITE repo (`src/site/version.json`, deployed as
+     `https://visidocsverse-site.vercel.app/version.json`), edit
+     `version.json`: set `latestVersion` (same number as step 2),
+     `releaseDate`, and `releaseNotes` (one string per bullet). Leave
+     `downloadUrl` alone.
   7. Commit to `main` — Vercel auto-deploys. Open the live
      `/version.json` URL and confirm the new number parses as JSON.
   8. Installed apps older than the new version show the banner on next

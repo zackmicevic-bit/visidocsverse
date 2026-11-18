@@ -9941,7 +9941,7 @@ async function boot() {
   // skips both gates.
   // Boot guard order: (1) purge any dev/legacy license artifacts so they
   // can never satisfy the check; (2) EULA; (3) license — a missing/invalid
-  // license_key + instance_id (checked against Lemon Squeezy's validate
+  // license_key + instance_id (checked against Dodo Payments' validate
   // endpoint when the cache is stale) shows the Activate modal (with a
   // "Not now" deferred option) before any of the main interface is built.
   try { clearDevLicenseCaches(); } catch {}
@@ -9982,7 +9982,7 @@ async function boot() {
   // only when a strictly newer version is published. Never blocks, never nags.
   try { initUpdateChecker(toast); } catch {}
   // license status + deactivate (left panel): shows which credential holds
-  // this machine (Lemon email / key-file email / none) and offers a clean
+  // this machine (Dodo email / key-file email / none) and offers a clean
   // seat move — clearing both caches then re-running the gate, which
   // re-shows the Activate modal (dismissable via "Not now") on desktop shells.
   try {
@@ -9990,7 +9990,7 @@ async function boot() {
       const el = $('#licStatus'); if (!el) return;
       try {
         const s = await licenseStatus();
-        if (s.kind === 'lemon') el.textContent = `Licensed${s.email ? ' · ' + s.email : ''}`;
+        if (s.kind === 'dodo') el.textContent = `Licensed${s.email ? ' · ' + s.email : ''}`;
         else if (s.kind === 'keyfile') el.textContent = `Licensed — key file${s.email ? ' · ' + s.email : ''}`;
         else el.textContent = isDesktopShell() ? 'No license on this machine' : 'Web preview — no license needed';
       } catch { el.textContent = 'License status unavailable'; }
@@ -10002,7 +10002,7 @@ async function boot() {
       // against the key's activation limit. Fail-closed (offline/refused)
       // keeps the local activation — the status line then still shows it.
       let r = null;
-      try { toast('Contacting Lemon Squeezy…'); } catch {}
+      try { toast('Contacting Dodo Payments…'); } catch {}
       try { r = await deactivateLicenseRemote(); } catch { r = null; }
       try { await syncLic(); } catch {}
       try { toast((r && r.message) || 'Deactivation finished.', (r && r.success) ? 4000 : 7000); } catch {}
@@ -14021,7 +14021,7 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
     if (!f) return;
     await absorbMasterIntoCanvas(f);
   };
-          window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, collectHandoffData, renderHandoffText, openHandoffModal, setNotes, renderNotesPane, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, nativeFolderImport, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, downloadUserManual, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), lemonStartup: () => verifyLicenseOnStartup(), lemonActivate: (k, n) => activateLicenseKey(k, n), lemonDeactivate: () => deactivateLicenseRemote() } };
+          window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, collectHandoffData, renderHandoffText, openHandoffModal, setNotes, renderNotesPane, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, nativeFolderImport, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, downloadUserManual, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), dodoStartup: () => verifyLicenseOnStartup(), dodoActivate: (k, n) => activateLicenseKey(k, n), dodoDeactivate: () => deactivateLicenseRemote() } };
     try { Object.assign(window.__visidocsverse, { docApaInfo, docApaText, docApaHtml, copyApaCite, apaSentenceCase, apaTitleCaseJournal, apaAuthorText, mediaKind, hydrateMedia, fileTypeKey, notesImageDrop, deleteNoteEntry, setNotes, closeNotesPane, renderNotesPane, openNotePop, closeNotePop, openNoteEditor, closeNoteEditor, resolveCiteMeta, origPut, origGet, get notesOpen() { return notesOpen; }, get notesDocId() { return notesDocId; }, get shownId() { return shownId; }, get paneId() { return paneId; } }); } catch {} // notes/APA handles for scripted checks
   try { Object.assign(window.__visidocsverse, { diskUsable, diskVaultDir, diskVaultLabel, diskPut, diskGetBlob, diskListKeys, migrateIdbOriginalsToDisk, origBlob, purgeImages }); } catch {} // disk-vault handles for scripted checks
   window.addEventListener('resize', () => ren.resize());

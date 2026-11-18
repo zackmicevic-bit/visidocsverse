@@ -7,9 +7,9 @@
 // developer (used by src/tools/desktop/make-key.mjs to sign key files);
 // it is never in this repo and never ships to users.
 //
-// license.js re-exports the Lemon Squeezy online path (see
+// license.js re-exports the Dodo Payments online path (see
 // licensing-manager.js); either system passing unlocks the app.
-import { verifyLicenseOnStartup, activateLicenseKey, deactivateLicenseKey, lemonCacheStatus, clearLemonCache } from './licensing-manager.js';
+import { verifyLicenseOnStartup, activateLicenseKey, deactivateLicenseKey, dodoCacheStatus, clearDodoCache } from './licensing-manager.js';
 
 // Key file shape (JSON):
 //   {"product":"visidocsverse","email":"buyer@example.com","issued":"2026-10-25","sig":"<base64url>"}
@@ -92,13 +92,13 @@ export function clearLicenseCache() {
 // Fully remove this machine's activation (both paths) — the next
 // ensureLicensed() re-shows the Activate modal on desktop shells.
 export function deactivateLicense() {
-  clearLemonCache();
+  clearDodoCache();
   clearLicenseCache();
 }
 
-// Server-side seat release: frees this machine's Lemon instance (it stops
+// Server-side seat release: frees this machine's Dodo activation instance (it stops
 // counting against the key's activation limit) and clears both local caches.
-// Fail-closed: when Lemon can't be reached the local activation is KEPT, so a
+// Fail-closed: when Dodo can't be reached the local activation is KEPT, so a
 // null/false return means "still licensed here". Re-exported for status UIs.
 export async function deactivateLicenseRemote() {
   let r = null;
@@ -107,23 +107,23 @@ export async function deactivateLicenseRemote() {
     try { clearLicenseCache(); } catch {}
     return r;
   }
-  return r || { success: false, offline: true, message: 'Could not reach Lemon Squeezy — still activated on this machine.' };
+  return r || { success: false, offline: true, message: 'Could not reach Dodo Payments — still activated on this machine.' };
 }
 
 export { deactivateLicenseKey };
 
 // Read-only license snapshot for status surfaces (offline only, never
-// throws): {kind:'lemon'|'keyfile'|'none', email}. Once a Lemon subscription
+// throws): {kind:'dodo'|'keyfile'|'none', email}. Once a Dodo subscription
 // cache exists on this machine it is authoritative — a legacy key file is
 // not reported as a valid license, matching ensureLicensed().
 export async function licenseStatus() {
-  let lemonPresent = false;
+  let dodoPresent = false;
   try {
-    const s = await lemonCacheStatus();
-    if (s && s.ok) return { kind: 'lemon', email: s.email || '' };
-    lemonPresent = !!(s && s.present);
+    const s = await dodoCacheStatus();
+    if (s && s.ok) return { kind: 'dodo', email: s.email || '' };
+    dodoPresent = !!(s && s.present);
   } catch {}
-  if (lemonPresent) return { kind: 'none', email: '' };
+  if (dodoPresent) return { kind: 'none', email: '' };
   try {
     const c = cachedLicenseText();
     if (c) {
@@ -155,10 +155,10 @@ export function needsLicenseGate() {
   return isDesktopShell();
 }
 
-// Resolve true once this machine holds a verified subscription. Lemon Squeezy
+// Resolve true once this machine holds a verified subscription. Dodo Payments
 // weekly-check first; the fully-offline ECDSA key file is legacy-only and is
-// tried ONLY when no Lemon subscription cache has ever existed on this
-// machine. Once a subscription cache exists, Lemon is authoritative — an
+// tried ONLY when no Dodo subscription cache has ever existed on this
+// machine. Once a subscription cache exists, Dodo is authoritative — an
 // expired/cancelled/overdue subscription cannot be bypassed with an old key
 // file. Shows the Activate modal (dismissable via "Not now" for deferred
 // activation) when gating and neither verifies. Resolves false when the user
@@ -169,18 +169,18 @@ export function needsLicenseGate() {
 export async function ensureLicensed() {
   if (!needsLicenseGate()) return true;
   let note = '';
-  let lemonPresent = false;
+  let dodoPresent = false;
   try {
     const r = await verifyLicenseOnStartup();
     if (r && r.isValid) return true;
     if (r && r.statusMessage && r.statusMessage !== 'No active Visi|Docsverse subscription found. Please enter your license key.' && r.statusMessage !== 'No active Visi|Docsverse license found. Please enter your license key.') note = r.statusMessage;
   } catch {}
   try {
-    const s = await lemonCacheStatus();
-    lemonPresent = !!(s && s.present);
-  } catch { lemonPresent = true; }
-  // Legacy key-file fallback only when Lemon was never activated here.
-  if (!lemonPresent) {
+    const s = await dodoCacheStatus();
+    dodoPresent = !!(s && s.present);
+  } catch { dodoPresent = true; }
+  // Legacy key-file fallback only when Dodo was never activated here.
+  if (!dodoPresent) {
     try {
       const c = cachedLicenseText();
       if (c) {

@@ -18,7 +18,7 @@
 //   3. Edit version.json in the SITE repo (src/site/version.json here — it
 //      deploys as https://visidocsverse-site.vercel.app/version.json)
 //      with schema: {"latestVersion":"1.0.1","releaseDate":"2026-10-25",
-//      "releaseNotes":["..."],"downloadUrl":"https://app.lemonsqueezy.com/my-orders"}
+//      "releaseNotes":["..."],"downloadUrl":"https://github.com/zackmicevic-bit/visidocsverse/releases/latest"}
 //      (downloadUrl optional — banner shows a Download button when present).
 
 // Current installed version. Keep in sync with tauri.conf.json on release.
@@ -33,9 +33,9 @@ export const APP_VERSION = '1.0.21';
 export const UPDATE_URL = 'https://visidocsverse-site.vercel.app/version.json';
 
 // What the "copy" button puts on the clipboard: paste it into the mail-app
-// search box to find the original Lemon Squeezy receipt email, which holds
+// search box to find the original Dodo Payments receipt email, which holds
 // the free patch re-download.
-export const RECEIPT_SEARCH = 'VisiDocsverse Lemon Squeezy receipt';
+export const RECEIPT_SEARCH = 'VisiDocsverse Dodo Payments receipt';
 
 const UPDATE_KEY = 'visidocsverse.update.v1';
 const CHECK_DELAY_MS = 2500; // let startup (gates, rebuild, backfill) go first
@@ -97,7 +97,7 @@ function validInfo(o) {
 }
 
 // Plain fetch first (works in the shell; needs the host to serve ACAO).
-// Falls back to the Tauri http plugin like the Lemon activation path, so the
+// Falls back to the Tauri http plugin like the Dodo activation path, so the
 // check works even if version.json is ever served without CORS headers.
 let tauriHttpFetch = null;
 async function versionFetch(url, opts) {
