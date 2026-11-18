@@ -68,28 +68,28 @@
      pane's far right, clear of the content (Back button et al) as before. */
   #docScroll { overflow:auto; box-sizing:border-box; max-height:100%; padding:16px 18px; }
   /* reader pane stretch arrow — slim ‹ track on the pane's left edge */
-  #docResize { position:absolute; z-index:22; width:20px; height:54px; transition:transform .45s ease; display:flex; align-items:center; justify-content:center; font-size:14px; color:var(--mut); background:rgba(16,22,32,.96); border:1px solid var(--line); border-radius:10px; cursor:ew-resize; user-select:none; -webkit-user-select:none; touch-action:none; opacity:.55; overflow:visible; }
-  #docResize:hover { opacity:1; color:#9cc2ff; border-color:#9cc2ff; }
-  body.light-canvas #docResize { background:rgba(255,255,255,.93); color:#5a6b8c; border-color:rgba(30,45,75,.28); }
+  #docResize { position:absolute; z-index:22; width:22px; height:60px; transition:transform .45s ease; display:flex; align-items:center; justify-content:center; font-size:17px; font-weight:800; color:#dbe4f5; background:rgba(24,34,52,.98); border:1px solid rgba(156,194,255,.65); border-radius:10px; cursor:ew-resize; user-select:none; -webkit-user-select:none; touch-action:none; opacity:1; overflow:visible; box-shadow:0 2px 12px rgba(0,0,0,.6), 0 0 10px rgba(95,157,255,.25); text-shadow:0 1px 4px rgba(0,0,0,.8); }
+  #docResize:hover { opacity:1; color:#fff; border-color:#9cc2ff; background:rgba(36,52,80,.98); box-shadow:0 2px 14px rgba(0,0,0,.65), 0 0 14px rgba(95,157,255,.45); }
+  body.light-canvas #docResize { background:rgba(255,255,255,.97); color:#1f2c47; border-color:rgba(35,80,180,.55); box-shadow:0 2px 10px rgba(30,45,75,.28); text-shadow:none; }
   /* fatter invisible hit zone around the arrow (clicks still land on #docResize) */
   #docResize::after { content:''; position:absolute; top:-8px; bottom:-8px; left:-20px; right:-6px; cursor:ew-resize; }
   /* reader pane height grip — slim ═ bar on the pane's bottom edge, same
      discrete language as the width arrow (drag up = shrink, double-click
      resets to full height) */
-  #docResizeH { position:absolute; z-index:22; width:54px; height:20px; display:flex; align-items:center; justify-content:center; font-size:12px; line-height:1; color:var(--mut); background:rgba(16,22,32,.96); border:1px solid var(--line); border-radius:10px; cursor:ns-resize; user-select:none; -webkit-user-select:none; touch-action:none; opacity:.55; overflow:visible; }
-  #docResizeH:hover { opacity:1; color:#9cc2ff; border-color:#9cc2ff; }
-  body.light-canvas #docResizeH { background:rgba(255,255,255,.93); color:#5a6b8c; border-color:rgba(30,45,75,.28); }
+  #docResizeH { position:absolute; z-index:22; width:60px; height:22px; display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:800; line-height:1; color:#dbe4f5; background:rgba(24,34,52,.98); border:1px solid rgba(156,194,255,.65); border-radius:10px; cursor:ns-resize; user-select:none; -webkit-user-select:none; touch-action:none; opacity:1; overflow:visible; box-shadow:0 2px 12px rgba(0,0,0,.6), 0 0 10px rgba(95,157,255,.25); text-shadow:0 1px 4px rgba(0,0,0,.8); }
+  #docResizeH:hover { opacity:1; color:#fff; border-color:#9cc2ff; background:rgba(36,52,80,.98); box-shadow:0 2px 14px rgba(0,0,0,.65), 0 0 14px rgba(95,157,255,.45); }
+  body.light-canvas #docResizeH { background:rgba(255,255,255,.97); color:#1f2c47; border-color:rgba(35,80,180,.55); box-shadow:0 2px 10px rgba(30,45,75,.28); text-shadow:none; }
   /* fatter invisible hit zone around the grip (clicks still land on #docResizeH) */
   #docResizeH::after { content:''; position:absolute; left:-8px; right:-8px; top:-20px; bottom:-6px; cursor:ns-resize; }
   /* notes pane stretch arrow: same discrete ‹ language as the reader's, parked
      on the pane's left rim (seated by applyNotesGeom — the pane clips
      overflow, so this rides as a sibling, not a child) */
-  #notesResize { position:absolute; z-index:24; width:20px; height:54px; display:flex; align-items:center; justify-content:center; font-size:14px; color:var(--mut); background:rgba(16,22,32,.96); border:1px solid var(--line); border-radius:10px; cursor:ew-resize; user-select:none; -webkit-user-select:none; touch-action:none; opacity:.55; }
-  #notesResize:hover { opacity:1; color:#9cc2ff; border-color:#9cc2ff; }
+  #notesResize { position:absolute; z-index:24; width:22px; height:60px; display:flex; align-items:center; justify-content:center; font-size:17px; font-weight:800; color:#dbe4f5; background:rgba(24,34,52,.98); border:1px solid rgba(156,194,255,.65); border-radius:10px; cursor:ew-resize; user-select:none; -webkit-user-select:none; touch-action:none; opacity:1; box-shadow:0 2px 12px rgba(0,0,0,.6), 0 0 10px rgba(95,157,255,.25); text-shadow:0 1px 4px rgba(0,0,0,.8); }
+  #notesResize:hover { opacity:1; color:#fff; border-color:#9cc2ff; background:rgba(36,52,80,.98); box-shadow:0 2px 14px rgba(0,0,0,.65), 0 0 14px rgba(95,157,255,.45); }
   #notesResize[hidden] { display:none; }
   /* fatter invisible hit zone around the arrow (clicks still land on #notesResize) */
   #notesResize::after { content:''; position:absolute; top:-8px; bottom:-8px; left:-20px; right:-6px; cursor:ew-resize; }
-  body.light-canvas #notesResize { background:rgba(255,255,255,.93); color:#5a6b8c; border-color:rgba(30,45,75,.28); }  /* reader-pane 3D tilt: 30° clockwise (seen from above) about the pane's own
+  body.light-canvas #notesResize { background:rgba(255,255,255,.97); color:#1f2c47; border-color:rgba(35,80,180,.55); box-shadow:0 2px 10px rgba(30,45,75,.28); text-shadow:none; }  /* reader-pane 3D tilt: 30° clockwise (seen from above) about the pane's own
      vertical middle; rides above the stretch arrow with a clear gap.
      --tiltShift (set by syncTiltShift) pulls a wide tilted pane left by
      exactly its perspective overshoot, so the docked right edge — and the
@@ -665,6 +665,13 @@
   .help-edit-btn { display:none; margin-top:8px; background:rgba(95,157,255,.12); color:var(--txt); border:1px solid var(--line); border-radius:7px; padding:0 7px; font-size:12px; line-height:1.3; cursor:pointer; }
   .help-edit-btn:hover { background:rgba(95,157,255,.28); }
   body.help-can-edit .help-edit-btn { display:inline-block; }
+  /* "?" explicator close: every pop carries its own × parked in the
+     bottom-right corner (same spot in every mode and skin) */
+  .sg-help-pop { padding-bottom:24px; } /* reserve the × strip so text never slides under it */
+  .sg-help-pop .help-x { position:absolute; right:8px; bottom:5px; background:none; border:1px solid transparent; border-radius:6px; color:var(--mut); font-size:13px; line-height:1; padding:1px 6px 2px; cursor:pointer; }
+  .sg-help-pop .help-x:hover { color:#fff; border-color:var(--line); background:rgba(95,157,255,.18); }
+  body.light-canvas .sg-help-pop .help-x { color:#5a6b8c; }
+  body.light-canvas .sg-help-pop .help-x:hover { color:#000; }
   .ovblurb { line-height:1.3; } /* overview blurbs: single-spaced, edit button at text height */
   .ovblurb .help-edit-btn { margin-top:0; vertical-align:baseline; }
   .hb-tiprow .help-text { display:contents; }
@@ -1816,6 +1823,8 @@
   #leftPanel.lux .sg-help-pop .help-edit-btn, #tabBar.lux .sg-help-pop .help-edit-btn, #hintBar.lux .sg-help-pop .help-edit-btn {
     background:rgba(18,22,28,.6); border-color:rgba(226,201,155,.4); color:#E8C97A;
   }
+  #leftPanel.lux .sg-help-pop .help-x, #docPanel.lux .sg-help-pop .help-x, #tabBar.lux .sg-help-pop .help-x, #hintBar.lux .sg-help-pop .help-x { color:#E8C97A; }
+  #leftPanel.lux .sg-help-pop .help-x:hover, #docPanel.lux .sg-help-pop .help-x:hover, #tabBar.lux .sg-help-pop .help-x:hover, #hintBar.lux .sg-help-pop .help-x:hover { color:#FFF3D6; border-color:rgba(226,201,155,.55); background:rgba(226,201,155,.12); }
   body.dropping #hintBar .hb-btns, body.dropping #hintBar .hb-tips { border-color:var(--acc); }
   /* collapsed-tips zero-height must beat every skin (lux/light-canvas/noglass re-assert borders/shadows later in the cascade) */
   #hintBar.lux.notips .hb-tips, body.light-canvas #hintBar.notips .hb-tips, #hintBar.noglass.notips .hb-tips { border-top-width:0; border-bottom-width:0; box-shadow:none; backdrop-filter:none; -webkit-backdrop-filter:none; background:none; background-image:none; }

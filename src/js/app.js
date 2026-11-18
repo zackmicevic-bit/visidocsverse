@@ -3950,6 +3950,26 @@ function shutHelpPop(w) {
   }
   try { syncTabBarZ(); } catch {}
 }
+// Every "?" explicator pop gets its own bottom-right × (close affordance in
+// every mode/skin, including desktop shells where the ✎ edit button stays
+// hidden). Idempotent: re-run after any re-render. Called at boot for the
+// static pops and on every pop-open for dynamically rendered ones (reader
+// rows re-render on each doc switch, wiping previously injected buttons).
+function ensureHelpX(scope) {
+  try {
+    (scope || document).querySelectorAll('.sg-help-pop').forEach((pop) => {
+      if (pop.querySelector('[data-helpx]')) return;
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'help-x';
+      b.dataset.helpx = '1';
+      b.title = 'Close this explanation';
+      b.setAttribute('aria-label', 'Close explanation');
+      b.textContent = '×';
+      pop.appendChild(b);
+    });
+  } catch {}
+}
 function openHelpEditor(key) {
   if (!helpEditAllowed() || !DEFAULT_HELP[key]) return;
   helpEditingKey = key;
@@ -10004,6 +10024,7 @@ async function boot() {
     applyHelpToStatic();
     applyGlossEdits(); wireGlossEdit(); // personal glossary wording: machine-only, never backups/installers
     renderTagGuide(); // tagging guide body (default or this machine's edit)
+    try { ensureHelpX(document); } catch {} // static "?" pops get their bottom-right × at boot
     // renderDoc() ran inside rebuild() before the class existed — re-render so its
     // popups pick up stored wording too (cheap, keeps all four in sync).
     renderDoc(); applyHelpToStatic();
@@ -10681,6 +10702,8 @@ async function boot() {
       if (window.innerWidth <= 760) $('#docPanel').classList.add('open');
       return;
     }
+    const hx = e.target.closest('[data-helpx]');
+    if (hx) { e.stopPropagation(); const w1 = hx.closest('.hw, #docMeta, #docShared') || hx.closest('.help-open'); shutHelpPop(w1); return; }
     const he = e.target.closest('[data-help-edit]');
     if (he) { e.stopPropagation(); openHelpEditor(he.dataset.helpEdit); return; }
     const ge = e.target.closest('[data-gloss-edit]');
@@ -10692,6 +10715,7 @@ async function boot() {
       if (w0.classList.contains('help-open')) shutHelpPop(w0);
         else {
           w0.classList.add('help-open');
+          try { ensureHelpX(w0); } catch {} // dynamically rendered pops get their × on open
           const pop = w0.querySelector('.sg-help-pop');
           if (pop) { pop.style.visibility = ''; pop.style.opacity = ''; pop.style.transition = ''; }
           try { syncTabBarZ(); } catch {}
@@ -14001,6 +14025,7 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
     try { Object.assign(window.__visidocsverse, { docApaInfo, docApaText, docApaHtml, copyApaCite, apaSentenceCase, apaTitleCaseJournal, apaAuthorText, mediaKind, hydrateMedia, fileTypeKey, notesImageDrop, deleteNoteEntry, setNotes, closeNotesPane, renderNotesPane, openNotePop, closeNotePop, openNoteEditor, closeNoteEditor, resolveCiteMeta, origPut, origGet, get notesOpen() { return notesOpen; }, get notesDocId() { return notesDocId; }, get shownId() { return shownId; }, get paneId() { return paneId; } }); } catch {} // notes/APA handles for scripted checks
   try { Object.assign(window.__visidocsverse, { diskUsable, diskVaultDir, diskVaultLabel, diskPut, diskGetBlob, diskListKeys, migrateIdbOriginalsToDisk, origBlob, purgeImages }); } catch {} // disk-vault handles for scripted checks
   window.addEventListener('resize', () => ren.resize());
+  try { ensureHelpX(document); } catch {} // every boot-built "?" pop gets its bottom-right × (re-ensured on each open for re-rendered pops)
   bootStage('ready');
   try { document.title = __bootTitle0; } catch (e) {} // boot complete: restore the plain title (tracer stays silent on success)
   // Desktop-shell close-guard self-check: runs ONLY inside the installed app
