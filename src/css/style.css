@@ -81,6 +81,17 @@
   body.light-canvas #docResizeH { background:rgba(255,255,255,.97); color:#1f2c47; border-color:rgba(35,80,180,.55); box-shadow:0 2px 10px rgba(30,45,75,.28); text-shadow:none; }
   /* fatter invisible hit zone around the grip (clicks still land on #docResizeH) */
   #docResizeH::after { content:''; position:absolute; left:-8px; right:-8px; top:-20px; bottom:-6px; cursor:ns-resize; }
+  /* LUX dressing for the reader stretch/shrink grips (plain blue-grey otherwise) */
+  #docPanel.lux #docResize, #docPanel.lux #docResizeH {
+    background:linear-gradient(180deg, rgba(34,40,52,.95) 0%, rgba(16,19,25,.95) 100%);
+    border-color:rgba(226,201,155,.5); color:#E8C97A;
+    box-shadow:0 0 8px rgba(226,201,155,.2), 0 2px 12px rgba(0,0,0,.6), inset 0 1px 2px rgba(255,240,210,.2);
+  }
+  #docPanel.lux #docResize:hover, #docPanel.lux #docResizeH:hover {
+    color:#FFF3D6; border-color:rgba(255,232,190,.9);
+    background:linear-gradient(180deg, rgba(46,52,66,.98) 0%, rgba(20,24,31,.98) 100%);
+    box-shadow:0 0 14px rgba(226,201,155,.45), 0 2px 14px rgba(0,0,0,.65), inset 0 1px 2px rgba(255,240,210,.32);
+  }
   /* notes pane stretch arrow: same discrete ‹ language as the reader's, parked
      on the pane's left rim (seated by applyNotesGeom — the pane clips
      overflow, so this rides as a sibling, not a child) */
@@ -478,6 +489,10 @@
   .gi-tab { display:inline-block; writing-mode:vertical-rl; transform:rotate(180deg); font-size:8.5px; letter-spacing:.18em; color:var(--acc); border:1px solid rgba(140,170,220,.35); border-radius:5px; padding:5px 2px; background:rgba(20,26,32,.88); }
   .gi-sq { display:inline-block; width:11px; height:11px; background:#f2d24b; border-radius:2px; box-shadow:0 0 4px rgba(242,210,75,.6); }
   .gi-sq.hollow { background:none; border:2px solid rgba(242,210,75,.75); width:8px; height:8px; box-shadow:none; border-radius:2px; }
+  /* +#tag slot-frame icons: miniature replicas of the inventory button's three states */
+  .gi-slot { display:inline-block; font-size:9px; font-weight:700; line-height:1.5; padding:0 7px; border-radius:7px; border:1px dashed rgba(140,170,220,.6); color:var(--txt); background:rgba(95,157,255,.16); white-space:nowrap; vertical-align:1px; }
+  .gi-slot.user { border-color:rgba(233,195,60,.75); color:#f2d24b; background:rgba(233,195,60,.10); }
+  .gi-slot.sys { border-style:solid; border-color:rgba(140,170,220,.7); background:rgba(95,157,255,.22); }
   body.light-canvas .gi-edge { background:rgba(255,255,255,.93); color:#8a6a1f; border-color:rgba(30,45,75,.28); }
   body.light-canvas .gi-glyph { color:#8a6a1f; border-color:rgba(138,106,31,.5); background:rgba(150,100,10,.08); }
   body.light-canvas .gi-vm { color:#8a6a1f; border-color:rgba(154,98,0,.55); }
@@ -1754,9 +1769,14 @@
   #hintBar.glass, #hintBar.lux, body.light-canvas #hintBar, body.light-canvas #hintBar.glass, #hintBar.noglass, body.light-canvas #hintBar.noglass { background:none; background-image:none; border-color:transparent; box-shadow:none; backdrop-filter:none; -webkit-backdrop-filter:none; }
   #hintBar .hb-btns, #hintBar .hb-tips {
     width:100%; box-sizing:border-box; position:relative;
-    background:rgba(10,15,24,.85); border:1px solid rgba(140,170,220,.38);
-    border-radius:14px; box-shadow:0 8px 28px rgba(0,0,0,.5);
-    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+    background:
+      linear-gradient(115deg, rgba(255,255,255,.14), rgba(255,255,255,.03) 30%, rgba(255,255,255,0) 48%, rgba(255,255,255,.05) 74%, rgba(255,255,255,.10)),
+      linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0) 26%),
+      rgba(10,15,24,.82);
+    border:1px solid rgba(140,170,220,.38);
+    border-radius:14px;
+    box-shadow:0 8px 28px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.22);
+    backdrop-filter:blur(18px) saturate(1.35); -webkit-backdrop-filter:blur(18px) saturate(1.35);
   }
   #hintBar .hb-btns { padding:0 30px 5px 14px; } /* top padding 0 (was 6px): lifts the whole tab row so the open tab tops cross the partition's top line — the bottom-pill mirror of the top pill's book tabs, whose faces sit 1px proud of the pill edge */
   #hintBar .hb-btns > button:not(.glassDot):not(.luxDot), #hintBar .hb-btns > .splitab { position:relative; top:-2px; } /* final 2px: tab tops sit 1px above the partition's outer top (1px border), matching the top pill's 1px tab stagger; relative (not transform) so the lux hover lifts compose */
@@ -1770,12 +1790,12 @@
     box-shadow:0 8px 28px rgba(30,45,75,.2), inset 0 1px 0 rgba(255,255,255,.28);
   }
   #hintBar.noglass .hb-btns, #hintBar.noglass .hb-tips {
-    background:rgba(10,15,24,.85);
+    background:rgba(8,12,18,.92); /* same flat off-mode as the top pill (#tabBar.noglass) — matte vs glass-on's sheen */
     backdrop-filter:none; -webkit-backdrop-filter:none;
     box-shadow:0 8px 28px rgba(0,0,0,.5);
   }
   body.light-canvas #hintBar.noglass .hb-btns, body.light-canvas #hintBar.noglass .hb-tips {
-    background:rgba(255,255,255,.93);
+    background:rgba(255,255,255,.93); /* same flat off-mode as the top pill */
     backdrop-filter:none; -webkit-backdrop-filter:none;
     border-color:rgba(30,45,75,.28);
     box-shadow:0 8px 28px rgba(30,45,75,.2);
