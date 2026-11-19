@@ -339,3 +339,6 @@ Artifacts land in `src-tauri/target/<triple>/release/bundle/{dmg,nsis,msi}/`.
   present, `version.json` parses with `latestVersion`/`downloadUrl`, and the
   live Dodo checkout link / no `PASTE-YOUR-*` placeholders / terms price
   clause verify. Deliver: extract over the site repo, push to `main`.
+  Adding or removing a site page also means updating
+  `src/site/file-list.json` (the dev-pane push manifest) — the builder
+  fails loud on drift.

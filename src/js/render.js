@@ -294,12 +294,12 @@ export class Renderer {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const r = this.cv.getBoundingClientRect();
     const W = r.width, H = r.height || 400;
-    // deep-space backdrop (shade slider: 1 = black as today, 0 = flat white)
+    // deep-space backdrop (shade slider: 1 = pure black, 0 = flat white)
     const sh = Math.max(0, Math.min(1, this.bgShade == null ? 1 : this.bgShade));
     const rgb = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
     const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.75);
-    bg.addColorStop(0, rgb(mixHex('#ffffff', '#11161f', sh)));
-    bg.addColorStop(1, rgb(mixHex('#ffffff', '#0d1117', sh)));
+    bg.addColorStop(0, rgb(mixHex('#ffffff', '#000000', sh)));
+    bg.addColorStop(1, rgb(mixHex('#ffffff', '#000000', sh)));
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
     // vivid nebula: pre-rendered multi-octave gas + dust layer (cached low-res,
@@ -382,11 +382,11 @@ export class Renderer {
     const spinBl = (this.spinBlend == null ? 0 : this.spinBlend);
     this.spinBlend = spinBl + (spinTgt - spinBl) * Math.min(1, ldt * 4);
     if (this.spinBlend > 0.001) this.spinAngle = (this.spinAngle || 0) + (this.spinOmega || 0) * ldt;
-    this.starfield(ctx, W, H, t);
+    // pure black canvas: no starfield (removed per user preference)
     const match = opts.match; // Set of ids matching search (dims the rest)
     this._noteRects = new Map(); // screen-space sticky-note squares, rebuilt every frame for hit-testing
     this._assocRects = []; // associated-doc paper icons, rebuilt every frame for hit-testing
-    // an emptied workspace has no universe: keep rendering the backdrop + stars.
+    // an emptied workspace has no universe: keep rendering the backdrop.
     const u = uni || { nodes: [], edges: [], byId: new Map(), sunId: null };
     // project + sort far -> near (z-buffered draw order)
     for (const n of u.nodes) n._p = this.project(n.x, n.y, n.z);
@@ -1144,89 +1144,8 @@ export class Renderer {
     } catch { return this._nebCache || null; }
   }
   starfield(ctx, W, H, t = performance.now() / 1000) {
-    // deterministic twinkle field (no allocation per frame beyond gradient use)
-    const sh2 = Math.max(0, Math.min(1, this.bgShade == null ? 1 : this.bgShade));
-    const sc = mixHex('#42547a', '#ffffff', sh2);
-    // base field: classic look untouched when vivid is off; a brighter,
-    // crisper, color-varied pass when vivid is on so stars read on gas
-    const V = !!this.vivid;
-    for (let i = 0; i < (V ? 130 : 90); i++) {
-      const h = (i * 2654435761) % 100000;
-      const x = (h % 1000) / 1000 * W, y = ((h >> 10) % 1000) / 1000 * H;
-      const tw = 0.5 + 0.5 * Math.sin(t * (0.4 + (i % 5) * 0.18) + i * 2.3);
-      const a = ((V ? 0.18 : 0.12) + (V ? 0.45 : 0.10) * tw) * (0.25 + 0.75 * sh2);
-      if (a < (V ? 0.02 : 0.03)) continue;
-      ctx.globalAlpha = a;
-      const pick = i % 9;
-      ctx.fillStyle = pick === 0 ? '#ffe6b8' : (pick <= 2 ? '#9fc4ff' : `rgb(${sc[0]},${sc[1]},${sc[2]})`);
-      const sz = (i % 11) === 0 ? (V ? 2.2 : 1.3) : (V ? 1.5 : 1.3);
-      ctx.fillRect(x, y, sz, sz);
-    }
-    if (this.vivid) {
-      // mid-bright tier: two dozen crisp stars that punctuate the field
-      // between the faint dust and the glowing heroes
-      for (let i = 0; i < 24; i++) {
-        const h = (i * 974634211 + 517) % 100000;
-        const x = (h % 1000) / 1000 * W, y = (((h >> 7) % 1000) / 1000) * H;
-        const tw = 0.5 + 0.5 * Math.sin(t * 0.8 + i * 2.9);
-        ctx.globalAlpha = Math.max(0.05, (0.35 + 0.45 * tw) * sh2);
-        ctx.fillStyle = (i % 4) === 0 ? '#ffe2ae' : ((i % 4) === 1 ? '#aecbff' : '#e8efff');
-        const sz = 2 + ((i * 3) % 2) * 0.7;
-        ctx.fillRect(x - sz / 2, y - sz / 2, sz, sz);
-      }
-      // dense star-cloud band along the milky diagonal: tiny faint specks
-      // that read as unresolved distant suns inside the gas
-      for (let i = 0; i < 70; i++) {
-        const h = (i * 3266489917 + 131) % 100000;
-        const u = (h % 1000) / 1000, v = (((h >> 10) % 200) / 200 - 0.5);
-        const cx = u * W * 1.2 - W * 0.1, cy = u * H * 0.55 + H * 0.2;
-        // distance from the diagonal: -0.42 rad tilt, matches the gas band
-        const x = cx + v * H * 0.5, y = cy + v * H * 1.1 - (cx - W / 2) * 0.45;
-        if (x < 0 || y < 0 || x > W || y > H) continue;
-        ctx.globalAlpha = Math.max(0.04, (0.14 + 0.16 * Math.sin(t * 0.6 + i * 3.1)) * sh2);
-        ctx.fillStyle = (i % 5) === 0 ? '#ffd9a0' : '#bcd2ff';
-        ctx.fillRect(x, y, 1.2, 1.2);
-      }
-      // near depth layer: larger drifting stars with warm/cool variety and
-      // slow multi-speed parallax drift so pans feel dimensional
-      for (let i = 0; i < 80; i++) {
-        const h = (i * 2246822519 + 77) % 100000;
-        const span = W * 1.2, drift = t * (1.5 + (i % 5) * 0.9);
-        const x = ((((h % 1000) / 1000 * span + drift) % span) + span) % span - W * 0.1;
-        const y = (((h >> 10) % 1000) / 1000) * H;
-        const sz = 1 + ((i * 7) % 4) * 0.6;
-        const tw = 0.5 + 0.5 * Math.sin(t * (0.6 + (i % 4) * 0.25) + i * 1.7);
-        ctx.globalAlpha = Math.max(0.06, (0.30 + 0.50 * tw) * sh2);
-        const pick = i % 7;
-        ctx.fillStyle = pick === 0 ? '#e8c97a' : (pick === 1 ? '#ffc98a' : (pick <= 3 ? '#9fc4ff' : '#dcecff'));
-        ctx.fillRect(x, y, sz, sz);
-      }
-      // a handful of bright hero stars with soft glows (+ spikes on the top
-      // three), like the reference's sparse sharp points of light
-      const heroes = 7;
-      for (let i = 0; i < heroes; i++) {
-        const h = (i * 3266489917 + 913) % 100000;
-        const x = (h % 1000) / 1000 * W, y = (((h >> 9) % 1000) / 1000) * H;
-        const tw = 0.65 + 0.35 * Math.sin(t * 1.1 + i * 2.1);
-        const warm = (i % 3) === 0;
-        const core = warm ? '255,224,170' : '210,228,255';
-        const R = (i < 3 ? 9 : 6) * tw + 3;
-        const g = ctx.createRadialGradient(x, y, 0, x, y, R);
-        g.addColorStop(0, `rgba(${core},${(0.5 * tw * sh2).toFixed(3)})`);
-        g.addColorStop(1, `rgba(${core},0)`);
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = g;
-        ctx.fillRect(x - R, y - R, R * 2, R * 2);
-        ctx.globalAlpha = Math.min(1, 0.85 * tw * sh2 + 0.1);
-        ctx.fillStyle = `rgb(${core})`;
-        ctx.fillRect(x - 0.75, y - 0.75, 1.5, 1.5);
-        if (i < 3) {
-          ctx.globalAlpha = 0.14 * tw * sh2;
-          ctx.fillRect(x - 7, y - 0.4, 14, 0.8);
-          ctx.fillRect(x - 0.4, y - 7, 0.8, 14);
-        }
-      }
-    }
+    // removed per user preference (pure black canvas): kept as a no-op so
+    // any external callers stay safe; the backdrop fill above is the canvas.
     ctx.globalAlpha = 1;
   }
 }

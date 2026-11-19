@@ -194,7 +194,7 @@ let exitCommitted = false; // a guard save finished clean and exit was requested
 // the latch via markBackupDirty, so the guard stays exact.
 let gatesOk = false; // boot gates (EULA + license) passed: the guard never fires
 // before this, so X during first-run activation exits cleanly with no popup.
-const BUILD_TAG = 'g10'; // one-build diagnostic stamp: guard pane + save/exit
+const BUILD_TAG = 'g12'; // one-build diagnostic stamp: guard pane + save/exit
 // toasts carry it, so a screenshot proves which build is actually installed.
 let lastGuardNote = ''; // breadcrumb of the last guard step (saved ok / save
 // failed + reason / exit requested) — surfaced in the pane message so a
@@ -645,17 +645,111 @@ function noProjectPopup() {
 // .lux class, same as the pills). Token-guarded so overlapping intakes can't
 // close each other's popup.
 let uploadProgToken = 0;
+let uploadCancelRequested = false; // set by the popup's Stop button; loops below poll it and abort cleanly
+let uploadProgStart = 0; // Date.now() when the current popup's intake began (elapsed + ETA math)
+const UPLOAD_CANCELLED = '__upload_cancelled__';
+function isUploadCancelled(token) {
+  try { return !!uploadCancelRequested && (token == null || token === uploadProgToken); }
+  catch { return !!uploadCancelRequested; }
+}
+function throwIfUploadCancelled(token) {
+  if (isUploadCancelled(token)) throw new Error(UPLOAD_CANCELLED);
+}
+function isUploadCancelErr(e) {
+  try { return !!e && typeof e.message === 'string' && e.message.indexOf(UPLOAD_CANCELLED) !== -1; }
+  catch { return false; }
+}
+// Short human duration for the popup timer: 45s, 2m 05s, 1h 04m.
+function fmtEta(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60), r = s % 60;
+  if (m < 60) return m + 'm ' + String(r).padStart(2, '0') + 's';
+  return Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm';
+}
+// ETA line under the file counter: linear extrapolation from the average
+// pace so far (done files / elapsed). Needs a couple of seconds of history
+// before the average means anything — until then it says estimating.
+function updateUploadProgEta(token, done, total) {
+  if (token !== uploadProgToken) return;
+  let e = null;
+  try { e = document.getElementById('uploadProgEta'); } catch { return; }
+  if (!e) return;
+  try {
+    const elapsed = Date.now() - (uploadProgStart || Date.now());
+    if (!(total > 0) || !(done > 0)) {
+      e.textContent = fmtEta(elapsed) + ' elapsed…';
+      return;
+    }
+    if (done >= total) { e.textContent = 'Done in ' + fmtEta(elapsed) + '.'; return; }
+    if (elapsed < 2000 || done < 1) { e.textContent = 'Estimating time remaining…'; return; }
+    const rem = (elapsed / done) * (total - done);
+    e.textContent = 'About ' + fmtEta(rem) + ' left (' + fmtEta(elapsed) + ' elapsed)';
+  } catch {}
+}
+// Stopped state: leaves the popup up with the outcome so the user can read
+// it, the Stop button parked as "Stopped", and the × enabled to dismiss.
+// Every new showUploadProg resets all three back to the running state.
+function showUploadStopped(msg) {
+  try {
+    const m = document.getElementById('uploadProg');
+    if (!m) return;
+    try { document.getElementById('uploadProgMsg').textContent = 'Upload stopped.'; } catch {}
+    try {
+      const c = document.getElementById('uploadProgCount');
+      if (c) c.textContent = msg || 'The remaining files were skipped — already-imported docs were kept.';
+    } catch {}
+    try { document.getElementById('uploadProgEta').textContent = ''; } catch {}
+    try {
+      const b = document.getElementById('uploadProgStop');
+      if (b) { b.disabled = true; b.textContent = 'Stopped'; }
+    } catch {}
+    try {
+      const x = document.getElementById('uploadProgX');
+      if (x) { x.disabled = false; x.title = 'Close'; }
+    } catch {}
+    m.hidden = false;
+    try { placeUploadProg(); } catch {}
+  } catch {}
+}
+// Stop button handler: flags the current intake for abort. The loops finish
+// the in-flight file step, then stand down and keep whatever already imported.
+function requestUploadCancel() {
+  uploadCancelRequested = true;
+  try {
+    const b = document.getElementById('uploadProgStop');
+    if (b) { b.disabled = true; b.textContent = 'Stopping…'; }
+    const c = document.getElementById('uploadProgCount');
+    if (c && !/stopping/i.test(c.textContent || '')) c.textContent = ((c.textContent || '') ? c.textContent + ' — ' : '') + 'Stopping upload…';
+  } catch {}
+}
 function showUploadProg(total, label) {
   const m = document.getElementById('uploadProg');
   uploadProgToken++;
+  uploadCancelRequested = false; // fresh intake owns the popup now
+  uploadProgStart = Date.now(); // timer starts with the popup
   if (!m) return uploadProgToken;
   try {
     const lux = document.getElementById('hintBar')?.classList.contains('lux');
     m.classList.toggle('lux', !!lux);
   } catch {}
   try {
+    document.getElementById('uploadProgMsg').textContent = 'Your upload is in progress.';
     document.getElementById('uploadProgCount').textContent = label || '';
     document.getElementById('uploadProgFill').style.width = total > 0 ? '2%' : '35%';
+    const eta = document.getElementById('uploadProgEta');
+    if (eta) eta.textContent = total > 0 ? 'Estimating time remaining…' : '';
+  } catch {}
+  try {
+    const b = document.getElementById('uploadProgStop');
+    if (b) { b.disabled = false; b.textContent = '■ Stop upload'; b.onclick = () => requestUploadCancel(); }
+  } catch {}
+  try {
+    // × stays parked but inert while an intake runs — it only dismisses a
+    // stopped popup, never an active one (Stop is the way out mid-flight).
+    const x = document.getElementById('uploadProgX');
+    if (x) { x.disabled = true; x.title = 'Stop the upload first to dismiss'; x.onclick = () => hideUploadProg(uploadProgToken); }
   } catch {}
   m.hidden = false;
   try { placeUploadProg(); } catch {}
@@ -673,6 +767,7 @@ function updateUploadProg(token, done, total, name) {
       document.getElementById('uploadProgCount').textContent = name;
     }
   } catch {}
+  try { updateUploadProgEta(token, done, total); } catch {}
 }
 function hideUploadProg(token) {
   if (token !== uploadProgToken) return; // a newer intake owns the popup now
@@ -4243,7 +4338,7 @@ function verifyPillsOnScreen() {
   } catch {}
 }
 // MAIN folder-tab canvas mimic: the tab's fill tracks the canvas center shade
-// (white -> #11161f across bgShade, same mix as the renderer's backdrop core),
+// (white -> black across bgShade, same mix as the renderer's backdrop core),
 // so it always reads as cut from the canvas below. The bottom pill's hanging
 // book tabs ride the same fill (var(--hbtabbg) on #hintBar) so they always
 // match the canvas too. Change-cached: one compare per frame, style writes
@@ -4257,7 +4352,7 @@ function syncMainTabBg() {
     const bar = document.getElementById('tabBar');
     if (!bar) return;
     const mix = (a, b) => Math.round(a + (b - a) * sh);
-    const tabBg = `rgb(${mix(255, 17)},${mix(255, 22)},${mix(255, 31)})`;
+    const tabBg = `rgb(${mix(255, 0)},${mix(255, 0)},${mix(255, 0)})`;
     bar.style.setProperty('--maintabbg', tabBg);
     try { document.documentElement.style.setProperty('--maintabbg', tabBg); } catch {} // global copy: mini folder tabs (gotoSide) seat in canvas fill too
     try { document.getElementById('hintBar')?.style.setProperty('--hbtabbg', tabBg); } catch {} // bottom-pill book tabs: same canvas fill, updated live with the shade
@@ -8634,6 +8729,7 @@ async function readFileAsText(f, onStep) {
       let out = [], outLen = 0;
       const total = pdf.numPages || 0;
       for (let p = 1; p <= total; p++) {
+        if (uploadCancelRequested) throw new Error(UPLOAD_CANCELLED); // Stop button: abort promptly, keep earlier files
         const tc = await (await pdf.getPage(p)).getTextContent();
         const s = (tc.items || []).map(i => i.str || '').join(' ');
         out.push(s); outLen += s.length;
@@ -9079,6 +9175,7 @@ async function extractPdfImages(buf, onStep) {
   try {
     const total = Math.min(pdf.numPages, IMG_MAX_PDF_PAGES);
     for (let p = 1; p <= total && out.length < IMG_MAX_PDF_PAGES; p++) {
+      if (uploadCancelRequested) throw new Error(UPLOAD_CANCELLED); // Stop button: abort promptly, keep earlier files
       if (typeof onStep === 'function' && (p % 20 === 0 || p === total)) { try { onStep(p, total); } catch {} }
       const page = await pdf.getPage(p);
       let hasImg = false;
@@ -9217,6 +9314,7 @@ async function ocrPictures(pics) { // [{blob, cap}] -> [{cap, text}] (high-confi
       throw e;
     }
     for (const pic of due) {
+      if (uploadCancelRequested) throw new Error(UPLOAD_CANCELLED); // Stop button: abort promptly, keep earlier files
       found.attemptedCount++;
       try {
         const job = worker.recognize(pic.blob);
@@ -9441,8 +9539,10 @@ async function ingestFiles(files, ctx) {
   try { window.__visidocsverse.lastIntake = intakeRec; } catch {}
   const upBatch = list.slice(0, 60);
   const upTok = showUploadProg(upBatch.length, 'Starting…');
+  let upCancelled = false; // Stop button was pressed mid-batch
   try {
   for (let upIdx = 0; upIdx < upBatch.length; upIdx++) {
+    if (isUploadCancelled(upTok)) { upCancelled = true; break; }
     const f = upBatch[upIdx];
     updateUploadProg(upTok, upIdx + 1, upBatch.length, cleanName(f));
     const rec = { name: cleanName(f), type: (f && f.type) || '', size: (f && typeof f.size === 'number') ? f.size : null, status: 'pending' };
@@ -9450,7 +9550,11 @@ async function ingestFiles(files, ctx) {
     try {
       toast('Reading ' + cleanName(f) + '\u2026');
       if (rec.size === 0) throw new Error('That file looks empty (0 bytes) — it may be a cloud placeholder. Open it once, then download a fresh copy.');
-      const rawText = await readFileAsText(f, (p, total) => updateUploadProg(upTok, upIdx + 1, upBatch.length, cleanName(f) + ' — page ' + p + ' of ' + total));
+      const rawText = await readFileAsText(f, (p, total) => {
+        throwIfUploadCancelled(upTok);
+        updateUploadProg(upTok, upIdx + 1, upBatch.length, cleanName(f) + ' — page ' + p + ' of ' + total);
+      });
+      throwIfUploadCancelled(upTok);
       // consume the pagination side-channel now (before any other extractor
       // call can overwrite it): offsets are relative to rawText.
       const pgStarts = lastPageStarts, pgKind = lastPageKind;
@@ -9471,8 +9575,13 @@ async function ingestFiles(files, ctx) {
       let ocrPics = [];
       let imgFails = 0;
       try {
-        const pics = await extractFileImages(f, (done, total) => updateUploadProg(upTok, upIdx + 1, upBatch.length, cleanName(f) + ' — pictures page ' + done + ' of ' + total));
+        const pics = await extractFileImages(f, (done, total) => {
+          throwIfUploadCancelled(upTok);
+          updateUploadProg(upTok, upIdx + 1, upBatch.length, cleanName(f) + ' — pictures page ' + done + ' of ' + total);
+        });
+        throwIfUploadCancelled(upTok);
         for (const pic of pics.slice(0, 500)) {
+          if (isUploadCancelled(upTok)) throw new Error(UPLOAD_CANCELLED);
           try {
             const fit = await downscaleImage(pic.blob);
             if (!fit.blob || !(fit.blob.size > 0)) continue;
@@ -9482,7 +9591,10 @@ async function ingestFiles(files, ctx) {
             if (!pic.skipOcr && !(fit.w > 0 && fit.h > 0 && fit.w * fit.h < OCR_MIN_AREA)) ocrPics.push({ blob: fit.blob, cap: pic.cap || 'image', at: imgMeta.length - 1 });
           } catch (pe) { imgFails++; console.warn('storing a picture failed for ' + cleanName(f) + ' — keeping the rest', (pe && pe.message) || pe); }
         }
-      } catch (e) { console.warn('storing images failed for ' + cleanName(f) + ' — text still imports', (e && e.message) || e); }
+      } catch (e) {
+        if (isUploadCancelErr(e)) throw e; // Stop button: abort the batch, don't downgrade to a warning
+        console.warn('storing images failed for ' + cleanName(f) + ' — text still imports', (e && e.message) || e);
+      }
       if (imgFails) toast(imgFails + ' picture' + (imgFails === 1 ? '' : 's') + ' could not be stored — text and the rest still imported', 5000);
       // standalone photo bodies (.jpg/.png): the file itself is the picture —
       // run it through the same OCR pipeline so photographed text counts.
@@ -9500,10 +9612,15 @@ async function ingestFiles(files, ctx) {
       let ocrSections = [];
       let ocrRan = !ocrPics.length; // nothing to read counts as done
       if (ocrPics.length) {
+        throwIfUploadCancelled(upTok);
         updateUploadProg(upTok, upIdx + 1, upBatch.length, 'Reading text in pictures — ' + cleanName(f));
         toast('Reading text in ' + ocrPics.length + ' image' + (ocrPics.length === 1 ? '' : 's') + '\u2026');
         try { ocrSections = await ocrPictures(ocrPics); }
-        catch (e) { console.warn('OCR failed for ' + cleanName(f) + ' — pictures still import', (e && e.message) || e); ocrSections = []; }
+        catch (e) {
+          if (isUploadCancelErr(e)) throw e; // Stop button: abort the batch, don't downgrade to a warning
+          console.warn('OCR failed for ' + cleanName(f) + ' — pictures still import', (e && e.message) || e); ocrSections = [];
+        }
+        throwIfUploadCancelled(upTok);
         ocrRan = !ocrFailedBefore && !ocrFailedOnce;
       }
       // foreground OCR covers the first pictures; the rest queue for background
@@ -9583,7 +9700,10 @@ async function ingestFiles(files, ctx) {
       newIds.push(d.id);
       n++;
       rec.status = 'ok'; rec.docId = d.id; rec.images = imgMeta.length;
-    } catch (e) { const msg = ((e && e.message) || String(e)); errs.push(cleanName(f) + ': ' + msg); rec.status = 'error'; rec.error = msg; console.warn('import failed', cleanName(f), e); }
+    } catch (e) {
+      if (isUploadCancelErr(e)) { upCancelled = true; rec.status = 'cancelled'; break; } // Stop button: keep earlier files, skip the rest
+      const msg = ((e && e.message) || String(e)); errs.push(cleanName(f) + ': ' + msg); rec.status = 'error'; rec.error = msg; console.warn('import failed', cleanName(f), e);
+    }
   }
   try { vault.persist(); } catch {} // seals post-addFile ocrDone flags
   if (n) markBackupDirty(); // fresh bodies aboard — the file backup is stale
@@ -9600,9 +9720,12 @@ async function ingestFiles(files, ctx) {
   const dupeNote = dupes ? ' \u00B7 ' + dupes + ' duplicate' + (dupes === 1 ? '' : 's') + ' already here' : '';
   const skipNote = skipped.length ? ' \u00B7 ' + skipped.length + ' skipped (not a document)' : '';
   const capNote = cappedTotal ? ' · ' + cappedTotal + ' file' + (cappedTotal === 1 ? '' : 's') + ' capped at the full-text limit' : '';
-  const finalMsg = n ? ((n === 1 ? '1 document captured' : n + ' documents captured') + dupeNote + skipNote + capNote)
+  const finalMsg = upCancelled
+    ? (n ? ((n === 1 ? 'Upload stopped — 1 document captured' : 'Upload stopped — ' + n + ' documents captured') + ' before stop' + dupeNote + skipNote) : 'Upload stopped — nothing new was imported')
+    : n ? ((n === 1 ? '1 document captured' : n + ' documents captured') + dupeNote + skipNote + capNote)
     : (dupes ? 'Nothing new \u2014 ' + dupes + ' duplicate' + (dupes === 1 ? '' : 's') + ' already in the universe' : (errs.length ? 'Nothing imported \u2014 ' + errs[0] : 'Nothing imported'));
   intakeRec.toast = finalMsg; intakeRec.imported = n; intakeRec.errors = errs.slice(0, 5); intakeRec.images = imgTotal; intakeRec.ocr = ocrTotal;
+  intakeRec.cancelled = !!upCancelled;
   try { purgeImages(); } catch { /* orphan bytes sweep runs on its own */ }
   setLog(finalMsg);
   if (n) toast(finalMsg);
@@ -9615,7 +9738,17 @@ async function ingestFiles(files, ctx) {
       try { pumpOcrQueue(); } catch {}
     }
   } catch {}
-  } finally { hideUploadProg(upTok); }
+  } finally {
+    // stopped: hold the popup up with the outcome + an enabled × (the user
+    // dismisses when ready); finished: stand it down as before. The outcome
+    // is read off the recorded intake (always set alongside the toast above).
+    if (upCancelled) {
+      let stopMsg = '';
+      try { stopMsg = (window.__visidocsverse && window.__visidocsverse.lastIntake && window.__visidocsverse.lastIntake.toast) || ''; } catch {}
+      showUploadStopped(stopMsg);
+    }
+    else hideUploadProg(upTok);
+  }
 }
 
 async function collectDirRecursive(dir, out, skipped, depth) {
@@ -9623,6 +9756,7 @@ async function collectDirRecursive(dir, out, skipped, depth) {
   if (depth > 4 || out.length >= 60) return;
   for await (const entry of dir.values()) {
     if (out.length >= 60) break;
+    if (uploadCancelRequested) break; // Stop button: abort folder gathering
     try {
       if (entry.kind === 'file') {
         let f = null;
@@ -9745,6 +9879,7 @@ async function nativeFolderImport() {
       try { entries = await Neutralino.filesystem.readDirectory(dir); } catch { return; }
       for (const e of (entries || [])) {
         if (found.length >= 60) break;
+        if (uploadCancelRequested) break; // Stop button: abort folder gathering
         const nm = e && e.entry != null ? String(e.entry) : '';
         if (!nm) continue;
         const kind = String((e && e.type) || '').toUpperCase();
@@ -9754,9 +9889,11 @@ async function nativeFolderImport() {
       }
     };
     await walk(folder, 0);
+    if (isUploadCancelled(gTok)) { showUploadStopped('Upload stopped — no files imported'); setLog('Upload stopped — no files imported'); toast('Upload stopped — no files imported'); return true; }
     if (!found.length) { hideUploadProg(gTok); toast('No documents in that folder (subfolders included) — looking for ' + INTAKE_LABEL, 5000); return true; }
     const files = [], skipped = [];
     for (let i = 0; i < found.length && files.length < 60; i++) {
+      if (isUploadCancelled(gTok)) { showUploadStopped('Upload stopped — no files imported'); setLog('Upload stopped — no files imported'); toast('Upload stopped — no files imported'); return true; }
       const p = found[i];
       updateUploadProg(gTok, i + 1, found.length, p.name);
       let buf = null;
@@ -9811,6 +9948,7 @@ async function pickFolder() {
     const gTok = showUploadProg(0, 'Gathering files from the folder…');
     try { await collectDirRecursive(dir, files, skipped); }
     catch { hideUploadProg(gTok); throw new Error('Could not scan that folder — the browser blocked access.'); }
+    if (isUploadCancelled(gTok)) { showUploadStopped('Upload stopped — no files imported'); setLog('Upload stopped — no files imported'); toast('Upload stopped — no files imported'); return; }
     if (!files.length) {
       hideUploadProg(gTok);
       if (skipped.length) {
@@ -11165,6 +11303,7 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
     try {
       const gTok = showUploadProg(0, 'Gathering dropped files…');
       const fs = await getDropFiles(dt);
+      if (isUploadCancelled(gTok)) { showUploadStopped('Upload stopped — no files imported'); setLog('Upload stopped — no files imported'); toast('Upload stopped — no files imported'); return; }
       const allFs = (fs && fs.length) ? fs : (dt.files && dt.files.length ? [...dt.files] : []);
       if (allFs.length) {
                 hideUploadProg(gTok); // gathering done — ingestFiles raises its own tracker next
@@ -14021,7 +14160,7 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
     if (!f) return;
     await absorbMasterIntoCanvas(f);
   };
-          window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, collectHandoffData, renderHandoffText, openHandoffModal, setNotes, renderNotesPane, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, nativeFolderImport, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, downloadUserManual, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), dodoStartup: () => verifyLicenseOnStartup(), dodoActivate: (k, n) => activateLicenseKey(k, n), dodoDeactivate: () => deactivateLicenseRemote() } };
+            window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, collectHandoffData, renderHandoffText, openHandoffModal, setNotes, renderNotesPane, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, nativeFolderImport, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, downloadUserManual, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), dodoStartup: () => verifyLicenseOnStartup(), dodoActivate: (k, n) => activateLicenseKey(k, n), dodoDeactivate: () => deactivateLicenseRemote() } };
     try { Object.assign(window.__visidocsverse, { docApaInfo, docApaText, docApaHtml, copyApaCite, apaSentenceCase, apaTitleCaseJournal, apaAuthorText, mediaKind, hydrateMedia, fileTypeKey, notesImageDrop, deleteNoteEntry, setNotes, closeNotesPane, renderNotesPane, openNotePop, closeNotePop, openNoteEditor, closeNoteEditor, resolveCiteMeta, origPut, origGet, get notesOpen() { return notesOpen; }, get notesDocId() { return notesDocId; }, get shownId() { return shownId; }, get paneId() { return paneId; } }); } catch {} // notes/APA handles for scripted checks
   try { Object.assign(window.__visidocsverse, { diskUsable, diskVaultDir, diskVaultLabel, diskPut, diskGetBlob, diskListKeys, migrateIdbOriginalsToDisk, origBlob, purgeImages }); } catch {} // disk-vault handles for scripted checks
   window.addEventListener('resize', () => ren.resize());

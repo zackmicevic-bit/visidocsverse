@@ -253,6 +253,9 @@ Keep them broad yet specific: Use tags for cross-cutting attributes (e.g., #Stat
   <div id="uploadProgMsg">Your upload is in progress.</div>
   <div class="up-track"><div id="uploadProgFill"></div></div>
   <div id="uploadProgCount"></div>
+  <div id="uploadProgEta" aria-live="off"></div>
+  <button type="button" id="uploadProgX" aria-label="Close" title="Stop the upload first to dismiss" disabled>✕</button>
+  <div class="rowbtns up-stop-row"><button type="button" id="uploadProgStop" class="btn danger">■ Stop upload</button></div>
   <div class="upb-hint">Tip: Load speed varies depending on the speed of your computer and the size and number of files.</div>
 </div>
 <div id="licenseModal" class="glass" hidden>

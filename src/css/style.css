@@ -2016,6 +2016,13 @@
   @keyframes upslide { from { background-position:0% 0; } to { background-position:200% 0; } }
   #uploadProgCount { font-size:12px; color:var(--mut); min-height:1.4em; overflow-wrap:anywhere; }
   #uploadProg .upb-hint { font-size:11px; color:var(--mut); margin-top:10px; line-height:1.55; }
+  #uploadProg .up-stop-row { display:flex; justify-content:center; margin-top:12px; }
+  #uploadProgStop { min-width:140px; }
+  #uploadProgStop:disabled { opacity:.55; cursor:default; }
+  #uploadProgEta { font-size:12px; color:var(--acc); margin-top:4px; min-height:1.4em; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+  #uploadProgX { position:absolute; top:6px; right:8px; background:none; border:none; cursor:pointer; font-size:15px; line-height:1; color:inherit; opacity:.6; padding:6px; }
+  #uploadProgX:hover { opacity:1; }
+  #uploadProgX:disabled { opacity:.25; cursor:default; }
   /* luxury: the same gold cosmic-glass the pills wear */
   #uploadProg.lux {
     background-color:#0b0d10;
@@ -2035,7 +2042,7 @@
   #uploadProg.lux #uploadProgMsg { color:#EDE0C6; }
   #uploadProg.lux .up-track { background:rgba(255,255,255,.07); border-color:rgba(226,201,155,.4); }
   #uploadProg.lux #uploadProgFill { background:linear-gradient(90deg, #8a6a1f, #E8C97A, #8a6a1f); background-size:200% 100%; box-shadow:0 0 8px rgba(226,201,155,.5); }
-  #uploadProg.lux #uploadProgCount, #uploadProg.lux .upb-hint { color:rgba(226,201,155,.7); }
+  #uploadProg.lux #uploadProgCount, #uploadProg.lux .upb-hint, #uploadProg.lux #uploadProgEta { color:rgba(226,201,155,.7); }
   #licenseModal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:310; width:min(430px,94vw); padding:18px 20px; }
   #licenseModal h3 { margin:0 0 8px; font-size:16px; }
   #licenseMsg { font-size:13px; line-height:1.6; color:var(--txt); }
