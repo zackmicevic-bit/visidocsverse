@@ -11813,6 +11813,20 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
     inp.style.cssText = 'width:130px;box-sizing:border-box;background:rgba(10,14,20,.8);border:1px solid var(--line);color:var(--txt);border-radius:20px;padding:2px 9px;font-size:11px;outline:none;margin:0 4px 4px 0;';
     btn.replaceWith(inp);
     inp.focus();
+    // explicit Save/Cancel buttons: Enter already commits, but nobody
+    // guesses that — the buttons make the commit discoverable.
+    const save = document.createElement('button');
+    save.textContent = '✓ Save';
+    save.title = 'Save this #tag (same as Enter)';
+    save.setAttribute('aria-label', 'Save this tag');
+    save.style.cssText = 'box-sizing:border-box;background:rgba(255,206,107,.16);border:1px solid rgba(255,206,107,.55);color:#ffe9b8;border-radius:20px;padding:2px 10px;font-size:11px;cursor:pointer;margin:0 4px 4px 0;white-space:nowrap;';
+    const cancel = document.createElement('button');
+    cancel.textContent = '✕';
+    cancel.title = 'Cancel (same as Esc)';
+    cancel.setAttribute('aria-label', 'Cancel tag editing');
+    cancel.style.cssText = 'box-sizing:border-box;background:rgba(95,157,255,.10);border:1px solid rgba(140,170,220,.4);color:#aebdd6;border-radius:20px;padding:2px 9px;font-size:11px;cursor:pointer;margin:0 4px 4px 0;white-space:nowrap;';
+    inp.after(save);
+    save.after(cancel);
     const commit = () => {
       const slug = String(inp.value.trim().toLowerCase()).replace(/\s+/g, '_').replace(/[^a-z0-9_\-/]/g, '');
       if (!/^[a-z0-9_\-/]{2,}$/.test(slug) || !/[a-z]/.test(slug)) { toast('That name can’t be a tag — use at least 2 letters (a–z, 0–9)'); inp.focus(); return; }
@@ -11824,6 +11838,8 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
       else if (ev.key === 'Escape') { try { renderDoc(); } catch {} }
     });
     inp.addEventListener('click', (ev) => ev.stopPropagation());
+    save.addEventListener('click', (ev) => { ev.stopPropagation(); commit(); });
+    cancel.addEventListener('click', (ev) => { ev.stopPropagation(); try { renderDoc(); } catch {} });
   }
   // row "+ #tag" writer: floating name editor for that exact document (same
   // slug rules as the reader's + #tag). Enter/Save commits through
