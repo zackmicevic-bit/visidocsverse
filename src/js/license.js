@@ -10,6 +10,7 @@
 // license.js re-exports the Dodo Payments online path (see
 // licensing-manager.js); either system passing unlocks the app.
 import { verifyLicenseOnStartup, activateLicenseKey, deactivateLicenseKey, dodoCacheStatus, clearDodoCache } from './licensing-manager.js';
+import { ensureTrialStarted, trialStatus, trialEndDate, TRIAL_DAYS, SUBSCRIBE_URL, isTrialShell } from './trial.js';
 
 // Key file shape (JSON):
 //   {"product":"visidocsverse","email":"buyer@example.com","issued":"2026-10-25","sig":"<base64url>"}
@@ -160,19 +161,28 @@ export function needsLicenseGate() {
 // tried ONLY when no Dodo subscription cache has ever existed on this
 // machine. Once a subscription cache exists, Dodo is authoritative — an
 // expired/cancelled/overdue subscription cannot be bypassed with an old key
-// file. Shows the Activate modal (dismissable via "Not now" for deferred
-// activation) when gating and neither verifies. Resolves false when the user
-// defers — the caller exits cleanly (no save guard pre-boot) and the modal
-// reappears on next launch. A non-routine startup verdict (tamper, expired,
-// overdue) is passed through so the modal can say WHY it is locked, not just
-// that it is.
+// file. With neither, the free 21-day trial starts automatically (no modal,
+// no key, no network) and resolves true. An expired/tampered trial shows the
+// trial paywall: subscribe, enter a key, or continue read-only (the vault
+// stays readable — browse/search/read/export/backups keep working). Resolves
+// false only when no license AND no trial record could be completed. A
+// non-routine startup verdict (tamper, expired, overdue) is passed through
+// so the modal can say WHY it is locked, not just that it is.
+// Read-only mode: when the trial paywall resolves to "continue read-only",
+// this module records trialReadOnly = true (see isTrialReadOnly()) and still
+// resolves true so boot continues into a readable vault. app.js gates all
+// write paths (intake, notes, new canvases) on isTrialReadOnly().
+let trialReadOnly = false;
+let trialInfoCache = null;
+export function isTrialReadOnly() { return trialReadOnly === true; }
+export function getTrialInfo() { return trialInfoCache; }
 export async function ensureLicensed() {
   if (!needsLicenseGate()) return true;
   let note = '';
   let dodoPresent = false;
   try {
     const r = await verifyLicenseOnStartup();
-    if (r && r.isValid) return true;
+    if (r && r.isValid) { trialReadOnly = false; return true; }
     if (r && r.statusMessage && r.statusMessage !== 'No active Visi|Docsverse subscription found. Please enter your license key.' && r.statusMessage !== 'No active Visi|Docsverse license found. Please enter your license key.') note = r.statusMessage;
   } catch {}
   try {
@@ -185,11 +195,25 @@ export async function ensureLicensed() {
       const c = cachedLicenseText();
       if (c) {
         const r = await verifyLicenseKey(c);
-        if (r.ok) return true;
+        if (r.ok) { trialReadOnly = false; return true; }
       }
     } catch {}
   }
-  return showLicenseModal(note);
+  // A machine that once held a Dodo activation but fails it now is a paying
+  // (or ex-paying) user: show the Activate modal with the reason, as before.
+  if (dodoPresent) return showLicenseModal(note);
+  // Otherwise this machine has never been licensed: the free trial covers it.
+  try { await ensureTrialStarted(); } catch {}
+  let st = null;
+  try { st = await trialStatus(); } catch { st = null; }
+  if (!st) return showLicenseModal(note);
+  trialInfoCache = st;
+  if (st.mode === 'active') { trialReadOnly = false; return true; }
+  // Expired or tampered trial: paywall (subscribe / enter key / read-only).
+  const choice = await showTrialExpiredModal(st);
+  if (choice === 'licensed') { trialReadOnly = false; return true; }
+  if (choice === 'readonly') { trialReadOnly = true; return true; }
+  return false;
 }
 
 export { verifyLicenseOnStartup, activateLicenseKey };
@@ -277,4 +301,83 @@ export function showLicenseModal(note) {
       } finally { ok.disabled = false; }
     };
   });
+}
+
+// Opens the subscription checkout in the system browser (desktop) or a new
+// tab (web). Shared by the trial paywall and the license-corner buttons.
+export function openSubscribePage() {
+  try {
+    if (window.__TAURI__) {
+      import('https://esm.sh/@tauri-apps/plugin-opener@2').then((mod) => {
+        if (mod && typeof mod.openUrl === 'function') mod.openUrl(SUBSCRIBE_URL).catch(() => window.open(SUBSCRIBE_URL, '_blank', 'noopener'));
+      }).catch(() => window.open(SUBSCRIBE_URL, '_blank', 'noopener'));
+    } else { window.open(SUBSCRIBE_URL, '_blank', 'noopener'); }
+  } catch { try { window.open(SUBSCRIBE_URL, '_blank', 'noopener'); } catch {} }
+}
+
+// Trial paywall: shown at boot when the 21-day trial has expired (or its
+// record fails verification). Resolves 'licensed' after a successful
+// activation, 'readonly' to continue with a readable-but-locked vault, or
+// 'exit' when the user dismisses without choosing. Subscribe opens the
+// website checkout in the system browser and stays on the modal.
+export function showTrialExpiredModal(st) {
+  return new Promise((resolve) => {
+    const m = document.getElementById('trialModal');
+    if (!m) { resolve('exit'); return; }
+    const msg = document.getElementById('trialMsg');
+    const sub = document.getElementById('trialSubscribeBtn2');
+    const key = document.getElementById('trialKeyBtn2');
+    const ro = document.getElementById('trialReadonlyBtn');
+    const x = document.getElementById('trialClose');
+    let settled = false;
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      try { document.removeEventListener('keydown', onEsc, true); } catch {}
+      try { m.hidden = true; } catch {}
+      resolve(v);
+    };
+    const onEsc = (e) => {
+      if (e && e.key === 'Escape' && !m.hidden) { e.preventDefault(); try { trialReadOnly = true; } catch {} done('readonly'); }
+    };
+    const endTxt = trialEndDate(st && st.startedAt);
+    const why = (st && st.mode === 'tampered')
+      ? 'The trial record on this machine could not be verified, so the free trial is treated as ended.'
+      : `Your free 21-day trial${endTxt ? ' (ended ' + endTxt + ')' : ' has ended'}.`;
+    if (msg) msg.textContent = why + ' Subscribe to keep adding documents, notes and canvases — or enter a key if you already have one. Your vault stays readable either way: browse, search, read, export and back up anything, any time.';
+    if (sub) sub.onclick = () => { try { openSubscribePage(); } catch {} };
+    if (key) key.onclick = async () => {
+      try { m.hidden = true; } catch {}
+      try { document.removeEventListener('keydown', onEsc, true); } catch {}
+      settled = true; // this modal stands down; the license modal owns the outcome now
+      const ok = await showLicenseModal('');
+      if (ok) { trialReadOnly = false; resolve('licensed'); return; }
+      // Back to the paywall (re-arm a fresh promise chain).
+      settled = false;
+      try { m.hidden = false; } catch {}
+      try { document.addEventListener('keydown', onEsc, true); } catch {}
+      const again = await showTrialExpiredModal(st);
+      resolve(again);
+    };
+    if (ro) ro.onclick = () => { try { trialReadOnly = true; } catch {} done('readonly'); };
+    if (x) x.onclick = () => { try { trialReadOnly = true; } catch {} done('readonly'); };
+    try { m.hidden = false; } catch {}
+    try { document.title = 'VisiDocsVerse [boot:trial-ended]'; } catch (e) {}
+    try { document.addEventListener('keydown', onEsc, true); } catch {}
+  });
+}
+
+// Re-open the paywall mid-session (blocked write actions call this). Returns
+// the same 'licensed' | 'readonly' | 'exit' verdict and keeps isTrialReadOnly
+// in sync, so a mid-session activation unlocks writes without a restart.
+export async function openTrialPaywall() {
+  let st = null;
+  try { st = await trialStatus(); } catch { st = null; }
+  if (!st) return 'exit';
+  trialInfoCache = st;
+  if (st.mode === 'active') { trialReadOnly = false; return 'licensed'; }
+  const choice = await showTrialExpiredModal(st);
+  if (choice === 'licensed') { trialReadOnly = false; return 'licensed'; }
+  if (choice === 'readonly') { trialReadOnly = true; return 'readonly'; }
+  return choice;
 }
