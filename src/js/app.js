@@ -3,7 +3,7 @@ import { vault } from './vault.js';
 import { Universe } from './physics.js';
 import { Renderer } from './render.js';
 import { imgPut, imgGet, imgKeys, imgDelete, migrateImageDB } from './imgstore.js';
-import { ensureLicensed, verifyLicenseKey, needsLicenseGate, showLicenseModal, verifyLicenseOnStartup, activateLicenseKey, licenseStatus, deactivateLicenseRemote, isDesktopShell } from './license.js';
+import { ensureLicensed, verifyLicenseKey, needsLicenseGate, showLicenseModal, verifyLicenseOnStartup, activateLicenseKey, licenseStatus, deactivateLicenseRemote, isDesktopShell, isTrialReadOnly, openTrialPaywall, getTrialInfo, openSubscribePage, showTrialExpiredModal } from './license.js';
 import { ensureEulaAccepted, eulaAccepted, showEulaModal } from './eula.js';
 import { clearDevLicenseCaches } from './licensing-manager.js';
 
@@ -18,6 +18,7 @@ bootStage('module');
 // its overlay if it already painted.
 try { clearTimeout(window.__bootTimer); var __bs = document.getElementById('bootStall'); if (__bs) __bs.remove(); } catch (e) {}
 import { initUpdateChecker, checkForUpdates, showUpdateBanner, hideUpdateBanner, APP_VERSION, needsUpdateCheck } from './update-check.js';
+import { trialStatus, trialEndDate, TRIAL_DAYS } from './trial.js';
 import { origPut, origGet, origKeys, origDelete } from './origstore.js';
 import { diskUsable, diskVaultDir, diskPut, diskGetBlob, diskDelete, diskListKeys, diskVaultLabel } from './diskvault.js';
 
@@ -508,6 +509,7 @@ function pillFullPopup() {
 // joins the newcomer to that universe. No prompts, no tick lists: a carrier
 // tab's "+" already says which universe is joined.
 function createCanvas(joinIds, joinLabel) {
+  if (isTrialReadOnly()) { trialWriteBlocked('create canvases'); return null; }
   if (pillIsFull()) { pillFullPopup(); return null; }
   let t;
   try {
@@ -544,8 +546,16 @@ function createCanvas(joinIds, joinLabel) {
     : `Project canvas "${t.name}" created \u2014 a separate canvas (right-click its tab to link it later)`);
   return t;
 }
-function toast(msg, ms = 2400) {
-  const t = $('#toastEl');
+// Trial read-only gate: expired trials keep a readable vault (browse, search,
+// read, export, backups) but block writes — intake, notes, new canvases.
+// Blocked actions toast + re-open the paywall (fire-and-forget: a mid-session
+// activation flips isTrialReadOnly() off, so the NEXT action just works).
+function trialWriteBlocked(action) {
+  try { toast(`Trial ended — read-only. Subscribe to ${action}.`, 5200); } catch {}
+  try { const p = openTrialPaywall(); if (p && typeof p.catch === 'function') p.catch(() => {}); } catch {}
+  return true;
+}
+function toast(msg, ms = 2400) {  const t = $('#toastEl');
   t.textContent = msg;
   try { // status toasts never cover the Return button: ride above it with breathing room (tracks wraps/tips/modes; falls back to the CSS seat when Return is hidden)
     const rb = document.getElementById('returnBtn');
@@ -3312,6 +3322,7 @@ function tryAttachDropSpot(d, pend) { // pin the pending auto entry when its tex
   try { refreshNoteViews(d.id); } catch {}
 }
 function saveNotesPane() { // manual push: the composed text becomes an entry now
+  if (isTrialReadOnly()) { trialWriteBlocked('write notes'); return; }
   const area = $('#notesArea');
   const d = vault.byId(notesDocId);
   if (!d || !area) return;
@@ -5326,6 +5337,7 @@ function paintNoteBoxes(id) { // repaint every visible row note box for a doc (a
   }
 }
 function saveNote(id, text) { // legacy quick editors: rewrite the latest entry (or append the first)
+  if (isTrialReadOnly()) { trialWriteBlocked('write notes'); return false; }
   const d = vault.byId(id); if (!d) return false;
   text = String(text ?? '').slice(0, NOTE_MAX);
   const log = noteLogOf(d);
@@ -5388,6 +5400,7 @@ function notePageLabel(d, e) { // "p. 42" / "slide 3" / "sheet 3" for a highligh
   } catch { return ''; }
 }
 function addNoteEntry(id, text, spot) { // append one entry (Notes pane, send-to-notes)
+  if (isTrialReadOnly()) { trialWriteBlocked('write notes'); return null; }
   const d = vault.byId(id); if (!d) return null;
   text = String(text ?? '').slice(0, NOTE_MAX);
   if (!text.trim()) return null;
@@ -5407,6 +5420,7 @@ function addNoteEntry(id, text, spot) { // append one entry (Notes pane, send-to
   return e;
 }
 function setNoteEntry(id, entryId, text) {
+  if (isTrialReadOnly()) { trialWriteBlocked('write notes'); return false; }
   const d = vault.byId(id); if (!d) return false;
   const e = noteLogOf(d).find(x => x.id === entryId);
   if (!e) return false;
@@ -9503,6 +9517,7 @@ async function pumpOcrQueue() {
 }
 
 async function ingestFiles(files, ctx) {
+  if (isTrialReadOnly()) { trialWriteBlocked('add documents'); return; }
   if (!vault.tab()) {
     await noProjectPopup();
     return;
@@ -10092,6 +10107,19 @@ async function boot() {
   if (!licensed) { try { exitAppNow(); } catch {} return; }
   try { gatesOk = true; } catch {}
   bootStage('gates-ok');
+  // Trial hello / countdown (desktop shells only): first launch names the
+  // deal, the last week nudges toward subscribe, expiry names read-only.
+  try {
+    if (needsLicenseGate()) {
+      const ti = getTrialInfo();
+      if (ti && ti.mode === 'active') {
+        if (ti.fresh || (ti.daysUsed || 0) <= 0) toast(`Free 21-day trial started — the full app, no key needed (${TRIAL_DAYS} days left)`, 6500);
+        else if ((ti.daysLeft || 0) <= 7) toast(`Trial: ${ti.daysLeft} day${ti.daysLeft === 1 ? '' : 's'} left — subscribe to keep adding documents`, 6500);
+      } else if (isTrialReadOnly()) {
+        toast('Trial ended — read-only. Browse, read, export and back up anything; subscribe to add more.', 6500);
+      }
+    }
+  } catch {}
   ren = new Renderer($('#uniCv'));
   bootStage('renderer');
   ren.selSet = selSet; // selection rings follow the box-select set live
@@ -10132,9 +10160,48 @@ async function boot() {
         else if (s.kind === 'keyfile') el.textContent = `Licensed — key file${s.email ? ' · ' + s.email : ''}`;
         else el.textContent = isDesktopShell() ? 'No license on this machine' : 'Web preview — no license needed';
       } catch { el.textContent = 'License status unavailable'; }
+      // Trial corner: days-left line + Subscribe / Enter-key buttons while a
+      // trial (active or expired) is this machine's story.
+      try {
+        const ts = $('#trialStatus'), sb = $('#trialSubscribeBtn'), kb = $('#trialKeyBtn');
+        let show = false;
+        if (ts && isDesktopShell()) {
+          try {
+            const t = await trialStatus();
+            const s2 = await licenseStatus();
+            if (s2.kind === 'none' && t && t.mode === 'active' && !t.fresh) {
+              ts.hidden = false;
+              ts.textContent = `Free trial · ${t.daysLeft} of ${TRIAL_DAYS} days left${t.startedAt ? ' — ends ' + trialEndDate(t.startedAt) : ''}`;
+              show = true;
+            } else if (s2.kind === 'none' && isTrialReadOnly()) {
+              ts.hidden = false;
+              ts.textContent = 'Trial ended — read-only. Your vault stays readable.';
+              show = true;
+            } else ts.hidden = true;
+          } catch { ts.hidden = true; }
+        } else if (ts) ts.hidden = true;
+        if (sb) sb.hidden = !show;
+        if (kb) kb.hidden = !show;
+      } catch {}
     };
     const ld = $('#licDeactivateBtn');
-    if (ld) ld.onclick = async () => {
+    // Trial corner buttons: Subscribe opens checkout, Enter key runs the
+    // Activate modal then refreshes the corner (licensed users see it flip).
+    try {
+      const tsb = $('#trialSubscribeBtn');
+      if (tsb && !tsb.dataset.wired) {
+        tsb.dataset.wired = '1';
+        tsb.onclick = () => { try { openSubscribePage(); } catch {} };
+      }
+      const tkb = $('#trialKeyBtn');
+      if (tkb && !tkb.dataset.wired) {
+        tkb.dataset.wired = '1';
+        tkb.onclick = async () => {
+          try { await showLicenseModal(''); } catch {}
+          try { await syncLic(); } catch {}
+        };
+      }
+    } catch {}    if (ld) ld.onclick = async () => {
       if (!await confirmDlg('Remove the license from this machine and free up its seat, so the key can be used on another computer? The Activate window appears next so a key can be entered again.', 'Deactivate')) return;
       // Server-side seat release first: a freed instance stops counting
       // against the key's activation limit. Fail-closed (offline/refused)
@@ -14176,7 +14243,7 @@ function paneSelMenu(e, root, baseAt, withPath, docId, onSent) {
     if (!f) return;
     await absorbMasterIntoCanvas(f);
   };
-            window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, collectHandoffData, renderHandoffText, openHandoffModal, setNotes, renderNotesPane, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, nativeFolderImport, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, downloadUserManual, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), dodoStartup: () => verifyLicenseOnStartup(), dodoActivate: (k, n) => activateLicenseKey(k, n), dodoDeactivate: () => deactivateLicenseRemote() } };
+            window.__visidocsverse = { get uni() { return uni; }, get unis() { return unis; }, get thematicThemes() { return thematicThemes; }, ren, vault, rebuild, rebuildAllTabs, entangleSync, renderTabs, switchCanvas, closeCanvas, removeFromCanvas, deleteEverywhere, removeAllFromCanvas, removeIdsFromCanvas, removeUniverseFromCanvas, toggleAssoc: (...a) => vault.toggleAssoc(...a), confirmDlg, infoDlg, openPickModal, setLog, syncIntakeLog, openSrcPop, closeSrcPop, srcSection, buildBackupObject, applyBackupObject, mergeBackupObject, looksLikeBackup, countBackupDocs, collectHandoffData, renderHandoffText, openHandoffModal, setNotes, renderNotesPane, restoreMasterFromFile, absorbMasterIntoCanvas, ingestFiles, getDropFiles, nativeFolderImport, readFileAsText, intakeAllowed, cleanName, deleteTag, deleteTagEverywhere, mergeTags, renameTag, renameTagConfirm, openTagRenameEditor, openTagPop, closeTagPop, openHowStart, closeHowStart, downloadUserManual, showCloseGuardPane, hideCloseGuardPane, needsBackupGuard, markBackupDirty, exitAppNow, showAssoc, hideAssoc, showAssocAll, clearAssoc, focusAssocDoc, toggleSnapCenter, get snapCenter() { return snapCenter; }, saveAllProjects, lastLoadError: null, lastLoadInfo: null, get activeId() { return activeId; }, defocusSun, getNote, saveNote, deleteNote, getThematicWhole, wholeVisidocsverseDocs, get thematicWhole() { return thematicWhole; }, get wholeThemes() { return wholeThemes; }, get helpTexts() { return { ...helpTexts }; }, openHelpEditor, helpEditAllowed, DEFAULT_HELP, eula: { accepted: () => eulaAccepted(), show: () => showEulaModal() }, update: { version: APP_VERSION, gate: () => needsUpdateCheck(), check: (n) => checkForUpdates(n || toast), show: (info, n) => showUpdateBanner(info, n || toast), hide: (r) => hideUpdateBanner(r !== false) }, get lastSeed() { return lastSeedCount; }, license: { verify: (t) => verifyLicenseKey(t), gate: () => needsLicenseGate(), show: (note) => showLicenseModal(note), dodoStartup: () => verifyLicenseOnStartup(), dodoActivate: (k, n) => activateLicenseKey(k, n), dodoDeactivate: () => deactivateLicenseRemote(), trial: { status: () => trialStatus(), endDate: (s) => trialEndDate(s), days: TRIAL_DAYS, readonly: () => isTrialReadOnly(), paywall: () => openTrialPaywall(), subscribe: () => openSubscribePage(), expiredModal: (st) => showTrialExpiredModal(st) } } };
     try { Object.assign(window.__visidocsverse, { docApaInfo, docApaText, docApaHtml, copyApaCite, apaSentenceCase, apaTitleCaseJournal, apaAuthorText, mediaKind, hydrateMedia, fileTypeKey, notesImageDrop, deleteNoteEntry, setNotes, closeNotesPane, renderNotesPane, openNotePop, closeNotePop, openNoteEditor, closeNoteEditor, resolveCiteMeta, origPut, origGet, get notesOpen() { return notesOpen; }, get notesDocId() { return notesDocId; }, get shownId() { return shownId; }, get paneId() { return paneId; } }); } catch {} // notes/APA handles for scripted checks
   try { Object.assign(window.__visidocsverse, { diskUsable, diskVaultDir, diskVaultLabel, diskPut, diskGetBlob, diskListKeys, migrateIdbOriginalsToDisk, origBlob, purgeImages }); } catch {} // disk-vault handles for scripted checks
   window.addEventListener('resize', () => ren.resize());
